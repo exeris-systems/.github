@@ -37,5 +37,5 @@ While our core Enterprise Engine is currently in deep R&D, the **`exeris-kernel-
 
 ## 👩‍💻 Useful Resources
 * 🌍 **Website:** [exeris.eu](https://exeris.eu)
-* 📩 **Contact:** [hello@exeris.eu](mailto:hello@exeris.eu)
+* 📩 **Contact:** [github@exeris.eu](mailto:github@exeris.eu)
 * 💼 **LinkedIn:** [LinkedIn](https://www.linkedin.com/company/exeris-systems)
