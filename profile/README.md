@@ -1,4 +1,4 @@
-# ⚡ Exeris Systems
+# Exeris Systems
 **Building the World's First Hyper-Density PaaS & Cloud-Native Ecosystem**
 
 [![Website](https://img.shields.io/badge/Website-exeris.eu-blue?style=flat-square)](https://exeris.eu)
