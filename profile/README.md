@@ -1,4 +1,4 @@
-# Exeris Systems
+# <img width="45" height="45" alt="ExerisLogo" src="https://github.com/user-attachments/assets/56d05057-21c2-4baa-a669-6de8001ec341" /> Exeris Systems
 **Building the World's First Hyper-Density PaaS & Cloud-Native Ecosystem**
 
 [![Website](https://img.shields.io/badge/Website-exeris.eu-blue?style=flat-square)](https://exeris.eu)
