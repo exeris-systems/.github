@@ -1,0 +1,22 @@
+# Copy to <repo>/.github/workflows/guardrails.yml — the whole per-repo footprint of ADR-085 §C.11.
+name: guardrails
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review]
+concurrency:
+  group: guardrails-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  docs:
+    uses: exeris-systems/.github/.github/workflows/docs-lint.yml@main
+    with:
+      mode: ramp                # switch to strict per repo once the frontmatter backfill has landed
+      section-check: false      # enable after subsystem/module pages carry the required sections
+      # extra-paths: "adr rfc *.md"   # exeris-docs only — its records live at the repo root
+  commits:
+    uses: exeris-systems/.github/.github/workflows/commit-lint.yml@main
+  pr-body:
+    uses: exeris-systems/.github/.github/workflows/pr-body-check.yml@main
+  # javadoc:                    # JVM repos with a gated module only
+  #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
+  #   with: { modules: "exeris-kernel-spi" }

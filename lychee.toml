@@ -1,0 +1,17 @@
+# Exeris link check — docs-style-guide.md rules 6 and 8, adr-conventions.md rule 3. Used by workflows/docs-lint.yml.
+verbose = "info"
+no_progress = true
+max_concurrency = 8
+timeout = 20
+max_retries = 2
+accept = ["200..=299", "403", "429"]          # GitHub rate-limits and some vendor docs return 403 to bots
+exclude_all_private = true
+# Local relative links are the point: check them against the checkout, offline-first.
+offline = false
+# Never follow into private repositories (ADR-020) — a link *to* them is caught by registry_check.py.
+exclude = [
+  "exeris-kernel-enterprise", "exeris-benchmarks-enterprise", "exeris-enterprise-observability",
+  "exeris-telemetry-spec",
+  "localhost", "127\\.0\\.0\\.1", "example\\.com", "docs\\.exeris\\.eu/preview",
+]
+exclude_path = ["node_modules", "target", "build", ".docusaurus"]

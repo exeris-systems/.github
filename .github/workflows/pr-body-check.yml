@@ -1,0 +1,24 @@
+# Reusable: PR template presence and parseability — ADR-085 §E, pr-conventions.md rules 2–4.
+name: pr-body-check
+on:
+  workflow_call:
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  pr-body-check:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Did the PR touch docs/adr/**?
+        id: adr
+        uses: tj-actions/changed-files@v45
+        with: { files: "**/docs/adr/**" }
+      - name: Check PR body
+        env:
+          GUARDRAILS_ADR_TOUCHED: ${{ steps.adr.outputs.any_changed == 'true' && '1' || '0' }}
+        run: python .guardrails/scripts/pr_body_check.py

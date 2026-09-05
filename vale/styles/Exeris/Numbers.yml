@@ -1,0 +1,6 @@
+extends: existence
+message: "A figure with a unit ('%s') needs a report path and a figure state on the same page (claims-and-evidence.md rule 1)."
+level: suggestion
+nonword: true
+tokens:
+  - '\b\d[\d.,]*\s?(ops/s|req/s|µs|ms|MB|GB)\b'

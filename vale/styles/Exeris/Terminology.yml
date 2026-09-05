@@ -1,0 +1,15 @@
+extends: substitution
+message: "Use '%s' instead of '%s' (docs-style-guide.md rule 10)."
+level: warning
+ignorecase: false
+# Code identifiers are excluded by TokenIgnores in .vale.ini.
+swap:
+  '\bcaps?\b(?! (?:class|module|tier))': capability
+  '\bhotpath\b': hot path
+  '\bhot-path\b': hot path
+  '\bthe wall\b': The Wall
+  '\bcategory [abc]\b': Category A/B/C
+  '\bcommunity tier\b': Community tier
+  '\benterprise tier\b': Enterprise tier
+  '\bopen core\b': open-core
+  '\bvirtual-threads\b': virtual threads

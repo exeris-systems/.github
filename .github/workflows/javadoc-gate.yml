@@ -1,0 +1,26 @@
+# Reusable: Javadoc gate on named Maven modules — ADR-085 §F.21, javadoc-conventions.md rules 1–5.
+# The gated modules run maven-javadoc-plugin with failOnWarnings=true (configured in their own pom, ported from
+# exeris-sdk); this workflow just runs it in isolation so a Javadoc regression is a separate red check with a
+# readable log, and it runs Checkstyle's Javadoc modules on the same set.
+name: javadoc-gate
+on:
+  workflow_call:
+    inputs:
+      modules:      { type: string, required: true, description: "Comma-separated Maven module list, e.g. 'exeris-kernel-spi'" }
+      java-version: { type: string, default: "25" }
+      java-distribution: { type: string, default: "temurin" }
+      extra-maven-args: { type: string, default: "" }
+permissions:
+  contents: read
+jobs:
+  javadoc-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { java-version: "${{ inputs.java-version }}", distribution: "${{ inputs.java-distribution }}", cache: maven }
+      - name: Javadoc (failOnWarnings) on gated modules
+        run: ./mvnw -B -ntp -pl "${{ inputs.modules }}" -am -DskipTests javadoc:javadoc ${{ inputs.extra-maven-args }}
+      - name: Checkstyle Javadoc modules on gated modules
+        run: ./mvnw -B -ntp -pl "${{ inputs.modules }}" -DskipTests checkstyle:check -Dcheckstyle.config.location=exeris-kernel-build-config/src/main/resources/checkstyle-javadoc.xml ${{ inputs.extra-maven-args }}
+        continue-on-error: ${{ inputs.modules == '' }}

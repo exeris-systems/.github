@@ -1,0 +1,11 @@
+extends: existence
+message: "'%s' — say where this does not apply (docs-style-guide.md voice: boundary of applicability)."
+level: suggestion
+ignorecase: true
+tokens:
+  - 'in all cases'
+  - 'always works'
+  - 'never fails'
+  - 'production-ready'
+  - 'battle-tested'
+  - 'blazing(ly)? fast'
