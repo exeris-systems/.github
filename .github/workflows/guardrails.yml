@@ -25,3 +25,15 @@ jobs:
     uses: ./.github/workflows/commit-lint.yml
   pr-body:
     uses: ./.github/workflows/pr-body-check.yml
+  # caller-example/*.yml is the file every repository copies. When it grants less than one of the
+  # workflows it calls declares, GitHub does not run that job with less — it rejects the whole file
+  # as invalid, in the adopting repository, on the first push, with no logs. That happened to
+  # exeris-kernel; this makes the next one fail here instead, where it is cheap.
+  caller-permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet pyyaml
+      - run: python scripts/caller_permissions_check.py

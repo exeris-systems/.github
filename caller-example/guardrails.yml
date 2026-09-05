@@ -8,12 +8,22 @@ on:
 concurrency:
   group: guardrails-${{ github.event.pull_request.number }}
   cancel-in-progress: true
-# A called workflow can only narrow the caller's permissions, never raise them. If the
-# repository's default token grants `pull-requests: none`, the gates refuse to start with
-# "requesting 'pull-requests: read', but is only allowed 'pull-requests: none'".
+# A called workflow can only narrow the caller's permissions, never raise them, so this block must
+# be the UNION of what every job below declares. It is not a wish list and it is not a minimum:
+# omitting a permission one called workflow declares does not run that job with less, it makes the
+# whole file an invalid workflow — "requesting 'issues: read, id-token: write', but is only allowed
+# 'issues: none, id-token: none'", which is how exeris-kernel's first adoption of this file failed.
+#
+# Granting them here does not widen docs-lint, commit-lint or pr-body-check: each called workflow's
+# jobs receive what its own permissions block declares, capped by this one. The last two belong to
+# docs-review — `id-token: write` for the OIDC exchange claude-code-action performs, `issues: read`
+# so the routine can see the debt issues of issue-conventions.md rule 6. Drop the `docs-review` job
+# and you may drop them with it.
 permissions:
   contents: read
   pull-requests: read
+  issues: read
+  id-token: write
 
 jobs:
   docs:

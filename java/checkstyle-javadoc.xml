@@ -8,10 +8,11 @@
 -->
 <module name="Checker">
   <property name="severity" value="error"/>
-  <module name="SuppressionFilter">
-    <property name="file" value="${config_loc}/checkstyle-javadoc-suppressions.xml"/>
-    <property name="optional" value="true"/>
-  </module>
+  <!-- No SuppressionFilter. The obvious form of one names ${config_loc}, and Checkstyle refuses to
+       parse a config whose ${config_loc} is unset — which it is whenever the plugin is pointed at a
+       config outside the project, i.e. exactly how this file is used. `optional="true"` does not
+       help: the failure is in parsing the config, before the file is looked for. Reintroduce with an
+       absolute path passed by the caller if suppressions are ever needed. -->
   <!-- rule 5: @author / @version are banned — Git is the author record (Netty, Quarkus) -->
   <module name="RegexpSingleline">
     <property name="format" value="^\s*\*\s*@(author|version)\b"/>
@@ -22,10 +23,34 @@
     <property name="format" value="@since\s+\d+\.\d+\.\d+"/>
     <property name="message" value="@since uses major.minor (e.g. 0.12), not major.minor.0 (javadoc-conventions.md rule 4)"/>
   </module>
-  <!-- rule 8: no <pre>{@code} example blocks — use {@snippet} -->
+  <!-- rule 8: no <pre> @code example blocks - use the @snippet tag.
+       No braces in the message below, deliberately: Checkstyle renders a violation message
+       through MessageFormat, which reads a brace group as an argument index. A message quoting
+       the tag it recommends threw `can't parse argument number: @snippet` and aborted the whole
+       audit after two files - which is what made this ruleset look like it found nothing. -->
   <module name="RegexpMultiline">
     <property name="format" value="&lt;pre&gt;\s*\{@code"/>
-    <property name="message" value="Use {@snippet} for examples, not &lt;pre&gt;{@code} (javadoc-conventions.md rule 8)"/>
+    <property name="message" value="Use the @snippet tag for examples, not a &lt;pre&gt; @code block (javadoc-conventions.md rule 8)"/>
+  </module>
+  <!-- rule 12: a doc comment states the contract as it is today. Warning, not error, and on purpose:
+       whether a sentence is archaeology or a legitimate statement about the present is a judgement a
+       reviewer makes, not a regex.
+
+       The token list is narrow by measurement, not by taste. Rule 12 as drafted named
+       `previously|used to|fixed in|no longer|historically`; run literally over exeris-kernel-spi that
+       fires 36 times, 21 of them on `no longer` alone - "the buffer is no longer valid after close()",
+       "no longer accept work", "no longer writable". Those are correct sentences about the current
+       contract, and a check that is wrong twenty times out of twenty-one is a check people learn to
+       ignore. Anchoring each token to the verb that makes it past-referential brings the same corpus
+       to 2 hits, both genuine: a paragraph narrating a downstream incident, and a before-and-after
+       account of a compile-time guarantee that was lost.
+
+       So `no longer` and a bare `previously` are deliberately NOT matched. Their archaeological use
+       exists and this will miss it; that is the trade the level and the width are both chosen for. -->
+  <module name="RegexpSingleline">
+    <property name="severity" value="warning"/>
+    <property name="format" value="^\s*\*.*(previously\s+(returned|threw|thrown|was|were|did|had|accepted|required|behaved)|(this|it|which|that)\s+used\s+to\s|used\s+to\s+(be|return|throw|require|accept|spell|prevent|have|do)|fixed\s+in\s+v?\d|\b(bug|issue|ticket|PR)\s*#\d+|\bformerly\b|\bhistorically\b|(before|after|since)\s+the\s+[\w-]+\s+(refactor|rewrite|migration|port)|\bas\s+of\s+\d+\.\d|\bwe\s+(hit|had|saw|found|used)\b)"/>
+    <property name="message" value="Javadoc carries no history (javadoc-conventions.md rule 12). A doc comment states the contract as it is today; the only temporal tags are @since and @deprecated. If this sentence records how something used to be, move it to the release notes or an ADR and reference the ADR with @see. If it is a statement about the present, this is a false positive - say so in review."/>
   </module>
   <module name="TreeWalker">
     <!-- rule 1: presence on public API -->
