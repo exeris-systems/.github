@@ -32,6 +32,26 @@
     <property name="format" value="&lt;pre&gt;\s*\{@code"/>
     <property name="message" value="Use the @snippet tag for examples, not a &lt;pre&gt; @code block (javadoc-conventions.md rule 8)"/>
   </module>
+  <!-- rule 12: a doc comment states the contract as it is today. Warning, not error, and on purpose:
+       whether a sentence is archaeology or a legitimate statement about the present is a judgement a
+       reviewer makes, not a regex.
+
+       The token list is narrow by measurement, not by taste. Rule 12 as drafted named
+       `previously|used to|fixed in|no longer|historically`; run literally over exeris-kernel-spi that
+       fires 36 times, 21 of them on `no longer` alone - "the buffer is no longer valid after close()",
+       "no longer accept work", "no longer writable". Those are correct sentences about the current
+       contract, and a check that is wrong twenty times out of twenty-one is a check people learn to
+       ignore. Anchoring each token to the verb that makes it past-referential brings the same corpus
+       to 2 hits, both genuine: a paragraph narrating a downstream incident, and a before-and-after
+       account of a compile-time guarantee that was lost.
+
+       So `no longer` and a bare `previously` are deliberately NOT matched. Their archaeological use
+       exists and this will miss it; that is the trade the level and the width are both chosen for. -->
+  <module name="RegexpSingleline">
+    <property name="severity" value="warning"/>
+    <property name="format" value="^\s*\*.*(previously\s+(returned|threw|thrown|was|were|did|had|accepted|required|behaved)|(this|it|which|that)\s+used\s+to\s|used\s+to\s+(be|return|throw|require|accept|spell|prevent|have|do)|fixed\s+in\s+v?\d|\b(bug|issue|ticket|PR)\s*#\d+|\bformerly\b|\bhistorically\b|(before|after|since)\s+the\s+[\w-]+\s+(refactor|rewrite|migration|port)|\bas\s+of\s+\d+\.\d|\bwe\s+(hit|had|saw|found|used)\b)"/>
+    <property name="message" value="Javadoc carries no history (javadoc-conventions.md rule 12). A doc comment states the contract as it is today; the only temporal tags are @since and @deprecated. If this sentence records how something used to be, move it to the release notes or an ADR and reference the ADR with @see. If it is a statement about the present, this is a false positive - say so in review."/>
+  </module>
   <module name="TreeWalker">
     <!-- rule 1: presence on public API -->
     <module name="MissingJavadocType">
