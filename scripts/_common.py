@@ -124,14 +124,18 @@ AGENT_DIRS = (".agents", ".claude", ".codex", ".cursor", ".gemini", ".clinerules
 # SEMANTIC_SUBDIRS). Skip those by path, not the whole provider directory.
 SKIP_PATHS = tuple(os.path.join(".github", d) for d in
                    ("agents", "prompts", "skills", "rules", "policies", "instructions"))
+# Third-party source vendored into a repository. exeris-kernel-enterprise carries the OpenSSL
+# distribution under native-libs/, whose doc/ tree alone is 70+ Markdown files written to somebody
+# else's conventions; linting it says nothing about this ecosystem and its findings can never be acted on.
+VENDORED_DIRS = ("native-libs", "third-party", "3rdparty", "vendor")
 # Local-only working material beyond the "_" prefix (handled below): exeris-kernel keeps untracked
-# private drafts in docs/local-only/. Excluded so a local run sees what CI sees.
-LOCAL_ONLY_DIRS = ("local-only",)
+# private drafts in docs/local-only/, and agent runtimes write session state into memories/.
+LOCAL_ONLY_DIRS = ("local-only", "memories")
 
-SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS + AGENT_DIRS + LOCAL_ONLY_DIRS
+SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS + AGENT_DIRS + VENDORED_DIRS + LOCAL_ONLY_DIRS
 # Links are checked everywhere content is published, agent trees and .github included: a rotted link
 # in CONTRIBUTING.md is a rotted link. Only generated output and non-content are skipped.
-LINK_SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS
+LINK_SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS + VENDORED_DIRS
 
 
 def walk_md(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS):

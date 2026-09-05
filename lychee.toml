@@ -20,4 +20,4 @@ exclude = [
 # trees and .github: a rotted link in CONTRIBUTING.md or in an agent policy is a rotted link, and
 # nothing else checks them. Mirrors LINK_SKIP_DIRS in scripts/_common.py.
 exclude_path = ["node_modules", "target", "build", "dist", ".docusaurus", ".next", "out",
-                ".guardrails", "local-only"]
+                ".guardrails", "local-only", "native-libs", "third-party", "3rdparty", "vendor"]
