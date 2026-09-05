@@ -1,0 +1,77 @@
+# Reusable: run the L2 documentation and hygiene review on a pull request — ADR-085 §J.33.
+#
+# §J.33 places `docs-guardrails-review` as a step inside `pr-review.md`, "a Claude Project document
+# maintained outside the git repositories". That is where it still lives, and it is why the review
+# has never run on a pull request: each repo's claude-code-review.yml invokes the marketplace
+# `/code-review:code-review` prompt, which knows nothing about the routine. The L2 layer of ADR-085
+# has therefore existed only inside Cowork sessions since the day it was written — Phase 5 assumes
+# it runs on PRs.
+#
+# This gives it a home in git. The routine text is `docs-guardrails-review.md` in this repository,
+# checked out and handed to Claude verbatim, so there is exactly one copy and changing it changes
+# every repository at once.
+#
+# A separate job rather than an extra sentence appended to the code-review prompt: a slash command
+# takes its own arguments, and trailing instructions after one are not reliably honoured. Two
+# prompts, each unambiguous. The cost is a second Claude run, which is why this one is gated on the
+# pull request actually touching documentation or Java.
+name: docs-review
+on:
+  workflow_call:
+    inputs:
+      extra-paths:
+        type: string
+        default: ""
+        description: "Additional path globs that should trigger the docs review, one per line"
+    secrets:
+      claude_code_oauth_token: { required: true }
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  id-token: write
+jobs:
+  docs-review:
+    runs-on: ubuntu-latest
+    # Drafts and dependency bumps are not reviewed, matching claude-code-review.yml and
+    # pr-conventions.md rule 6.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Fetch the review routine (exeris-systems/.github)
+        uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - name: Does this pull request touch documentation or Javadoc?
+        id: relevant
+        uses: tj-actions/changed-files@v45
+        with:
+          # Java is in the list because half the routine is Javadoc contract prose (steps 16-20).
+          files: |
+            **/*.md
+            **/*.java
+            ${{ inputs.extra-paths }}
+      - name: Docs and hygiene review
+        if: ${{ steps.relevant.outputs.any_changed == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          prompt: |
+            Review pull request ${{ github.event.pull_request.number }} in
+            ${{ github.repository }} against the documentation and hygiene review routine in
+            `.guardrails/docs-guardrails-review.md`. Read that file first and follow it exactly:
+            its steps, its severity tags, and its output format.
+
+            Two things it assumes and you must honour. Read the CI step summaries for docs-lint,
+            commit-lint, pr-body-check and javadoc-gate first, and do not restate what a gate already
+            reported — review the substance those gates cannot judge. And report nothing you have not
+            checked against the repository: the routine asks whether documentation matches the code,
+            which means opening the code.
+
+            Post one review comment. If every step passes, say so in one line rather than
+            summarising the routine back.
+      - name: Say why the review was skipped
+        if: ${{ steps.relevant.outputs.any_changed != 'true' }}
+        run: echo "No Markdown or Java changed — docs-guardrails-review has nothing to look at." >> "$GITHUB_STEP_SUMMARY"
