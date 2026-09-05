@@ -80,6 +80,10 @@ jobs:
       # is Exeris.RetractedFigures (claims-and-evidence.md rule 4).
       - name: Vale (prose warnings — annotations only)
         if: ${{ inputs.vale }}
+        # Same treatment as markdownlint above, and for the same reason: reviewdog exits 1 whenever
+        # it has a result in the diff, under every reporter and regardless of fail_on_error. There is
+        # no flag that makes this step advisory, so the step is marked advisory.
+        continue-on-error: true
         uses: errata-ai/vale-action@v2
         with:
           version: 3.20.0
@@ -88,6 +92,9 @@ jobs:
           files: ${{ inputs.docs-root }}
           vale_flags: "--config=.guardrails/vale/.vale.ini --minAlertLevel=warning"
           fail_on_error: false
+          # The check-run reporter needs `checks: write`, which the callers do not grant and which a
+          # called workflow cannot raise. Without it reviewdog degrades to workflow-command
+          # annotations, which is what we want anyway; the step above absorbs its exit code.
           reporter: github-pr-check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,9 +106,13 @@ jobs:
           files: ${{ inputs.docs-root }}
           vale_flags: "--config=.guardrails/vale/.vale.ini --minAlertLevel=error"
           fail_on_error: true
-          # Local reporter: the annotations are already on the pull request from the step above,
-          # and a second github-pr-check run would post a duplicate check with the same name.
+          # Local reporter: the annotations are already on the pull request from the step above, and
+          # a second github-pr-check run would post a duplicate check under the same name.
           reporter: local
+          # nofilter, not the default "added": a retracted figure is an error wherever it stands, not
+          # only on a line this pull request touched. It also keeps reviewdog off the diff, which the
+          # local reporter has no way to compute here ("diff command is empty", exit 1 on a clean run).
+          filter_mode: nofilter
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Link check
