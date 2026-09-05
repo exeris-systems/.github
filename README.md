@@ -23,7 +23,7 @@ commitlint.config.js     commit-conventions.md rules 1–4 (custom rules: exeris
 .markdownlint.yaml
 vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/styles/Exeris (Terminology, RetractedFigures, DriftPatterns, Numbers, Absolutes)
 lychee.toml
-java/checkstyle-javadoc.xml        drop into exeris-kernel-build-config/src/main/resources/
+java/checkstyle-javadoc.xml        read from the checkout by javadoc-gate.yml — do not copy it into a repo
 java/javadoc-plugin-block.xml      port target for gated modules' pom.xml
 caller-example/guardrails.yml      copy into each repo's .github/workflows/
 ```
@@ -32,7 +32,7 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 
 1. Copy `caller-example/guardrails.yml` to `.github/workflows/guardrails.yml`. Keep `mode: ramp` until the frontmatter backfill has landed; keep `section-check: false` until subsystem/module pages carry the required sections.
 2. `exeris-docs` passes `extra-paths: "adr rfc *.md"` because its records live at the repo root.
-3. JVM repos with a gated module add the `javadoc` job with the module list, after porting `java/javadoc-plugin-block.xml` into those modules' `pom.xml` and adding `java/checkstyle-javadoc.xml` to `exeris-kernel-build-config`.
+3. JVM repos with a gated module add the `javadoc` job with the module list, after porting `java/javadoc-plugin-block.xml` into those modules' `pom.xml`. That is the whole adoption cost: the gate checks this bundle out and reads `java/checkstyle-javadoc.xml` from there, and it uses `./mvnw` only if the repo has one.
 4. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
 5. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
 

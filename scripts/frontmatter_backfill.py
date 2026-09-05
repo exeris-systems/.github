@@ -47,6 +47,10 @@ NAME_TYPE = {
     "CHANGELOG.md": "changelog", "ROADMAP.md": "roadmap", "CLAIMS.md": "claims",
     "MIGRATION.md": "migration-guide", "AGENTS.md": "reference", "CLAUDE.md": "reference",
 }
+# Release notes are named, not placed: exeris-kernel keeps them in `docs/release/` next to
+# `1.0-scope.md` and `upgrade-0.5-to-0.10.md`, which are reference and a migration guide. Typing the
+# directory would mislabel those two, so match the filename and leave the neighbours unplaced.
+RELEASE_NOTES = re.compile(r"-release-notes\.md$")
 ADR_N = re.compile(r"^ADR-(\d{3})")
 LINK_N = re.compile(r"^ADR-(\d{3})\.link\.md$")
 RECORD = {"adr", "adr-link", "rfc", "research"}
@@ -81,6 +85,8 @@ def infer_type(path: str) -> tuple[str | None, bool]:
         return "rfc", True
     if name.startswith("RESEARCH-") or name == "RESEARCH.md":
         return "research", True
+    if RELEASE_NOTES.search(name):
+        return "release-notes", True
     for part in reversed(os.path.normpath(path).split(os.sep)[:-1]):
         if part in DIR_TYPE:
             return DIR_TYPE[part], True

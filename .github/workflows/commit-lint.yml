@@ -18,7 +18,16 @@ jobs:
         with: { node-version: 22 }
       - run: npm install --no-audit --no-fund @commitlint/cli@19 @commitlint/config-conventional@19
         working-directory: .guardrails
-      - name: Lint PR commits
+      # Advisory, not a gate. Every repository here squash-merges, so the only message that
+      # reaches the default branch is the PR title checked below; the branch's own commits are
+      # scratch by the time they land. Blocking on them also makes the rule retroactive: a
+      # milestone-integration PR carries hundreds of commits written before the convention
+      # existed, and history cannot be edited to satisfy a gate added afterwards. On
+      # `development/0.12.0` this step is red for 78 of the 90 commits it parses — a permanently
+      # red required check teaches people to ignore the check, not to write better messages.
+      # It still runs, because the annotations are worth reading on a two-commit PR.
+      - name: Lint PR commits (advisory)
+        continue-on-error: true
         run: npx --prefix .guardrails commitlint --config .guardrails/commitlint.config.js --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
       - name: Lint PR title (the squash-commit subject)
         env:
