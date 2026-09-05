@@ -63,6 +63,11 @@ jobs:
       - name: Link check
         if: ${{ inputs.link-check }}
         uses: lycheeverse/lychee-action@v2
+        env:
+          # Cross-repo references are absolute github.com URLs (docs-style-guide.md rule 8), so this
+          # step now leaves the checkout. Unauthenticated, GitHub rate-limits it and the check
+          # degrades into a silent pass; with the token lychee uses the API and its 5000/hr budget.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --config .guardrails/lychee.toml "${{ inputs.docs-root }}/**/*.md" ${{ inputs.extra-paths }}
           fail: true
