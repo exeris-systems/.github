@@ -8,10 +8,11 @@
 -->
 <module name="Checker">
   <property name="severity" value="error"/>
-  <module name="SuppressionFilter">
-    <property name="file" value="${config_loc}/checkstyle-javadoc-suppressions.xml"/>
-    <property name="optional" value="true"/>
-  </module>
+  <!-- No SuppressionFilter. The obvious form of one names ${config_loc}, and Checkstyle refuses to
+       parse a config whose ${config_loc} is unset — which it is whenever the plugin is pointed at a
+       config outside the project, i.e. exactly how this file is used. `optional="true"` does not
+       help: the failure is in parsing the config, before the file is looked for. Reintroduce with an
+       absolute path passed by the caller if suppressions are ever needed. -->
   <!-- rule 5: @author / @version are banned — Git is the author record (Netty, Quarkus) -->
   <module name="RegexpSingleline">
     <property name="format" value="^\s*\*\s*@(author|version)\b"/>
@@ -22,10 +23,14 @@
     <property name="format" value="@since\s+\d+\.\d+\.\d+"/>
     <property name="message" value="@since uses major.minor (e.g. 0.12), not major.minor.0 (javadoc-conventions.md rule 4)"/>
   </module>
-  <!-- rule 8: no <pre>{@code} example blocks — use {@snippet} -->
+  <!-- rule 8: no <pre> @code example blocks - use the @snippet tag.
+       No braces in the message below, deliberately: Checkstyle renders a violation message
+       through MessageFormat, which reads a brace group as an argument index. A message quoting
+       the tag it recommends threw `can't parse argument number: @snippet` and aborted the whole
+       audit after two files - which is what made this ruleset look like it found nothing. -->
   <module name="RegexpMultiline">
     <property name="format" value="&lt;pre&gt;\s*\{@code"/>
-    <property name="message" value="Use {@snippet} for examples, not &lt;pre&gt;{@code} (javadoc-conventions.md rule 8)"/>
+    <property name="message" value="Use the @snippet tag for examples, not a &lt;pre&gt; @code block (javadoc-conventions.md rule 8)"/>
   </module>
   <module name="TreeWalker">
     <!-- rule 1: presence on public API -->

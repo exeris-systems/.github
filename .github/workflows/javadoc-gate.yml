@@ -31,8 +31,20 @@ jobs:
         id: mvn
         run: |
           if [ -x ./mvnw ]; then echo "cmd=./mvnw" >> "$GITHUB_OUTPUT"; else echo "cmd=mvn" >> "$GITHUB_OUTPUT"; fi
+      # Install first, and skip Checkstyle while doing it. Two reasons, both learned the hard way on
+      # exeris-kernel. A repository whose Checkstyle plugin takes a reactor module as a plugin
+      # DEPENDENCY (for the ruleset) cannot resolve it from the reactor — plugin dependencies come
+      # from repositories — so any goal that triggers the validate phase dies with "Could not find
+      # artifact eu.exeris:exeris-kernel-build-config:jar:0.12.0 in central". And `javadoc:javadoc`
+      # does trigger it, through generate-sources, on every module `-am` drags in.
+      - name: Resolve the reactor into the local repository
+        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -am -DskipTests -Dcheckstyle.skip=true install
       - name: Javadoc (failOnWarnings) on gated modules
-        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -am -DskipTests javadoc:javadoc ${{ inputs.extra-maven-args }}
+        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests -Dcheckstyle.skip=true javadoc:javadoc ${{ inputs.extra-maven-args }}
+      # `-Dcheckstyle.config.location` is the plugin's documented user property, but an explicit
+      # <configLocation> in a pom silently overrides it — a bogus path does not even fail. A repo
+      # adopting this gate must express its own configLocation as a property for this step to run
+      # the ruleset below rather than the repo's own.
       - name: Checkstyle Javadoc modules on gated modules
         run: |
           ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests checkstyle:check \
