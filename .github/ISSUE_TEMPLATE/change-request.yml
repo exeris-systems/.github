@@ -1,0 +1,51 @@
+name: Change request
+description: A change to behaviour, SPI, annotation or generator that should become a pull request.
+title: "feat(<scope>): <what should change>"
+labels: ["type: enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is for a change somebody intends to make. If the question is still open — which of three options, or whether to do it at all — that is an RFC or a Discussion, not an issue.
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: The constraint, failure or measurement that makes this necessary. "Improve", "clean up" and "align" are not motivations.
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What changes at the level of contracts and seams. Name the types or files if you know them.
+    validations: { required: true }
+  - type: textarea
+    id: rejected
+    attributes:
+      label: What you considered and rejected
+      description: One alternative and why it loses. A proposal with no rejected option has not been thought about yet.
+    validations: { required: true }
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope class
+      options: ["runtime hot path", "runtime non-hot", "test-tooling", "docs-only"]
+    validations: { required: true }
+  - type: dropdown
+    id: compat
+    attributes:
+      label: Compatibility impact
+      options: ["none", "additive", "breaking — needs an ADR and a MIGRATION.md section"]
+    validations: { required: true }
+  - type: input
+    id: wall
+    attributes:
+      label: Wall impact
+      description: ADR-006. `none`, or the module edge this introduces.
+      placeholder: "none | exeris-kernel-core → exeris-spring-runtime"
+    validations: { required: true }
+  - type: input
+    id: adrs
+    attributes:
+      label: ADRs this relies on or would amend
+      placeholder: "ADR-006, ADR-065 | none"

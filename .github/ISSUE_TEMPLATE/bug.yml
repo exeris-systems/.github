@@ -1,0 +1,57 @@
+name: Bug
+description: Observable behaviour that contradicts a contract (Javadoc, subsystem doc, TCK, ADR).
+# Title grammar is commit grammar (issue-conventions.md rule 2), so the issue title can become the
+# PR title unchanged. "bug" is not a Conventional Commits type — the type for a defect is `fix`.
+title: "fix(<scope>): <what is wrong, in one sentence>"
+labels: ["type: bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A bug is a difference between a **stated contract** and **observed behaviour**. Name the contract. If no document states the behaviour you expected, this may be a docs gap (use the *Documentation* form) or a design question (Discussions).
+  - type: input
+    id: contract
+    attributes:
+      label: Contract violated
+      description: The Javadoc, subsystem page, TCK class or ADR that states the expected behaviour.
+      placeholder: "LoanedBuffer#close() Javadoc — 'return to pool exactly once'; docs/subsystems/memory.md §Ownership"
+    validations: { required: true }
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+      description: What happens. Stack trace, JFR event, EX-code, log line — verbatim, in a code block.
+    validations: { required: true }
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Reproducer
+      description: The smallest thing that shows it — a test, a TCK invocation, a command. "It happens in production" is a starting point, not a reproducer.
+    validations: { required: true }
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope class
+      options: ["runtime hot path", "runtime non-hot", "test-tooling", "docs-only"]
+    validations: { required: true }
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: "exeris-kernel 0.11.0, JDK 25.0.1, Linux 6.x, community driver"
+    validations: { required: true }
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity (author's estimate)
+      description: The review severity ladder. A maintainer confirms or changes this at triage.
+      options:
+        - "HARD BLOCK — contract broken on a stable surface"
+        - "CONTRACT — wrong, but on a preview or experimental surface"
+        - "CROSS-REPO — needs a coordinated change in another repository"
+        - "STYLE — cosmetic"
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence for any number quoted
+      description: Report path and figure state (citable | unartifacted). Leave empty if no numbers.

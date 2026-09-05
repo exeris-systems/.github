@@ -1,0 +1,46 @@
+name: Documentation
+description: Stale, missing or wrong documentation or Javadoc — including [DOC DEBT] findings from review and VERIFY markers from the sweep.
+title: "docs(<scope>): <what is wrong or missing>"
+# `doc-debt` is NOT applied here. labels.yml defines it as a review finding the monthly audit counts
+# and ages; putting it on every documentation issue, a reader-reported typo included, would make that
+# count measure nothing. It is applied when filing a [DOC DEBT] finding (issue-conventions.md rule 6).
+labels: ["type: documentation", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Standards: [`docs-style-guide.md`](https://github.com/exeris-systems/exeris-docs/blob/main/standards/docs-style-guide.md), [`javadoc-conventions.md`](https://github.com/exeris-systems/exeris-docs/blob/main/standards/javadoc-conventions.md). A `[DOC DEBT]` review finding or a `<!-- VERIFY(sweep-…) -->` marker becomes exactly one of these issues — add the `doc-debt` label yourself when it is one.
+  - type: input
+    id: location
+    attributes:
+      label: File and line (or Javadoc element)
+      placeholder: "exeris-kernel/docs/subsystems/persistence.md:88 | eu.exeris.kernel.spi.memory.LoanedBuffer#slice"
+    validations: { required: true }
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - "stale — describes past state or a symbol that no longer exists"
+        - "missing — required section / frontmatter / contract lines / @since"
+        - "wrong — contradicts the code or a TCK"
+        - "evidence — a number without a report path, or a retracted figure"
+        - "boundary — no 'where this does not apply' / no trade-off"
+        - "drift — AGENTS.md, README or precedence list out of schema"
+    validations: { required: true }
+  - type: textarea
+    id: detail
+    attributes:
+      label: What the doc says vs what the code does
+      description: Quote the sentence. Name the symbol you checked it against. If you could not verify, say so — that is the VERIFY case.
+    validations: { required: true }
+  - type: input
+    id: origin
+    attributes:
+      label: Origin
+      placeholder: "review finding on PR #123 | sweep-2026-09 VERIFY marker | reader report"
+  - type: input
+    id: adrs
+    attributes:
+      label: Owning ADR(s)
+      placeholder: "ADR-022 | none"

@@ -1,0 +1,33 @@
+# Reusable: bring a repository's labels in line with the organisation taxonomy (labels.yml,
+# issue-conventions.md rule 3).
+#
+# Called by each repository rather than pushed from here, because `secrets.GITHUB_TOKEN` is scoped to
+# the repository it runs in: syncing outward from the organisation repo would need a personal access
+# token held as an organisation secret, which is a standing credential with write access to every
+# repository. A caller with `issues: write` needs no such thing.
+#
+# The trade-off: a change to labels.yml reaches a repository on its next scheduled run or on demand,
+# not immediately. The callers schedule it weekly.
+name: labels-sync
+on:
+  workflow_call:
+    inputs:
+      dry-run: { type: boolean, default: false, description: "Report what would change without changing it" }
+permissions:
+  issues: write
+jobs:
+  labels-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the taxonomy (exeris-systems/.github)
+        uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - name: Create missing labels, correct the ones we own
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: python .guardrails/scripts/labels_sync.py --labels .guardrails/labels.yml
