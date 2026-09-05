@@ -38,6 +38,7 @@ jobs:
       # artifact eu.exeris:exeris-kernel-build-config:jar:0.12.0 in central". And `javadoc:javadoc`
       # does trigger it, through generate-sources, on every module `-am` drags in.
       - name: Resolve the reactor into the local repository
+        id: reactor
         run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -am -DskipTests -Dcheckstyle.skip=true install
       - name: Javadoc (failOnWarnings) on gated modules
         run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests -Dcheckstyle.skip=true javadoc:javadoc ${{ inputs.extra-maven-args }}
@@ -45,7 +46,25 @@ jobs:
       # <configLocation> in a pom silently overrides it — a bogus path does not even fail. A repo
       # adopting this gate must express its own configLocation as a property for this step to run
       # the ruleset below rather than the repo's own.
+      #
+      # The condition is what lets the two halves report in one run. They check different rules and
+      # a repository needs both worklists at once, but a step is skipped by default once an earlier
+      # one fails, so the Checkstyle half stayed invisible for exactly as long as doclint was red —
+      # which is when its own findings are most useful. Measured while adopting this gate on
+      # exeris-kernel: doclint reported 62 errors on `exeris-kernel-spi` and the run stopped there,
+      # while this half had 644 errors on the same module that no run had ever printed.
+      #
+      # `!cancelled()` rather than `always()`: `always()` also runs the step after someone cancels
+      # the workflow, holding a runner to produce a report nobody is waiting for. And gated on the
+      # install step, because `!cancelled()` alone does not say WHICH earlier step failed: with a
+      # failed install this step resolves the Checkstyle plugin's own dependencies and dies on
+      # `Could not find artifact …-build-config`, which is the failure the install step exists to
+      # prevent, reported as though it were a Checkstyle configuration problem.
+      #
+      # None of this weakens the gate. The step still fails the job on its own findings; the
+      # condition governs whether it runs, not whether its result counts.
       - name: Checkstyle Javadoc modules on gated modules
+        if: ${{ !cancelled() && steps.reactor.outcome == 'success' }}
         run: |
           ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests checkstyle:check \
             -Dcheckstyle.config.location="$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" ${{ inputs.extra-maven-args }}
