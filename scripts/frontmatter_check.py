@@ -12,7 +12,7 @@ Modes:
 Exempt: README.md anywhere (renders on GitHub first), files under directories starting with '_'.
 """
 from __future__ import annotations
-import argparse, datetime, os, re, sys
+import argparse, datetime, glob, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from _common import (Report, read_frontmatter, changed_files, walk_md, DOC_TYPES, STATUSES, VISIBILITY,
                      ADR_FILE, ADR_LINK, RFC_FILE, RESEARCH_FILE, PRIVATE_REPOS, repo_name)
@@ -109,7 +109,23 @@ def main():
     ap.add_argument("paths", nargs="*", help="explicit files (overrides --root)")
     a = ap.parse_args()
     repo_vis = a.repo_visibility or ("enterprise-private" if repo_name() in PRIVATE_REPOS else "public")
-    files = a.paths or list(walk_md(a.root)) if os.path.isdir(a.root) or a.paths else []
+    # Positional paths may be files, directories or globs — the documented `extra-paths` for a
+    # root-records repo is "adr rfc *.md", two directories and a pattern. Expand each to files.
+    files: list[str] = []
+    for spec in a.paths:
+        if os.path.isdir(spec):
+            files.extend(walk_md(spec))
+        elif os.path.isfile(spec):
+            files.append(spec)
+        else:
+            for hit in sorted(glob.glob(spec)):
+                if os.path.isdir(hit):
+                    files.extend(walk_md(hit))
+                elif hit.endswith(".md"):
+                    files.append(hit)
+    if not files and os.path.isdir(a.root):
+        files = list(walk_md(a.root))
+    files = sorted(dict.fromkeys(os.path.normpath(f) for f in files))
     changed = changed_files(a.base) if a.mode == "ramp" else None
     rep = Report("frontmatter_check")
     strict_rep = rep

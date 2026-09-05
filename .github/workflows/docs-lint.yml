@@ -33,8 +33,13 @@ jobs:
           python .guardrails/scripts/frontmatter_check.py --root "${{ inputs.docs-root }}" --mode "${{ inputs.mode }}" \
             ${{ inputs.section-check && '' || '--no-section-check' }} ${{ inputs.extra-paths }}
       - name: ADR registry
-        run: python .guardrails/scripts/registry_check.py --adr-dir "${{ inputs.docs-root }}/adr"
-      - name: CLAUDE.md schema
+        # A repo may keep its records under docs/adr or at the root; use whichever exists.
+        run: |
+          dir="${{ inputs.docs-root }}/adr"
+          [ -d "$dir" ] || dir="adr"
+          [ -d "$dir" ] || { echo "no adr/ directory — nothing to check"; exit 0; }
+          python .guardrails/scripts/registry_check.py --adr-dir "$dir"
+      - name: Agent files
         run: python .guardrails/scripts/agents_file_check.py
       - name: markdownlint (warning)
         continue-on-error: true
@@ -49,7 +54,7 @@ jobs:
         uses: errata-ai/vale-action@v2
         with:
           version: 3.20.0
-          files: ${{ inputs.docs-root }}
+          files: ${{ inputs.docs-root }} ${{ inputs.extra-paths }}
           vale_flags: "--config=.guardrails/vale/.vale.ini --minAlertLevel=warning"
           fail_on_error: true
           reporter: github-pr-check
