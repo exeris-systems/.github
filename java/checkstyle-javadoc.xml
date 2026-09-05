@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN" "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+  Exeris Javadoc Checkstyle modules — ADR-085 §F.21, javadoc-conventions.md rules 1–5.
+  Modelled on spring-framework/src/checkstyle/checkstyle.xml (Apache-2.0). Drop into
+  exeris-kernel-build-config/src/main/resources/ and reference from the gated modules only
+  (exeris-kernel-spi, exeris-sdk-annotations, Central-published modules); everything else stays diff-aware.
+-->
+<module name="Checker">
+  <property name="severity" value="error"/>
+  <module name="SuppressionFilter">
+    <property name="file" value="${config_loc}/checkstyle-javadoc-suppressions.xml"/>
+    <property name="optional" value="true"/>
+  </module>
+  <!-- rule 5: @author / @version are banned — Git is the author record (Netty, Quarkus) -->
+  <module name="RegexpSingleline">
+    <property name="format" value="^\s*\*\s*@(author|version)\b"/>
+    <property name="message" value="@author/@version are banned (javadoc-conventions.md rule 5) — Git is the author record"/>
+  </module>
+  <!-- rule 4: @since is major.minor, never major.minor.patch (Spring's atSinceVersionConvention) -->
+  <module name="RegexpSingleline">
+    <property name="format" value="@since\s+\d+\.\d+\.\d+"/>
+    <property name="message" value="@since uses major.minor (e.g. 0.12), not major.minor.0 (javadoc-conventions.md rule 4)"/>
+  </module>
+  <!-- rule 8: no <pre>{@code} example blocks — use {@snippet} -->
+  <module name="RegexpMultiline">
+    <property name="format" value="&lt;pre&gt;\s*\{@code"/>
+    <property name="message" value="Use {@snippet} for examples, not &lt;pre&gt;{@code} (javadoc-conventions.md rule 8)"/>
+  </module>
+  <module name="TreeWalker">
+    <!-- rule 1: presence on public API -->
+    <module name="MissingJavadocType">
+      <property name="scope" value="public"/>
+      <property name="skipAnnotations" value="Generated"/>
+    </module>
+    <module name="MissingJavadocMethod">
+      <property name="scope" value="public"/>
+      <property name="allowMissingPropertyJavadoc" value="false"/>
+      <property name="ignoreMethodNamesRegex" value="^(toString|hashCode|equals)$"/>
+    </module>
+    <module name="JavadocType">
+      <property name="scope" value="public"/>
+      <property name="allowUnknownTags" value="true"/>
+    </module>
+    <!-- rule 3: every parameter, every non-void return, and the throws a caller would catch -->
+    <module name="JavadocMethod">
+      <property name="accessModifiers" value="public"/>
+      <property name="allowMissingParamTags" value="false"/>
+      <property name="allowMissingReturnTag" value="false"/>
+      <property name="validateThrows" value="false"/>
+    </module>
+    <!-- rule 2: first sentence present and well-formed -->
+    <module name="JavadocStyle">
+      <property name="checkFirstSentence" value="true"/>
+      <property name="checkEmptyJavadoc" value="true"/>
+      <property name="checkHtml" value="true"/>
+    </module>
+    <module name="NonEmptyAtclauseDescription"/>
+    <!-- rule 3: tag order -->
+    <module name="AtclauseOrder">
+      <property name="tagOrder" value="@param, @return, @throws, @since, @see, @deprecated"/>
+      <property name="target" value="CLASS_DEF, INTERFACE_DEF, ENUM_DEF, RECORD_DEF, METHOD_DEF, CTOR_DEF"/>
+    </module>
+    <module name="JavadocTagContinuationIndentation">
+      <property name="offset" value="4"/>
+    </module>
+    <module name="InvalidJavadocPosition"/>
+    <module name="MissingDeprecated"/>
+    <!-- rule 6/7 are reviewed, not linted: @implSpec / @apiNote / @implNote usage and the three contract lines
+         on buffer/memory/thread types. A Regexp on spi/memory/** for "<b>Allocation:</b>" is the planned L1. -->
+  </module>
+</module>

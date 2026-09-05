@@ -1,0 +1,24 @@
+<!-- Port target from exeris-sdk-annotations/pom.xml (already passes clean) — add to each gated module's <build><plugins>.
+     ADR-085 §F.21. For exeris-kernel-spi, clear the ~160 existing doclint findings first (bounded backfill), then flip. -->
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-javadoc-plugin</artifactId>
+    <configuration>
+        <!-- Any new undocumented public member fails the build here rather than shipping to Maven Central undocumented. -->
+        <failOnWarnings>true</failOnWarnings>
+        <doclint>all</doclint>
+        <!-- kernel builds on JDK 25 LTS baseline; keep --enable-preview only while SPI docs reference preview APIs -->
+        <additionalOptions>--enable-preview</additionalOptions>
+        <tags>
+            <tag><name>apiNote</name><placement>a</placement><head>API Note:</head></tag>
+            <tag><name>implSpec</name><placement>a</placement><head>Implementation Requirements:</head></tag>
+            <tag><name>implNote</name><placement>a</placement><head>Implementation Note:</head></tag>
+        </tags>
+    </configuration>
+    <executions>
+        <execution>
+            <id>attach-javadocs</id>
+            <goals><goal>jar</goal></goals>
+        </execution>
+    </executions>
+</plugin>

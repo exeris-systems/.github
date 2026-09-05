@@ -1,0 +1,13 @@
+extends: existence
+message: "'%s' is a registered drift pattern — check the registered drift patterns (.agents/policies/drift-patterns.md in exeris-docs) before keeping it."
+level: warning
+ignorecase: true
+nonword: true
+tokens:
+  - 'Postgres-only graph'
+  - 'replac(e|ing) Neo4j'
+  - 'exeris-caps-quic-h3'
+  - 'exeris-caps-io-uring-transport'
+  - 'TRL-[5-9]'
+  - '@Requires:?\s*exeris-spring-runtime'
+  - 'Config → Memory → Exceptions'

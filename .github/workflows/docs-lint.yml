@@ -1,0 +1,63 @@
+# Reusable: documentation structure and prose lint — ADR-085 §J.31–32.
+# Structure (frontmatter, filenames, registry, private links, Markdown) fails the job; Vale prose is warning-only
+# except Exeris.RetractedFigures, which is an error (claims-and-evidence.md rule 4).
+name: docs-lint
+on:
+  workflow_call:
+    inputs:
+      docs-root:        { type: string,  default: "docs",   description: "Directory holding the repo's documentation" }
+      mode:             { type: string,  default: "ramp",   description: "ramp = changed files must pass, unchanged only warn; strict = everything must pass" }
+      section-check:    { type: boolean, default: false,    description: "Enforce required sections per doc type (enable after subsystem pages are rewritten)" }
+      link-check:       { type: boolean, default: true }
+      vale:             { type: boolean, default: true }
+      extra-paths:      { type: string,  default: "",       description: "Space-separated extra Markdown files/dirs to lint (e.g. 'adr rfc *.md' for exeris-docs)" }
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  docs-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Fetch shared guardrails (exeris-systems/.github)
+        uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyyaml
+      - name: Frontmatter, filenames, private links
+        env:
+          GUARDRAILS_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+        run: |
+          python .guardrails/scripts/frontmatter_check.py --root "${{ inputs.docs-root }}" --mode "${{ inputs.mode }}" \
+            ${{ inputs.section-check && '' || '--no-section-check' }} ${{ inputs.extra-paths }}
+      - name: ADR registry
+        run: python .guardrails/scripts/registry_check.py --adr-dir "${{ inputs.docs-root }}/adr"
+      - name: CLAUDE.md schema
+        run: python .guardrails/scripts/agents_file_check.py
+      - name: markdownlint (warning)
+        continue-on-error: true
+        uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          config: .guardrails/.markdownlint.yaml
+          globs: |
+            ${{ inputs.docs-root }}/**/*.md
+            ${{ inputs.extra-paths }}
+      - name: Vale (warnings; retracted figures are errors)
+        if: ${{ inputs.vale }}
+        uses: errata-ai/vale-action@v2
+        with:
+          version: 3.20.0
+          files: ${{ inputs.docs-root }}
+          vale_flags: "--config=.guardrails/vale/.vale.ini --minAlertLevel=warning"
+          fail_on_error: true
+          reporter: github-pr-check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Link check
+        if: ${{ inputs.link-check }}
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config .guardrails/lychee.toml "${{ inputs.docs-root }}/**/*.md" ${{ inputs.extra-paths }}
+          fail: true

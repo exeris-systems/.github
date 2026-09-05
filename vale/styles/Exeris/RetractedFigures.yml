@@ -1,0 +1,12 @@
+extends: existence
+message: "'%s' is a retracted or forbidden figure — see exeris-benchmarks/docs/CLAIMS.md retraction register (claims-and-evidence.md rule 4)."
+level: error
+ignorecase: true
+nonword: true
+tokens:
+  - '~?60\s?% CPU waste'
+  - '>\s?160\s?GB'
+  - '\b(459|752|1,?312)\s?MB RSS'
+  - '\b(3\.4|4\.7)×\s?density'
+  - 'Axon[^.\n]{0,40}\b\d[\d.,]*\s?(ms|µs|%|×|req|MB|GB)\b'
+  - '\b\d[\d.,]*\s?(ms|µs|%|×|req|MB|GB)\b[^.\n]{0,40}Axon'
