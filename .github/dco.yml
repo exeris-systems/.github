@@ -1,0 +1,4 @@
+# DCO GitHub App — https://github.com/apps/dco. Organisation members are allow-listed (Spring's model);
+# external contributors need `Signed-off-by:` on every commit (ai-provenance.md rule 7).
+require:
+  members: false
