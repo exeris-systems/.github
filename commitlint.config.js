@@ -27,9 +27,14 @@ module.exports = {
     {
       rules: {
         // commit-conventions.md rule 3: feat/fix/perf/refactor/release bodies carry Motivation / Modification / Result
-        'exeris-mmr-sections': ({ type, body }) => {
+        'exeris-mmr-sections': ({ type, body, footer }) => {
           if (!MMR_TYPES.includes(type)) return [true];
-          const text = body || '';
+          // body + footer, not body alone. conventional-commits-parser moves everything from the
+          // first `#123` reference onward into the footer, so a message that cites the pull request
+          // it fixes — which a good message does — had its Modification and Result sections parsed
+          // out of `body` and was reported as missing them. The sections are what this rule is
+          // about; where the parser drew the footer line is not.
+          const text = [body, footer].filter(Boolean).join('\n');
           const missing = MMR_SECTIONS.filter((s) => !new RegExp(`^${s}`, 'm').test(text));
           const ordered = MMR_SECTIONS.map((s) => text.indexOf(s)).every((v, i, a) => i === 0 || v > a[i - 1]);
           if (missing.length) return [false, `body of a '${type}' commit must contain: ${missing.join(' ')}`];
