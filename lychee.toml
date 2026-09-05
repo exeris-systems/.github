@@ -4,7 +4,9 @@ no_progress = true
 max_concurrency = 8
 timeout = 20
 max_retries = 2
-accept = ["200..=299", "403", "429"]          # GitHub rate-limits and some vendor docs return 403 to bots
+accept = ["200..=299", "403"]                 # some vendor docs return 403 to bots
+# 429 is deliberately NOT accepted: it means the check was rate-limited, and accepting it turns a
+# link check into a silent pass. The Link check step passes GITHUB_TOKEN so this should not occur.
 exclude_all_private = true
 # Local relative links are the point: check them against the checkout, offline-first.
 offline = false
