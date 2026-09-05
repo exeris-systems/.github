@@ -29,6 +29,12 @@ jobs:
     uses: exeris-systems/.github/.github/workflows/commit-lint.yml@main
   pr-body:
     uses: exeris-systems/.github/.github/workflows/pr-body-check.yml@main
+  # The L2 review of ADR-085 §J.33. Without this job the routine runs only in Cowork sessions and
+  # never on a pull request. `secrets: inherit` passes CLAUDE_CODE_OAUTH_TOKEN through; the job
+  # skips itself when no Markdown or Java changed.
+  docs-review:
+    uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
+    secrets: inherit
   # javadoc:                    # JVM repos with a gated module only
   #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
   #   with: { modules: "exeris-kernel-spi" }
