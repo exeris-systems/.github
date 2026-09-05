@@ -2,14 +2,18 @@
 """Frontmatter and doc-structure validator — ADR-085 §B.7–9, docs-style-guide.md rules 2, 3, 5, 7.
 
 Usage:
-  frontmatter_check.py [--root docs] [--mode ramp|strict] [--base origin/main] [--repo-visibility public|enterprise-private]
+  frontmatter_check.py [--root .] [--exclude 'docs/vendor'] [--mode ramp|strict] [--base origin/main]
+                       [--repo-visibility public|enterprise-private]
 
 Modes:
   strict — every Markdown file under --root must pass; errors fail the build.
   ramp   — files changed vs --base must pass (errors); unchanged files only produce warnings.
            This is the Phase 5 rollout mode: no backfill mandate, no silent debt either.
 
-Exempt: README.md anywhere (renders on GitHub first), files under directories starting with '_'.
+Exempt: the README family anywhere (they render on GitHub first, which shows frontmatter as literal
+text), directories starting with '_', and everything scripts/_common.py names as not-documentation —
+generated output, the guardrail bundle, and agent trees, which agents_file_check.py checks instead.
+The default root is the repository: what is not linted is named, never left off an opt-in list.
 """
 from __future__ import annotations
 import argparse, datetime, glob, os, re, sys
@@ -27,12 +31,20 @@ REQUIRED_SECTIONS = {
 }
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 KEBAB = re.compile(r"^(\d{2}-)?[a-z0-9]+(?:[-.][a-z0-9]+)*\.md$")
+# A template is the file a real document is copied from, so its frontmatter must carry every required
+# key but cannot carry a real value: "last-verified: YYYY-MM-DD" is the correct content there, not a
+# defect. Keys are still checked; values that are visibly placeholders are not.
+TEMPLATE_FILE = re.compile(r"-TEMPLATE\.md$")
+PLACEHOLDER = re.compile(r"^(<.*>|YYYY-MM-DD|ADR-NNN|NNN|TBD|\.\.\.)$")
 
 
 def check_file(path: str, rep: Report, repo_vis: str, section_check: bool):
     name = os.path.basename(path)
     rel = os.path.relpath(path)
-    if name == "README.md":
+    # These render on github.com before they render on the site, and GitHub shows the frontmatter
+    # block as literal text. They are reviewed ([L2]), never schema-checked.
+    if name in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
+                "LICENSE.md", "NOTICE.md", "PULL_REQUEST_TEMPLATE.md"):
         return
     rep.checked += 1
     # filename discipline (docs-style-guide rule 7, adr-conventions rule 1)
@@ -46,7 +58,9 @@ def check_file(path: str, rep: Report, repo_vis: str, section_check: bool):
     elif d == "research":
         if not (RESEARCH_FILE.match(name) or name == "RESEARCH.md"):
             rep.error(rel, "Research filename must match RESEARCH-YYYY-MM-DD-<kebab>.md", rule="filename")
-    elif not KEBAB.match(name) and name not in ("ROADMAP.md", "CLAIMS.md", "MISSION.md", "CHANGELOG.md", "AGENTS.md", "CLAUDE.md"):
+    elif not KEBAB.match(name) and not TEMPLATE_FILE.search(name) and name not in (
+            "ROADMAP.md", "CLAIMS.md", "MISSION.md", "CHANGELOG.md", "AGENTS.md", "CLAUDE.md", "SKILL.md",
+            "MIGRATION.md", "LICENSING.md", "TRADEMARK.md"):
         rep.warning(rel, "filename is not lowercase kebab-case", rule="filename")
 
     fm, body_line = read_frontmatter(path)
@@ -59,22 +73,29 @@ def check_file(path: str, rep: Report, repo_vis: str, section_check: bool):
     for k in REQUIRED:
         if k not in fm or fm[k] in (None, ""):
             rep.error(rel, f"frontmatter key '{k}' is required", rule="frontmatter")
+    is_template = bool(TEMPLATE_FILE.search(name))
+
+    def placeholder(val) -> bool:
+        """In a template the value *is* the instruction for filling it in; the key is still required."""
+        return is_template and PLACEHOLDER.match(str(val or "")) is not None
+
     t = fm.get("type")
-    if t and t not in DOC_TYPES:
+    if t and t not in DOC_TYPES and not placeholder(t):
         rep.error(rel, f"type '{t}' is not in the ADR-085 §B.8 enumeration", rule="type")
     v = fm.get("visibility")
-    if v and v not in VISIBILITY:
+    if v and v not in VISIBILITY and not placeholder(v):
         rep.error(rel, f"visibility must be public | enterprise-private (got '{v}')", rule="visibility")
     if v == "enterprise-private" and repo_vis == "public":
         rep.error(rel, "enterprise-private document inside a public repository (ADR-020)", rule="visibility")
     st = fm.get("status")
     if t in RECORD_TYPES and not st:
         rep.error(rel, "records (adr/rfc/research) must carry 'status'", rule="status")
-    if st and st not in STATUSES:
+    if st and st not in STATUSES and not placeholder(st):
         rep.error(rel, f"status must be one of {sorted(STATUSES)} (got '{st}')", rule="status")
     lv = str(fm.get("last-verified", ""))
     if lv and not DATE.match(lv):
-        rep.error(rel, f"last-verified must be YYYY-MM-DD (got '{lv}')", rule="last-verified")
+        if not placeholder(lv):
+            rep.error(rel, f"last-verified must be YYYY-MM-DD (got '{lv}')", rule="last-verified")
     elif lv:
         try:
             if datetime.date.fromisoformat(lv) > datetime.date.today():
@@ -101,7 +122,9 @@ def check_file(path: str, rep: Report, repo_vis: str, section_check: bool):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="docs")
+    ap.add_argument("--root", default=".")
+    ap.add_argument("--exclude", default=os.environ.get("GUARDRAILS_EXCLUDE", ""),
+                    help="space-separated paths this repo does not lint")
     ap.add_argument("--mode", choices=["ramp", "strict"], default="ramp")
     ap.add_argument("--base", default=os.environ.get("GUARDRAILS_BASE"))
     ap.add_argument("--repo-visibility", default=None)
@@ -126,6 +149,9 @@ def main():
     if not files and os.path.isdir(a.root):
         files = list(walk_md(a.root))
     files = sorted(dict.fromkeys(os.path.normpath(f) for f in files))
+    if a.exclude:
+        skip = tuple(os.path.normpath(x) + os.sep for x in a.exclude.split())
+        files = [f for f in files if not f.startswith(skip)]
     changed = changed_files(a.base) if a.mode == "ramp" else None
     rep = Report("frontmatter_check")
     strict_rep = rep

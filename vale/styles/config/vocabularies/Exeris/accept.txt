@@ -1,0 +1,76 @@
+# Vale vocabulary — words the spell checker must accept, added to the dictionary ahead of every
+# style (including the vendored Quarkus Spelling filter, which stays pristine: it is Apache-2.0
+# third-party content, see styles/Quarkus/NOTICE.md).
+#
+# Deliberately minimal: the ecosystem's own nouns and the terms the standards themselves use. A
+# corpus-wide run reports far more spelling warnings than this file covers, and that is intended —
+# the rest stay warnings for a human to judge, one page at a time.
+Exeris
+Arkadiusz
+Przychocki
+ArkStack
+Docusaurus
+Micronaut
+Memgraph
+Milvus
+Qdrant
+Postgres
+pgvector
+Akamai
+Fastly
+Adyen
+Textract
+japicmp
+OSGi
+springframework
+io_uring
+groupId
+doclint
+codegen
+frontmatter
+whitepaper
+whitepapers
+monorepo
+toolchain
+entrypoint
+syscall
+datastore
+plaintext
+codec
+pluggable
+composable
+unversioned
+untracked
+backport
+deduplication
+interoperate
+transpiles
+scaffolded
+dogfood
+dogfooding
+unartifacted
+relicense
+forkable
+forkability
+auditability
+parseability
+unparseable
+tunables
+mitigations
+lookups
+upstreams
+reimplement
+reimplements
+# Possessives of house acronyms. Vale's speller treats "ADR's" as its own token, so the base form
+# above does not cover it, and these appear throughout the ADR corpus.
+ADR's
+RFC's
+SKU's
+SDK's
+SPI's
+JFR's
+README's
+Exeris's
+repo's
+whitepaper's
+tooling's
