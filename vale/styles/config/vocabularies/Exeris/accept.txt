@@ -61,3 +61,16 @@ lookups
 upstreams
 reimplement
 reimplements
+# Possessives of house acronyms. Vale's speller treats "ADR's" as its own token, so the base form
+# above does not cover it, and these appear throughout the ADR corpus.
+ADR's
+RFC's
+SKU's
+SDK's
+SPI's
+JFR's
+README's
+Exeris's
+repo's
+whitepaper's
+tooling's
