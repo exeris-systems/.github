@@ -5,7 +5,8 @@ Additive by design: creates what is missing and corrects the colour and descript
 taxonomy names. It never deletes, so a repository's own `area:` labels survive and GitHub's default
 set is left alone rather than fought with.
 
-Environment: GH_TOKEN, REPO (owner/name), DRY_RUN ("true" to report only).
+Environment: GH_TOKEN, REPO (owner/name), DRY_RUN (1/true/yes/on to report only; an
+unrecognised value is an error, never a write).
 """
 from __future__ import annotations
 import argparse, json, os, sys, urllib.error, urllib.request
@@ -25,12 +26,30 @@ def call(method: str, path: str, token: str, body: dict | None = None):
         return json.loads(r.read() or "null")
 
 
+# This script writes to a repository, so an unreadable DRY_RUN must not mean "write". It used to
+# compare against the literal string "true", which made `DRY_RUN=1` a full, silent apply — the run
+# that added 18 labels to exeris-kernel was invoked that way and reported them as "created" with no
+# "(dry run)" marker. Recognise the usual spellings both ways and refuse anything else.
+TRUE = {"1", "true", "yes", "on", "y", "t"}
+FALSE = {"", "0", "false", "no", "off", "n", "f"}
+
+
+def parse_dry(raw: str) -> bool:
+    v = raw.strip().lower()
+    if v in TRUE:
+        return True
+    if v in FALSE:
+        return False
+    raise SystemExit(f"DRY_RUN={raw!r} is neither true nor false; refusing to guess, and refusing "
+                     f"to write. Use one of {sorted(TRUE)} or {sorted(FALSE - {''})}.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--labels", required=True)
     a = ap.parse_args()
     token, repo = os.environ["GH_TOKEN"], os.environ["REPO"]
-    dry = os.environ.get("DRY_RUN", "").lower() == "true"
+    dry = parse_dry(os.environ.get("DRY_RUN", ""))
 
     want = yaml.safe_load(open(a.labels, encoding="utf-8"))
     have, page = {}, 1
@@ -51,7 +70,12 @@ def main():
                 call("POST", f"/repos/{repo}/labels", token,
                      {"name": name, "color": color, "description": desc})
         elif cur.get("color", "").lower() != color.lower() or (cur.get("description") or "") != desc:
-            updated.append(f"{name} ({cur.get('color')} -> {color})")
+            diffs = []
+            if (cur.get("color") or "").lower() != color.lower():
+                diffs.append(f"colour {cur.get('color')} -> {color}")
+            if (cur.get("description") or "") != desc:
+                diffs.append("description")
+            updated.append(f"{name} ({', '.join(diffs)})")
             if not dry:
                 call("PATCH", f"/repos/{repo}/labels/{urllib.request.quote(name)}", token,
                      {"new_name": name, "color": color, "description": desc})

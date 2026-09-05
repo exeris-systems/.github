@@ -1,6 +1,6 @@
 # Reusable: Javadoc gate on named Maven modules — ADR-085 §F.21, javadoc-conventions.md rules 1–5.
-# The gated modules run maven-javadoc-plugin with failOnWarnings=true (configured in their own pom, ported from
-# exeris-sdk); this workflow just runs it in isolation so a Javadoc regression is a separate red check with a
+# The gated modules run maven-javadoc-plugin with failOnWarnings=true (port `java/javadoc-plugin-block.xml`
+# into their pom); this workflow runs it in isolation so a Javadoc regression is a separate red check with a
 # readable log, and it runs Checkstyle's Javadoc modules on the same set.
 name: javadoc-gate
 on:
@@ -17,10 +17,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The Checkstyle ruleset is part of the bundle, like every other config these gates read.
+      # It used to be named at a path inside one repository — `exeris-kernel-build-config/src/main/
+      # resources/checkstyle-javadoc.xml` — which meant the gate could only ever run in the repo that
+      # had copied it there, and a copy is a thing that drifts. Read it from the checkout instead.
+      - uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: .guardrails }
       - uses: actions/setup-java@v4
         with: { java-version: "${{ inputs.java-version }}", distribution: "${{ inputs.java-distribution }}", cache: maven }
+      # Not every repository ships a wrapper — exeris-kernel builds with the runner's `mvn`. Pick
+      # whichever exists rather than assuming, so adopting this gate is a pom change and nothing else.
+      - name: Resolve the Maven command
+        id: mvn
+        run: |
+          if [ -x ./mvnw ]; then echo "cmd=./mvnw" >> "$GITHUB_OUTPUT"; else echo "cmd=mvn" >> "$GITHUB_OUTPUT"; fi
       - name: Javadoc (failOnWarnings) on gated modules
-        run: ./mvnw -B -ntp -pl "${{ inputs.modules }}" -am -DskipTests javadoc:javadoc ${{ inputs.extra-maven-args }}
+        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -am -DskipTests javadoc:javadoc ${{ inputs.extra-maven-args }}
       - name: Checkstyle Javadoc modules on gated modules
-        run: ./mvnw -B -ntp -pl "${{ inputs.modules }}" -DskipTests checkstyle:check -Dcheckstyle.config.location=exeris-kernel-build-config/src/main/resources/checkstyle-javadoc.xml ${{ inputs.extra-maven-args }}
-        continue-on-error: ${{ inputs.modules == '' }}
+        run: |
+          ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests checkstyle:check \
+            -Dcheckstyle.config.location="$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" ${{ inputs.extra-maven-args }}
