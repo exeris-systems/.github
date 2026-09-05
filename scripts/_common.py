@@ -109,9 +109,37 @@ def changed_files(base: str | None) -> set[str] | None:
     return {l.strip() for l in out.stdout.splitlines() if l.strip()}
 
 
-def walk_md(root: str, skip=("node_modules", ".git", "target", "build", "dist", ".docusaurus")):
+# Documentation is every Markdown file in the repository except the four kinds below. The default
+# lint root is the repository, so what is *not* documentation has to be named here rather than left
+# out of an opt-in path list — a path forgotten from such a list is silently unchecked, which is how
+# exeris-docs/standards/ went unlinted while the standard it holds was being made binding.
+GENERATED_DIRS = ("node_modules", "target", "build", "dist", ".docusaurus", ".next", "out")
+# The guardrail bundle is checked out into the workspace it lints; .git is not content.
+TOOLING_DIRS = (".git", ".guardrails")
+# Agent trees carry their own schema (agents-md-schema.md) and are checked by agents_file_check.py.
+# A SKILL.md cannot also carry the docs frontmatter without breaking the agent runtime that reads it.
+AGENT_DIRS = (".agents", ".claude", ".codex", ".cursor", ".gemini", ".clinerules")
+# .github is not wholly an agent tree: it holds CONTRIBUTING.md and the PR template, which are
+# documentation, alongside the semantic subdirectories agents_file_check.py governs (its
+# SEMANTIC_SUBDIRS). Skip those by path, not the whole provider directory.
+SKIP_PATHS = tuple(os.path.join(".github", d) for d in
+                   ("agents", "prompts", "skills", "rules", "policies", "instructions"))
+# Local-only working material beyond the "_" prefix (handled below): exeris-kernel keeps untracked
+# private drafts in docs/local-only/. Excluded so a local run sees what CI sees.
+LOCAL_ONLY_DIRS = ("local-only",)
+
+SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS + AGENT_DIRS + LOCAL_ONLY_DIRS
+# Links are checked everywhere content is published, agent trees and .github included: a rotted link
+# in CONTRIBUTING.md is a rotted link. Only generated output and non-content are skipped.
+LINK_SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS
+
+
+def walk_md(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS):
     for d, dn, fn in os.walk(root):
         dn[:] = [x for x in dn if x not in skip and not x.startswith("_")]  # _inventory, _research, _org-github are exempt
+        rel = os.path.relpath(d, root)
+        if skip_paths and any(rel == p or rel.startswith(p + os.sep) for p in skip_paths):
+            continue
         for f in fn:
             if f.endswith(".md"):
                 yield os.path.join(d, f)

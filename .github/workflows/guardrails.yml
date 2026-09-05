@@ -1,0 +1,27 @@
+# The organisation repository runs its own gates. It defines them for every other repo (ADR-085 §C.11)
+# and until now was the one repo they never ran on: its two review-routine documents carried no
+# frontmatter and nothing noticed. A gate its owner does not run is a gate nobody has tested.
+#
+# It calls the reusable workflows by relative path, so a pull request is checked against the version
+# in the pull request — not against @main, which would test the wrong code.
+name: guardrails
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled]
+concurrency:
+  group: guardrails-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  docs:
+    uses: ./.github/workflows/docs-lint.yml
+    with:
+      mode: strict
+      section-check: true
+  commits:
+    uses: ./.github/workflows/commit-lint.yml
+  pr-body:
+    uses: ./.github/workflows/pr-body-check.yml

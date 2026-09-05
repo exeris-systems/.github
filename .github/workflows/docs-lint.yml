@@ -1,16 +1,26 @@
 # Reusable: documentation structure and prose lint — ADR-085 §J.31–32.
 # Structure (frontmatter, filenames, registry, private links, Markdown) fails the job; Vale prose is warning-only
 # except Exeris.RetractedFigures, which is an error (claims-and-evidence.md rule 4).
+#
+# Path model: the whole repository is documentation. What is not — generated output, the guardrail bundle
+# checked out into the workspace, agent-tooling trees (their own schema, checked by agents_file_check.py) and
+# "_"-prefixed working directories — is named once in scripts/_common.py and shared by every step. The
+# previous model was opt-in via extra-paths, which failed silently by omission: exeris-docs listed
+# "adr rfc *.md" and so never linted standards/, templates/ or working-notes/ — three of its five directories,
+# including the standards ADR-085 makes binding.
 name: docs-lint
 on:
   workflow_call:
     inputs:
-      docs-root:        { type: string,  default: "docs",   description: "Directory holding the repo's documentation" }
+      docs-root:        { type: string,  default: ".",      description: "Root to lint. Default: the whole repository (see the path model above)" }
+      exclude:          { type: string,  default: "",       description: "Space-separated extra paths this repo does not lint, e.g. 'docs/vendor'" }
       mode:             { type: string,  default: "ramp",   description: "ramp = changed files must pass, unchanged only warn; strict = everything must pass" }
       section-check:    { type: boolean, default: false,    description: "Enforce required sections per doc type (enable after subsystem pages are rewritten)" }
       link-check:       { type: boolean, default: true }
       vale:             { type: boolean, default: true }
-      extra-paths:      { type: string,  default: "",       description: "Space-separated extra Markdown files/dirs to lint (e.g. 'adr rfc *.md' for exeris-docs)" }
+      # Accepted and ignored: the repository root subsumes it. Kept so the callers written against the
+      # previous model keep working — and start linting what they had left off their path list.
+      extra-paths:      { type: string,  default: "",       description: "Deprecated and ignored; the default root is the whole repository" }
 permissions:
   contents: read
   pull-requests: read
@@ -21,21 +31,37 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - name: Fetch shared guardrails (exeris-systems/.github)
+        if: ${{ github.repository != 'exeris-systems/.github' }}
         uses: actions/checkout@v4
         with: { repository: exeris-systems/.github, path: .guardrails }
+      - name: Use this checkout as the bundle (organisation repository only)
+        if: ${{ github.repository == 'exeris-systems/.github' }}
+        # This repository *is* the bundle. Checking it out from @main would test the merged version
+        # rather than the one in the pull request; copying the working checkout keeps every path
+        # below identical and tests the code actually under review.
+        run: rsync -a --exclude .git --exclude .guardrails ./ .guardrails/
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install pyyaml
+      - name: Resolve lint globs
+        id: globs
+        run: |
+          {
+            echo 'md<<GLOBS_EOF'
+            python .guardrails/scripts/lint_globs.py --root "${{ inputs.docs-root }}" --exclude "${{ inputs.exclude }}"
+            echo 'GLOBS_EOF'
+          } >> "$GITHUB_OUTPUT"
       - name: Frontmatter, filenames, private links
         env:
           GUARDRAILS_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+          GUARDRAILS_EXCLUDE: ${{ inputs.exclude }}
         run: |
           python .guardrails/scripts/frontmatter_check.py --root "${{ inputs.docs-root }}" --mode "${{ inputs.mode }}" \
-            ${{ inputs.section-check && '' || '--no-section-check' }} ${{ inputs.extra-paths }}
+            ${{ inputs.section-check && '' || '--no-section-check' }}
       - name: ADR registry
         # A repo may keep its records under docs/adr or at the root; use whichever exists.
         run: |
-          dir="${{ inputs.docs-root }}/adr"
+          dir="docs/adr"
           [ -d "$dir" ] || dir="adr"
           [ -d "$dir" ] || { echo "no adr/ directory — nothing to check"; exit 0; }
           python .guardrails/scripts/registry_check.py --adr-dir "$dir"
@@ -46,15 +72,15 @@ jobs:
         uses: DavidAnson/markdownlint-cli2-action@v19
         with:
           config: .guardrails/.markdownlint.yaml
-          globs: |
-            ${{ inputs.docs-root }}/**/*.md
-            ${{ inputs.extra-paths }}
+          globs: ${{ steps.globs.outputs.md }}
       - name: Vale (warnings; retracted figures are errors)
         if: ${{ inputs.vale }}
         uses: errata-ai/vale-action@v2
         with:
           version: 3.20.0
-          files: ${{ inputs.docs-root }} ${{ inputs.extra-paths }}
+          # Vale walks this root and applies the per-glob sections in .vale.ini, which mirror the
+          # exclusion taxonomy in scripts/_common.py.
+          files: ${{ inputs.docs-root }}
           vale_flags: "--config=.guardrails/vale/.vale.ini --minAlertLevel=warning"
           fail_on_error: true
           reporter: github-pr-check
@@ -62,12 +88,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Link check
         if: ${{ inputs.link-check }}
+        # Links are checked in agent trees and .github too — a rotted link in CONTRIBUTING.md is a
+        # rotted link. lychee.toml's exclude_path covers only generated output and the bundle.
         uses: lycheeverse/lychee-action@v2
-        env:
-          # Cross-repo references are absolute github.com URLs (docs-style-guide.md rule 8), so this
-          # step now leaves the checkout. Unauthenticated, GitHub rate-limits it and the check
-          # degrades into a silent pass; with the token lychee uses the API and its 5000/hr budget.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --config .guardrails/lychee.toml "${{ inputs.docs-root }}/**/*.md" ${{ inputs.extra-paths }}
+          args: --config .guardrails/lychee.toml "${{ inputs.docs-root }}/**/*.md"
           fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
