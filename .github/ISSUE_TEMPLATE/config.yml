@@ -1,0 +1,13 @@
+# issue-conventions.md rule 1. Disabling blank issues is the whole enforcement of "four forms":
+# without it every form is optional and the tracker fills with untyped prose.
+blank_issues_enabled: false
+contact_links:
+  - name: Question, or an idea that is not yet a change
+    url: https://github.com/orgs/exeris-systems/discussions
+    about: The tracker records work. A question, a design debate or an RFC-shaped topic belongs in Discussions.
+  - name: Security vulnerability
+    url: https://github.com/exeris-systems/.github/security/advisories/new
+    about: Never a public issue. Report privately; see SECURITY.md for the disclosure terms.
+  - name: The standards these forms enforce
+    url: https://github.com/exeris-systems/exeris-docs/blob/main/standards/README.md
+    about: Title grammar, labels, severity vocabulary and what each form is asking for.

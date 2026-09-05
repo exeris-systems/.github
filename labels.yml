@@ -1,0 +1,31 @@
+# Organisation label taxonomy — issue-conventions.md rule 3, applied by workflows/labels-sync.yml.
+#
+# Three axes: type (what kind of work), the review ladder (the severity vocabulary pr-review.md and
+# docs-guardrails-review.md emit), and release (what the generated notes need). Area labels are per
+# repo and deliberately NOT here — they are the one thing a repository may add.
+#
+# The sync is additive: it creates missing labels and corrects the colour and description of ones it
+# owns. It never deletes, so a repo's own `area:` labels survive and GitHub's defaults are left alone
+# rather than fought with. `bug`, `documentation` and `enhancement` therefore keep existing next to
+# the `type:` axis; the forms apply the `type:` labels, and the defaults simply go unused.
+- { name: "type: bug",           color: "d73a4a", description: "Observed behaviour contradicts a stated contract" }
+- { name: "type: enhancement",   color: "0e8a16", description: "Change to behaviour, SPI, annotation or generator" }
+- { name: "type: performance",   color: "fbca04", description: "Measured regression, budget breach or claim campaign" }
+- { name: "type: documentation", color: "0075ca", description: "Docs or Javadoc: stale, missing, wrong, evidence, boundary, drift" }
+- { name: "type: dependency",    color: "ededed", description: "Dependency and toolchain updates" }
+- { name: "triage",              color: "ffffff", description: "Not yet classified by a maintainer" }
+- { name: "adr",                 color: "5319e7", description: "Adds or amends an ADR (adr-conventions.md rule 9)" }
+# Colour matches the label already live in exeris-docs; the taxonomy follows the repository here
+# rather than recolouring a label people already recognise.
+- { name: "docs-only",           color: "0075ca", description: "Scope class docs-only — routes review to the docs step" }
+- { name: "doc-debt",            color: "1d76db", description: "[DOC DEBT] — tracked, counted and aged by the monthly audit" }
+- { name: "tck-debt",            color: "1d76db", description: "[TCK DEBT] — missing TCK coverage, tracked" }
+- { name: "hard-block",          color: "b60205", description: "[HARD BLOCK] finding open — PR cannot merge" }
+- { name: "cross-repo",          color: "e99695", description: "[CROSS-REPO] — coordinated change in another repo required" }
+- { name: "phase-gated",         color: "f9d0c4", description: "[PHASE] — blocked on a roadmap prerequisite" }
+- { name: "release: breaking",   color: "b60205", description: "Goes under ### Breaking; needs ADR + MIGRATION.md section" }
+- { name: "release: noteworthy", color: "0e8a16", description: "Worth a line in the hand-written release notes" }
+- { name: "release: internal",   color: "ededed", description: "Excluded from auto-generated release notes" }
+- { name: "good first issue",    color: "7057ff", description: "Bounded, documented, no Wall or hot-path implications" }
+- { name: "needs-reproducer",    color: "fef2c0", description: "Bug report without a reproducer — goes stale after 14 days" }
+- { name: "needs-evidence",      color: "fef2c0", description: "Performance claim without a report path — goes stale after 14 days" }

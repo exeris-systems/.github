@@ -1,0 +1,50 @@
+name: Performance finding
+description: A measured regression, budget breach or claim that needs re-measuring. Numbers only, with their evidence.
+title: "perf(<scope>): <what regressed, with the figure>"
+labels: ["type: performance", "triage", "needs-evidence"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        claims-and-evidence.md rule 1: a number without a report path and a figure state is not a finding. The authority for what may be claimed is [`exeris-benchmarks/docs/CLAIMS.md`](https://github.com/exeris-systems/exeris-benchmarks/blob/main/docs/CLAIMS.md). Remove `needs-evidence` yourself once the report path below is filled in.
+  - type: input
+    id: report
+    attributes:
+      label: Report path
+      description: The artefact the numbers come from. Without it this closes after 14 days.
+      placeholder: "exeris-benchmarks/results/entity-read-by-id/20260330T192043Z-.../report.md"
+    validations: { required: true }
+  - type: dropdown
+    id: state
+    attributes:
+      label: Figure state
+      options: ["citable — artefact exists and is reproducible", "unartifacted — measured, artefact not kept"]
+    validations: { required: true }
+  - type: textarea
+    id: numbers
+    attributes:
+      label: The numbers
+      description: Before and after, with units, percentiles and the harness. In a code block, copied — not retyped.
+    validations: { required: true }
+  - type: input
+    id: hardware
+    attributes:
+      label: Reference profile
+      description: Which profile the run used. A figure without one cannot be compared to another run.
+      placeholder: "perf-box-amd64 | Graviton (Enterprise) | developer laptop — not comparable"
+    validations: { required: true }
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - "regression — was faster before, on the same profile"
+        - "budget breach — over an allocation or latency budget a contract states"
+        - "claim campaign — a published claim needs re-measuring"
+    validations: { required: true }
+  - type: input
+    id: claim
+    attributes:
+      label: Affected claim id
+      description: If this changes a CLAIMS.md entry's state, the pull request carries a `Claim:` trailer.
+      placeholder: "B-5 | none"

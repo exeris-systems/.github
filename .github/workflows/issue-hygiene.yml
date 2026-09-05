@@ -1,0 +1,48 @@
+# Reusable: age out issues that were filed without the evidence their form asked for
+# (issue-conventions.md rule 5).
+#
+# Scope is deliberately narrow. This closes only issues carrying `needs-reproducer` or
+# `needs-evidence` — a maintainer's statement that a specific, named thing is missing. It never
+# touches an issue for being merely old: an unfixed bug is not stale, and a tracker that closes real
+# work to look tidy teaches people not to file.
+#
+# What it does not do: rule 5 says such an issue "reopens on the next comment". actions/stale cannot
+# reopen a closed issue — it removes the stale marker while the issue is still open. So a comment
+# during the 14-day window keeps it open; after it closes, reopening is a person clicking reopen.
+# The rule says so.
+name: issue-hygiene
+on:
+  workflow_call:
+    inputs:
+      days-before-stale: { type: number, default: 14 }
+      days-before-close: { type: number, default: 7 }
+permissions:
+  issues: write
+jobs:
+  issue-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          only-issue-labels: ""
+          any-of-issue-labels: "needs-reproducer,needs-evidence"
+          days-before-issue-stale: ${{ inputs.days-before-stale }}
+          days-before-issue-close: ${{ inputs.days-before-close }}
+          stale-issue-label: "stale"
+          stale-issue-message: >
+            This issue is labelled `needs-reproducer` or `needs-evidence`: a maintainer asked for a
+            specific missing thing — the smallest case that shows the behaviour, or the report path
+            and figure state behind a number. Nothing has arrived in
+            ${{ inputs.days-before-stale }} days. Add it and this label comes off; otherwise the
+            issue closes in ${{ inputs.days-before-close }} days and can be reopened whenever the
+            evidence exists.
+          close-issue-message: >
+            Closing for want of the reproducer or report path asked for above. This is not a
+            judgement on whether the problem is real — reopen with the evidence and it picks up
+            where it left off.
+          remove-stale-when-updated: true
+          # Pull requests are reviewed, not aged out.
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          exempt-issue-labels: "hard-block,phase-gated"
+          ascending: true
