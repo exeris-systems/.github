@@ -1,3 +1,12 @@
+---
+title: PR Review Router Patch
+type: reference
+visibility: public
+owning-repo: .github
+status: active
+last-verified: 2026-09-05
+---
+
 # Patch for `pr-review.md` (Project routine) — ADR-085 §J.33
 
 > **2026-09-05.** Edit 1 below is now also implemented in CI, as

@@ -21,7 +21,10 @@ jobs:
     with:
       mode: ramp                # switch to strict per repo once the frontmatter backfill has landed
       section-check: false      # enable after subsystem/module pages carry the required sections
-      # extra-paths: "adr rfc *.md"   # exeris-docs only — its records live at the repo root
+      # No path list: docs-lint reads the whole repository and skips what is not documentation
+      # (generated output, agent trees, "_"-prefixed working directories). Name a path here only
+      # to take something out — a vendored tree, say:
+      # exclude: "docs/vendor"
   commits:
     uses: exeris-systems/.github/.github/workflows/commit-lint.yml@main
   pr-body:
