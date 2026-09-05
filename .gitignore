@@ -1,0 +1,4 @@
+
+# Python bytecode from running the guardrail scripts locally
+__pycache__/
+*.pyc
