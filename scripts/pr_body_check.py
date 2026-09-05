@@ -46,7 +46,7 @@ def section_text(body: str, start: str, nexts: list[str]) -> str:
     return body[i + len(start):j].strip()
 
 
-def check(body: str, rep: Report, path="PR body"):
+def check(body: str, rep: Report, path="PR body", labels: set | None = None):
     body = strip_comments(body)
     rep.checked = 1
     # headings present and ordered
@@ -86,9 +86,17 @@ def check(body: str, rep: Report, path="PR body"):
             if s.startswith(key) and s not in (f"{key} #", f"{key}: ADR-", f"{key} ADR-"):
                 if not re.match(rx, s):
                     rep.error(path, f"trailer '{s}' does not match {rx}", rule="trailer")
-    # ADR touched ⇒ Refs required (checked by caller via env: GUARDRAILS_ADR_TOUCHED=1)
-    if os.environ.get("GUARDRAILS_ADR_TOUCHED") == "1" and not re.search(r"^Refs: ADR-\d{3}", body, re.M):
-        rep.error(path, "PR touches docs/adr/** but has no 'Refs: ADR-NNN' trailer", rule="trailer")
+    # ADR touched ⇒ both halves of adr-conventions.md rule 9: the Refs trailer and the `adr` label.
+    # The caller sets GUARDRAILS_ADR_TOUCHED=1. Labels come from the event payload; they are None
+    # when the body was supplied with --body-file, and the label half is then not judged rather
+    # than failed.
+    if os.environ.get("GUARDRAILS_ADR_TOUCHED") == "1":
+        if not re.search(r"^Refs: ADR-\d{3}", body, re.M):
+            rep.error(path, "PR adds or amends an ADR but has no 'Refs: ADR-NNN' trailer",
+                      rule="trailer")
+        if labels is not None and "adr" not in labels:
+            rep.error(path, "PR adds or amends an ADR but does not carry the 'adr' label "
+                            "(adr-conventions.md rule 9)", rule="label")
 
 
 def main():
@@ -96,6 +104,7 @@ def main():
     ap.add_argument("--body-file")
     a = ap.parse_args()
     rep = Report("pr_body_check")
+    labels = None
     if a.body_file:
         body = open(a.body_file, encoding="utf-8").read()
     else:
@@ -108,7 +117,8 @@ def main():
             print("::notice::pr_body_check: bot PR — skipped")
             return
         body = pr.get("body") or ""
-    check(body, rep)
+        labels = {(l or {}).get("name", "") for l in pr.get("labels") or []}
+    check(body, rep, labels=labels)
     sys.exit(rep.emit())
 
 

@@ -17,7 +17,13 @@ jobs:
       - name: Did the PR touch docs/adr/**?
         id: adr
         uses: tj-actions/changed-files@v45
-        with: { files: "**/docs/adr/**" }
+        with:
+          # Two layouts: repos with code keep ADRs under <repo>/docs/adr/, and exeris-docs, having
+          # none, keeps them at the root (ADR-085 §A.1). The first pattern alone never matched the
+          # repository that owns the registry.
+          files: |
+            **/docs/adr/**
+            adr/**
       - name: Check PR body
         env:
           GUARDRAILS_ADR_TOUCHED: ${{ steps.adr.outputs.any_changed == 'true' && '1' || '0' }}
