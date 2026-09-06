@@ -45,13 +45,22 @@ Every pull request in any Exeris repository, as **Step 1b of `pr-review.md`** �
 19. `@throws` on a method that can raise an `ExerisKernelException` without the EX-code → `[CONTRACT]`.
 20. `<pre>{@code` examples added → `[STYLE]` (use `{@snippet}`).
 
+20a. Doc comment (Java or TS) narrates history — "previously", "used to be", "fixed in", PR/issue numbers, why an earlier design was wrong → `[STYLE]` with the CHANGELOG/ADR destination named; CI catches the precision-first list, this step catches the rest ("no longer", bare "used to" in a past-tense reading).
+
+## Step 4-TS — TypeScript doc comments and goldens (tsdoc-conventions.md)
+20b. Javadoc markup in a `.ts` doc comment (`<p>`, `{@code}`, `@author`, `{type}` in a tag, `@param name desc` without the hyphen) → `[STYLE]`.
+20c. Export added to a published package without a release tag (`@public/@beta/@alpha/@internal`) → `[CONTRACT]`.
+20d. `api/*.api.md` or `api/tools.api.json` changed: a `-` line (removed tool/export/`required` input) with *Compatibility impact* `none` → `[HARD BLOCK]`; an added line with `none` → `[STYLE]` (should say `additive`). Golden changed without the `api-surface` label → `[STYLE]`.
+20e. Tool `description` string in `src/tools/**` changed → treat as 20d: it is the public documentation the model reads, and the golden diff must show it.
+20f. Emitter header string changed, or a new emitter with its own header text instead of the shared helper → `[CATEGORY-B]`; a file under `src/app/generated/**` edited without a generator run in the same PR → `[CATEGORY-B]`.
+
 ## Step 5 — Commits and agent files
 21. Subject over 100 characters or `feat/fix/perf/refactor` body without Motivation/Modification/Result — CI catches it; if CI was skipped (draft merged, bot), report as `[STYLE]`.
 22. `CLAUDE.md` changed: does it restate a rule a standard or a CI gate already enforces → `[STYLE]` (link instead); does it weaken an ADR → `[HARD BLOCK]`.
 23. New `copilot-instructions.md` / `.cursorrules` / `AGENTS.md` content beyond a pointer → `[DOC DEBT]`.
 
 ## Step 6 — Changelog and compatibility (changelog-conventions.md)
-24. Release PR: `### Breaking` present and consistent with the japicmp report; `accepted-api-changes.json` justified; `MIGRATION.md` section for non-empty Breaking → else `[HARD BLOCK]`.
+24. Release PR: `### Breaking` present and consistent with the japicmp report (Java) or the golden diff (TS); `accepted-api-changes.json` justified; `MIGRATION.md` section for non-empty Breaking → else `[HARD BLOCK]`.
 25. Non-release PR with a `Compatibility impact: breaking (ADR-NNN)` line: is the ADR accepted and does `accepted-api-changes.json` gain the entry in this PR → else `[CONTRACT]`.
 
 ## Output format

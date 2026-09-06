@@ -54,7 +54,9 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
    export default tseslint.config(..., ...exerisTsdoc({ gated: ["src/index.ts"] }));
    ```
 
-   The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules. `typedoc: true` and `api-report:` are opt-in per package and stay off until the package commits the config and the golden they read.
+   The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules.
+
+   The rest is per package and opt-in: copy `ts/tsdoc.json` beside the package's `tsconfig.json`; a library that publishes adds `typedoc` (and `@microsoft/api-extractor`), ports `ts/typedoc.base.json` and `ts/api-extractor.base.json`, and sets `typedoc: true` with `api-report: api-extractor`; an MCP server sets `api-report: mcp-tool-surface`. Both stay off until the package commits the config and the golden they read — **the first golden lands in that build's own pull request, reviewed on its own**, because a golden reviewed alongside a feature is a golden nobody reads.
 4. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
 5. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
 
@@ -80,6 +82,14 @@ Vale inline toggles are the sanctioned way to quote a retracted figure on purpos
 … earlier revisions asserted ">160 GB on a 4 GB payload"; no campaign supports it …
 <!-- vale Exeris.RetractedFigures = YES -->
 ```
+
+## What was verified on 2026-09-06 (TypeScript)
+
+- `ts/eslint.tsdoc.mjs` spread into `exeris-ai-bridge`'s own type-aware config: 146 errors / 14 warnings (139 `require-jsdoc` on the gated `src/tools/**` — narrow the gated globs at kickoff; 6 `tsdoc/syntax`; 1 `check-tag-names`). On `exeris-codegen-ts` with a minimal typescript-eslint base: 248 errors / 113 warnings (113 `tsdoc/syntax`, 90 `check-tag-names` = 57 `{@code}` + 33 `@author`, 45 gated `require-jsdoc`; warnings 88 `require-jsdoc`, 15 `no-restricted-syntax` = 11 HTML markup + 4 history, 10 `multiline-blocks`). The history regex is the anchored list of ADR-085's 2026-09-05 amendment at warning level (the unanchored one produced 3 false positives on ai-bridge); `jsdoc/no-restricted-syntax` reports one context per comment, so the history contexts are listed first; `@author`/`@version` are errors through `tagNamePreference`.
+- `ts/tsdoc.json`: `extends: ["typedoc/tsdoc.json"]` is required (`@since`, `@category` are typedoc's, not TSDoc core); the schema URL must be `tsdoc.schema.json`; `supportForTags` must not be used (it turns every unlisted core tag, `{@link}` included, into `tsdoc-unsupported-tag`).
+- typedoc validation (`notDocumented`, `treatValidationWarningsAsErrors`): ai-bridge 36 warnings → exit 4; codegen-ts library modules 293 + 5 `notExported` → exit 4.
+- api-extractor on `exeris-sdk-ui-kit`: report produced in one run; `ae-missing-release-tag` on both exports; CI mode exits 1 on a report diff after adding an export.
+- `ts/scripts/mcp-tool-surface.mjs` on ai-bridge: 25 tools accepted; re-run "unchanged" exit 0; hand-edited golden → `- removed tool … (MAJOR)`, `~ changed tool …`, exit 2.
 
 ## What was verified on 2026-09-04
 
