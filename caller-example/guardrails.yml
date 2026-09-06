@@ -47,4 +47,13 @@ jobs:
     secrets: inherit
   # javadoc:                    # JVM repos with a gated module only
   #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
-  #   with: { modules: "exeris-kernel-spi" }
+  #   with:
+  #     # Gated in full — every file complies, always. Rule 11's exception: the surfaces a
+  #     # downstream implementor reads. These modules need java/javadoc-plugin-block.xml in
+  #     # their own pom.
+  #     modules: "exeris-kernel-spi,exeris-kernel-tck"
+  #     # Gated on the changed files of this pull request, which is what javadoc-conventions.md
+  #     # rule 11 says for Kernel Core, Community and tooling: no backfill mandate, but a file you
+  #     # touch has to comply. Needs no pom change, so a module can go under the gate long before
+  #     # it is clean.
+  #     diff-modules: "exeris-kernel-core,exeris-kernel-community"
