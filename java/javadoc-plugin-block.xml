@@ -1,4 +1,7 @@
-<!-- Port target from exeris-sdk-annotations/pom.xml (already passes clean) — add to each gated module's <build><plugins>.
+<!-- Port target from exeris-sdk-annotations/pom.xml — add to each gated module's <build><plugins>.
+     It used to say that module "already passes clean". That was true of doclint and of nothing else:
+     the Checkstyle half of the same gate reports 679 errors on it (ADR-085 `## Amendments`, 2026-09-06).
+     This block configures the doclint half; passing it is not passing the gate.
      ADR-085 §F.21. For exeris-kernel-spi, clear the ~160 existing doclint findings first (bounded backfill), then flip. -->
 <plugin>
     <groupId>org.apache.maven.plugins</groupId>
