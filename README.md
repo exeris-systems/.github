@@ -24,6 +24,7 @@ commitlint.config.js     commit-conventions.md rules 1–4 (custom rules: exeris
 vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/styles/Exeris (Terminology, RetractedFigures, DriftPatterns, Numbers, Absolutes)
 lychee.toml
 java/checkstyle-javadoc.xml        read from the checkout by javadoc-gate.yml — do not copy it into a repo
+java/checkstyle-engine-pom.xml     the Checkstyle ENGINE, pinned beside the ruleset it runs
 java/javadoc-plugin-block.xml      port target for gated modules' pom.xml
 caller-example/guardrails.yml      copy into each repo's .github/workflows/
 ```
@@ -36,6 +37,7 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 
    - `modules` — gated in full. Port `java/javadoc-plugin-block.xml` into each of these modules' own `pom.xml` (not the parent: `-am` would gate their dependencies too).
    - `diff-modules` — gated on the pull request's changed files only, which is what rule 11 says for Kernel Core, Community and tooling. **No pom change**: this half invokes `javadoc` directly with the flags the profile would have set, so a module can be put under the gate without being made clean first.
+   - `build-modules` — built, never audited. An annotation processor or generator a gated module needs is not reachable by `-am`: `<annotationProcessorPaths>` is not a reactor edge, and without naming it the install step dies on a missing artifact.
 
    That is the whole adoption cost: the gate checks this bundle out and reads `java/checkstyle-javadoc.xml` from there, and it uses `./mvnw` only if the repo has one.
 4. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).

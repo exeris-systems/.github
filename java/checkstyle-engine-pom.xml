@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Checkstyle ENGINE, pinned next to the ruleset it runs.
+
+  maven-checkstyle-plugin 3.6.0 pulls Checkstyle 9.3 by default — released early 2022, before
+  {@snippet} existed (JDK 18). javadoc-conventions.md rule 8 REQUIRES {@snippet}, so the gate could
+  not parse the construct it mandates: measured on a doc comment carrying a snippet with markup
+  tags, 9.3 reports
+
+      Javadoc comment at column 0 has parse error. Details: mismatched input '     *' expecting
+      JAVADOC_INLINE_TAG_END while parsing JAVADOC_INLINE_TAG [MissingDeprecated]
+
+  and 13.8.0 reports nothing. The error is also attributed to MissingDeprecated, a check that has
+  nothing to do with it — the module that happened to ask for the Javadoc AST first.
+
+  A repository could pin the engine in its own pom, and exeris-kernel does. That is the wrong place:
+  the ruleset ships here, the rules it encodes are this bundle's, and a repository that adopts the
+  gate should not have to discover a grammar version to make the bundle's own rules parse. The
+  workflow resolves this file's classpath and runs `com.puppycrawl.tools.checkstyle.Main` from it.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>eu.exeris.guardrails</groupId>
+  <artifactId>checkstyle-engine</artifactId>
+  <version>1</version>
+  <packaging>pom</packaging>
+  <dependencies>
+    <dependency>
+      <groupId>com.puppycrawl.tools</groupId>
+      <artifactId>checkstyle</artifactId>
+      <version>13.8.0</version>
+    </dependency>
+  </dependencies>
+</project>

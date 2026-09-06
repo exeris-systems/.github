@@ -9,7 +9,7 @@
 #                  carrying documentation debt is not this pull request's problem; a file this pull
 #                  request touched is.
 #
-# Both run in one job so both worklists print in one run, and so the check name a ruleset requires
+# Both run in one job so every worklist prints in one run, and so the check name a ruleset requires
 # does not change when a repository moves a module from one list to the other.
 name: javadoc-gate
 on:
@@ -17,9 +17,10 @@ on:
     inputs:
       modules:      { type: string, default: "", description: "Comma-separated Maven modules gated in full, e.g. 'exeris-kernel-spi,exeris-kernel-tck'" }
       diff-modules: { type: string, default: "", description: "Comma-separated Maven modules gated on the pull request's changed files only (javadoc-conventions.md rule 11)" }
+      build-modules: { type: string, default: "", description: "Modules a gated module needs BUILT but that are not themselves gated — an annotation processor, a code generator. `-am` does not find these: <annotationProcessorPaths> is not a reactor edge." }
       java-version: { type: string, default: "25" }
       java-distribution: { type: string, default: "temurin" }
-      source-root:  { type: string, default: "src/main/java", description: "Source root inside each diff-gated module" }
+      source-root:  { type: string, default: "src/main/java", description: "Source root inside each gated module" }
       extra-maven-args: { type: string, default: "" }
 permissions:
   contents: read
@@ -33,10 +34,9 @@ jobs:
           # it. The whole half never looks at history, so a repository that gates no module in diff
           # mode keeps the cheap checkout.
           fetch-depth: ${{ inputs.diff-modules != '' && 0 || 1 }}
-      # The Checkstyle ruleset is part of the bundle, like every other config these gates read.
-      # It used to be named at a path inside one repository — `exeris-kernel-build-config/src/main/
-      # resources/checkstyle-javadoc.xml` — which meant the gate could only ever run in the repo that
-      # had copied it there, and a copy is a thing that drifts. Read it from the checkout instead.
+      # The Checkstyle ruleset AND the engine that runs it are part of the bundle, like every other
+      # config these gates read. The ruleset used to be named at a path inside one repository, which
+      # meant the gate could only run where a copy had been made, and a copy is a thing that drifts.
       - uses: actions/checkout@v4
         with: { repository: exeris-systems/.github, path: .guardrails }
       - uses: actions/setup-java@v4
@@ -52,9 +52,23 @@ jobs:
       - name: Resolve the gated module set
         id: set
         run: |
-          pl=$(printf '%s,%s' "${{ inputs.modules }}" "${{ inputs.diff-modules }}" | sed 's/^,//; s/,$//')
-          [ -n "$pl" ] || { echo "::error::neither 'modules' nor 'diff-modules' was given — the gate has nothing to check"; exit 1; }
-          echo "pl=$pl" >> "$GITHUB_OUTPUT"
+          gated=$(printf '%s,%s' "${{ inputs.modules }}" "${{ inputs.diff-modules }}" | sed 's/,\+/,/g; s/^,//; s/,$//')
+          [ -n "$gated" ] || { echo "::error::neither 'modules' nor 'diff-modules' was given — the gate has nothing to check"; exit 1; }
+          # `build-modules` joins the reactor list and NOTHING else: it is built, never audited.
+          build=$(printf '%s,%s' "$gated" "${{ inputs.build-modules }}" | sed 's/,\+/,/g; s/^,//; s/,$//')
+          echo "gated=$gated" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+      # The engine, from the bundle. maven-checkstyle-plugin 3.6.0 defaults to Checkstyle 9.3, which
+      # predates {@snippet} and cannot parse the construct rule 8 requires — 77 parse errors on
+      # exeris-sdk-annotations under 9.3, 0 under 13.8.0, every other finding identical. Resolving the
+      # engine here means a repository adopting this gate does not have to discover a grammar version
+      # to make the bundle's own rules parse. See java/checkstyle-engine-pom.xml.
+      - name: Resolve the pinned Checkstyle engine
+        id: cs
+        run: |
+          ${{ steps.mvn.outputs.cmd }} -q -B -ntp -f .guardrails/java/checkstyle-engine-pom.xml \
+            dependency:build-classpath -Dmdep.outputFile="$RUNNER_TEMP/cs-cp.txt"
+          java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main --version
       # Install first, and skip Checkstyle while doing it. Two reasons, both learned the hard way on
       # exeris-kernel. A repository whose Checkstyle plugin takes a reactor module as a plugin
       # DEPENDENCY (for the ruleset) cannot resolve it from the reactor — plugin dependencies come
@@ -62,45 +76,29 @@ jobs:
       # artifact eu.exeris:exeris-kernel-build-config:jar:0.12.0 in central". And `javadoc:javadoc`
       # does trigger it, through generate-sources, on every module `-am` drags in. The diff half
       # needs this step for a second reason: it compiles the classes `javadoc -cp` reads.
+      #
+      # `extra-maven-args` reaches this step too. Without it a repository could not turn off a plugin
+      # that runs during install but has nothing to do with the gate — exeris-sdk had to tie
+      # `jacoco.skip` to `skipTests` in its own pom to get past this step.
       - name: Resolve the reactor into the local repository
         id: reactor
-        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ steps.set.outputs.pl }}" -am -DskipTests -Dcheckstyle.skip=true install
+        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ steps.set.outputs.build }}" -am -DskipTests -Dcheckstyle.skip=true install ${{ inputs.extra-maven-args }}
 
-      # ---------------------------------------------------------------- whole-module half
+      # ---------------------------------------------------------------- Javadoc (doclint) half
+      # These need the reactor: `javadoc` reads a resolved classpath and compiled classes.
+      #
+      # `!cancelled()` rather than `always()`: `always()` also runs after someone cancels the
+      # workflow, holding a runner to produce a report nobody is waiting for. Gated on the install
+      # step, because `!cancelled()` alone does not say WHICH earlier step failed, and with a failed
+      # install these steps die on a missing artifact rather than on a Javadoc finding.
       - name: Javadoc (failOnWarnings) on fully gated modules
         if: ${{ !cancelled() && steps.reactor.outcome == 'success' && inputs.modules != '' }}
         run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests -Dcheckstyle.skip=true javadoc:javadoc ${{ inputs.extra-maven-args }}
-      # `-Dcheckstyle.config.location` is the plugin's documented user property, but an explicit
-      # <configLocation> in a pom silently overrides it — a bogus path does not even fail. A repo
-      # adopting this gate must express its own configLocation as a property for this step to run
-      # the ruleset below rather than the repo's own.
-      #
-      # The condition is what lets the halves report in one run. They check different rules and a
-      # repository needs every worklist at once, but a step is skipped by default once an earlier
-      # one fails, so the Checkstyle half stayed invisible for exactly as long as doclint was red —
-      # which is when its own findings are most useful. Measured while adopting this gate on
-      # exeris-kernel: doclint reported 62 errors on `exeris-kernel-spi` and the run stopped there,
-      # while this half had 644 errors on the same module that no run had ever printed.
-      #
-      # `!cancelled()` rather than `always()`: `always()` also runs the step after someone cancels
-      # the workflow, holding a runner to produce a report nobody is waiting for. And gated on the
-      # install step, because `!cancelled()` alone does not say WHICH earlier step failed: with a
-      # failed install this step resolves the Checkstyle plugin's own dependencies and dies on
-      # `Could not find artifact …-build-config`, which is the failure the install step exists to
-      # prevent, reported as though it were a Checkstyle configuration problem.
-      #
-      # None of this weakens the gate. Every step still fails the job on its own findings; the
-      # condition governs whether it runs, not whether its result counts.
-      - name: Checkstyle Javadoc modules on fully gated modules
-        if: ${{ !cancelled() && steps.reactor.outcome == 'success' && inputs.modules != '' }}
-        run: |
-          ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests checkstyle:check \
-            -Dcheckstyle.config.location="$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" ${{ inputs.extra-maven-args }}
 
-      # ---------------------------------------------------------------- changed-files half (rule 11)
       - name: Changed Java files in diff-gated modules
         id: targets
-        if: ${{ !cancelled() && steps.reactor.outcome == 'success' && inputs.diff-modules != '' }}
+        # Git and Python only — no reactor, so this reports even when the build is broken.
+        if: ${{ !cancelled() && inputs.diff-modules != '' }}
         run: |
           base="${{ github.event.pull_request.base.sha }}"
           # "Changed files" only means something against a base. A caller that also runs this on
@@ -118,8 +116,8 @@ jobs:
             --source-root "${{ inputs.source-root }}" \
             --out "$RUNNER_TEMP/javadoc-diff"
       # Direct `javadoc`, not the Maven plugin: the plugin's unit is a module and rule 11's unit is a
-      # file. The flags below reproduce what the `javadoc-gate` profile configures, because the two
-      # halves have to agree on what a finding is:
+      # file. The flags reproduce what the `javadoc-gate` profile configures, because the two halves
+      # have to agree on what a finding is:
       #   -Xdoclint:all              <doclint>all</doclint>
       #   warnings counted as errors <failOnWarnings>true</failOnWarnings>; javadoc has no -Werror,
       #                              so the log is counted rather than the exit code
@@ -157,24 +155,52 @@ jobs:
             fi
           done
           exit $failed
-      # `checkstyle.includes` is relative to the module's source root, which is the second form
-      # javadoc_diff_targets.py writes. Measured on exeris-kernel-spi: the module-wide run audits
-      # 266 files and reports 646 findings, the same run with one include audits 1 and reports 1.
-      # Resources are excluded explicitly — the plugin audits `**/*.properties` by default, which is
-      # not a file this pull request changed and not a thing a Javadoc ruleset has anything to say
-      # about. Every module is run before the job fails, so one red module does not hide the rest.
+
+      # ---------------------------------------------------------------- Checkstyle half
+      # `com.puppycrawl.tools.checkstyle.Main` from the pinned engine, not maven-checkstyle-plugin.
+      # Three problems go away with the plugin: it decides the engine version (see the engine pom),
+      # an explicit <configLocation> in a repository's pom silently overrides
+      # `-Dcheckstyle.config.location` so the gate can run the wrong ruleset without saying so, and
+      # its plugin dependencies are resolved from repositories rather than the reactor.
+      #
+      # These steps need no reactor at all — Checkstyle parses source. So they report even when the
+      # build is broken, which is when a worklist is most useful: measured while adopting this gate on
+      # exeris-kernel, doclint stopped the run at 62 errors on `exeris-kernel-spi` while this half had
+      # 644 on the same module that no run had ever printed. Every module is audited before the step
+      # fails, so one red module does not hide the rest.
+      #
+      # The CLI's exit status is the number of ERROR-severity findings; warnings print and do not
+      # fail. That is what keeps rule 12's history check advisory, as ADR-085 §J.31 says it is.
+      - name: Checkstyle Javadoc modules on fully gated modules
+        if: ${{ !cancelled() && steps.cs.outcome == 'success' && inputs.modules != '' }}
+        run: |
+          set -uo pipefail
+          failed=0
+          IFS=',' read -ra mods <<< "${{ inputs.modules }}"
+          for module in "${mods[@]}"; do
+            module="$(echo "$module" | tr -d '[:space:]')"; [ -n "$module" ] || continue
+            src="$module/${{ inputs.source-root }}"
+            if [ ! -d "$src" ]; then
+              echo "::error::$module has no $src — check the module list or the source-root input"
+              failed=1; continue
+            fi
+            echo "::group::checkstyle — $module"
+            java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main \
+              -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" "$src" || failed=1
+            echo "::endgroup::"
+          done
+          exit $failed
       - name: Checkstyle Javadoc modules on changed files only
-        if: ${{ !cancelled() && steps.reactor.outcome == 'success' && steps.targets.outputs.any == 'true' }}
+        if: ${{ !cancelled() && steps.cs.outcome == 'success' && steps.targets.outputs.any == 'true' }}
         run: |
           set -uo pipefail
           failed=0
           for mf in "$RUNNER_TEMP"/javadoc-diff/*.module; do
             n="${mf%.module}"; module=$(cat "$mf")
-            echo "::group::checkstyle — $module"
-            ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "$module" -DskipTests checkstyle:check \
-              -Dcheckstyle.config.location="$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" \
-              -Dcheckstyle.includeResources=false -Dcheckstyle.includeTestResources=false \
-              -Dcheckstyle.includes="$(cat "$n.includes")" ${{ inputs.extra-maven-args }} || failed=1
+            mapfile -t files < "$n.files"
+            echo "::group::checkstyle — $module (${#files[@]} changed file(s))"
+            java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main \
+              -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" "${files[@]}" || failed=1
             echo "::endgroup::"
           done
           exit $failed
