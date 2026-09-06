@@ -61,3 +61,10 @@ jobs:
   #     # processor reaches its consumer through <annotationProcessorPaths>, which is not a reactor
   #     # edge, so the install step dies on a missing artifact unless the module is named here.
   #     # build-modules: "exeris-sdk-annotation-catalog"
+  # tsdoc:                      # TypeScript packages only — ONE JOB PER PACKAGE, the gate's unit is a package
+  #   uses: exeris-systems/.github/.github/workflows/tsdoc-gate.yml@main
+  #   # The three targets and the settings each one takes. `typedoc` and `api-report` stay off until
+  #   # that package commits the config and the golden they read; the lint half runs from day one.
+  #   with: { package-dir: ".", typedoc: true, api-report: "mcp-tool-surface" }                 # exeris-ai-bridge
+  #   with: { package-dir: "exeris-sdk-ui-kit", typedoc: true, api-report: "api-extractor" }    # exeris-sdk
+  #   with: { package-dir: "exeris-codegen-ts", typedoc: true }                                 # exeris-tooling

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "//": "Port target — copy to <package>/api-extractor.json. The committed api/<pkg>.api.md is the TS analogue of the japicmp gate (ADR-065): CI runs `api-extractor run` and fails on drift; a developer accepts a change with `api-extractor run --local` and commits the report. tsdoc-conventions.md rules 7–8.",
+  "mainEntryPointFilePath": "<projectFolder>/dist/index.d.ts",
+  "apiReport": { "enabled": true, "reportFolder": "<projectFolder>/api/", "reportTempFolder": "<projectFolder>/build/api-extractor/" },
+  "docModel": { "enabled": false },
+  "dtsRollup": { "enabled": false },
+  "tsdocMetadata": { "enabled": false },
+  "messages": {
+    "compilerMessageReporting": { "default": { "logLevel": "error" } },
+    "extractorMessageReporting": {
+      "default": { "logLevel": "warning" },
+      "ae-missing-release-tag": { "logLevel": "error" },
+      "ae-forgotten-export": { "logLevel": "error" },
+      "ae-incompatible-release-tags": { "logLevel": "error" },
+      "ae-undocumented": { "logLevel": "warning" }
+    },
+    "tsdocMessageReporting": { "default": { "logLevel": "warning" }, "tsdoc-undefined-tag": { "logLevel": "error" } }
+  }
+}

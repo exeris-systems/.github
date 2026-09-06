@@ -22,6 +22,8 @@
 - { name: "tck-debt",            color: "1d76db", description: "[TCK DEBT] — missing TCK coverage, tracked" }
 - { name: "hard-block",          color: "b60205", description: "[HARD BLOCK] finding open — PR cannot merge" }
 - { name: "cross-repo",          color: "e99695", description: "[CROSS-REPO] — coordinated change in another repo required" }
+- { name: "api-surface",         color: "5319e7", description: "Changes a committed API golden — api/*.api.md or api/tools.api.json (tsdoc-conventions.md rules 7-8)" }
+- { name: "generated",           color: "ededed", description: "Touches Category-B generated output — javadoc rule 10 / tsdoc rule 10" }
 - { name: "phase-gated",         color: "f9d0c4", description: "[PHASE] — blocked on a roadmap prerequisite" }
 - { name: "release: breaking",   color: "b60205", description: "Goes under ### Breaking; needs ADR + MIGRATION.md section" }
 - { name: "release: noteworthy", color: "0e8a16", description: "Worth a line in the hand-written release notes" }

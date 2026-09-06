@@ -1,0 +1,14 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "//": "Port target — copy to <package>/typedoc.json and set entryPoints to the published entry point(s). tsdoc-conventions.md rule 1 (L1).",
+  "entryPoints": ["src/index.ts"],
+  "out": "build/api-docs",
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "excludeExternals": true,
+  "validation": { "notExported": true, "invalidLink": true, "notDocumented": true, "rewrittenLink": true },
+  "requiredToBeDocumented": ["Class", "Interface", "Enum", "EnumMember", "Function", "TypeAlias", "Property", "Method", "Variable", "Accessor"],
+  "treatValidationWarningsAsErrors": true,
+  "sort": ["kind", "alphabetical"]
+}
