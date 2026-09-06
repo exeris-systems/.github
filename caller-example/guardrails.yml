@@ -61,3 +61,11 @@ jobs:
   #     # processor reaches its consumer through <annotationProcessorPaths>, which is not a reactor
   #     # edge, so the install step dies on a missing artifact unless the module is named here.
   #     # build-modules: "exeris-sdk-annotation-catalog"
+  # tsdoc:                      # TypeScript packages only
+  #   uses: exeris-systems/.github/.github/workflows/tsdoc-gate.yml@main
+  #   with:
+  #     package-dir: "."
+  #     # Both stay off until the package commits the config and the golden they read:
+  #     # typedoc: true                      # a library — rule 1 on the published entry points
+  #     # api-report: "api-extractor"        # a library — the committed api/<pkg>.api.md
+  #     # api-report: "mcp-tool-surface"     # an MCP server — the committed api/tools.api.json

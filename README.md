@@ -11,6 +11,7 @@ Organisation-level defaults and the reusable CI gates that enforce ADR-085. Ever
     commit-lint.yml      reusable — commitlint on PR commits and on the PR title
     pr-body-check.yml    reusable — template headings + classification grammar + trailers
     javadoc-gate.yml     reusable — Javadoc gate: whole-module on `modules`, changed-files on `diff-modules`
+    tsdoc-gate.yml       reusable — TS doc comments + API-surface goldens (tsdoc-conventions.md)
   PULL_REQUEST_TEMPLATE.md
   CONTRIBUTING.md
 scripts/
@@ -25,6 +26,11 @@ vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/sty
 lychee.toml
 java/checkstyle-javadoc.xml        read from the checkout by javadoc-gate.yml — do not copy it into a repo
 java/checkstyle-engine-pom.xml     the Checkstyle ENGINE, pinned beside the ruleset it runs
+ts/eslint.tsdoc.mjs                shared flat-config fragment — the package imports it; the gate verifies it did
+ts/tsdoc.json                      tag definitions for tsdoc/syntax — copy beside the package's tsconfig
+ts/typedoc.base.json               port target for a library's typedoc.json (rule 1)
+ts/api-extractor.base.json         port target for a library's api-extractor.json (rules 7-8)
+ts/scripts/mcp-tool-surface.mjs    tools/list golden for an MCP server — the TS analogue of japicmp
 java/javadoc-plugin-block.xml      port target for gated modules' pom.xml
 caller-example/guardrails.yml      copy into each repo's .github/workflows/
 ```
@@ -40,6 +46,15 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
    - `build-modules` — built, never audited. An annotation processor or generator a gated module needs is not reachable by `-am`: `<annotationProcessorPaths>` is not a reactor edge, and without naming it the install step dies on a missing artifact.
 
    That is the whole adoption cost: the gate checks this bundle out and reads `java/checkstyle-javadoc.xml` from there, and it uses `./mvnw` only if the repo has one.
+
+4. TypeScript packages add the `tsdoc` job. Adoption is two devDependencies (`eslint-plugin-jsdoc`, `eslint-plugin-tsdoc`) and one import in the package's flat config:
+
+   ```js
+   import exerisTsdoc from "./.guardrails/ts/eslint.tsdoc.mjs";
+   export default tseslint.config(..., ...exerisTsdoc({ gated: ["src/index.ts"] }));
+   ```
+
+   The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules. `typedoc: true` and `api-report:` are opt-in per package and stay off until the package commits the config and the golden they read.
 4. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
 5. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
 

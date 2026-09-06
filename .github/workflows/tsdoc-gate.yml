@@ -1,0 +1,83 @@
+# Reusable: TS doc-comment and API-surface gate — ADR-085 §F.21a-c, tsdoc-conventions.md rules 1-8, 12.
+#
+# Three checks, each opt-in per package by input:
+#   lint        eslint carrying the shared `ts/eslint.tsdoc.mjs` fragment (rules 2-6, 12) — always
+#   typedoc     typedoc validation, notDocumented on the published entry points (rule 1) — libraries
+#   api-report  api-extractor drift on the committed `api/<pkg>.api.md` (rules 7-8), OR the MCP
+#               tool-surface golden for a server whose API is `tools/list`
+#
+# The lint check is different in kind from the other two, and the difference is worth stating: a flat
+# ESLint config cannot be injected from outside, so this workflow does not APPLY the shared rules —
+# the package's own `eslint.config.*` imports them. That is why there is a step that verifies the
+# reference. Without it, a green lint step would mean "the package's own rules passed", which is not
+# what a shared gate is for.
+name: tsdoc-gate
+on:
+  workflow_call:
+    inputs:
+      package-dir:   { type: string,  default: ".",  description: "Directory holding package.json" }
+      node-version:  { type: string,  default: "22" }
+      typedoc:       { type: boolean, default: false, description: "Run typedoc validation (typedoc.json in package-dir)" }
+      api-report:    { type: string,  default: "",   description: "'api-extractor' | 'mcp-tool-surface' | ''" }
+      mcp-server:    { type: string,  default: "dist/server.js" }
+      mcp-golden:    { type: string,  default: "api/tools.api.json" }
+      build-command: { type: string,  default: "npm run build" }
+permissions:
+  contents: read
+jobs:
+  tsdoc-gate:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: "${{ inputs.package-dir }}" } }
+    steps:
+      - uses: actions/checkout@v4
+      # Beside the package, not at the repository root: the fragment is imported by a relative path
+      # from `eslint.config.*`, and a package that does not sit at the root would otherwise have to
+      # write a different path in CI than it writes locally.
+      - uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: "${{ inputs.package-dir }}/.guardrails" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "${{ inputs.node-version }}"
+          cache: npm
+          cache-dependency-path: "${{ inputs.package-dir }}/package-lock.json"
+      - run: npm ci --ignore-scripts
+      # A shared gate that cannot see whether its rules are loaded is a gate in name only. `npx eslint`
+      # runs whatever the package configured; this asserts the package configured THIS.
+      - name: The package loads the shared fragment
+        id: wired
+        run: |
+          cfg=$(ls eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts 2>/dev/null | head -1 || true)
+          if [ -z "$cfg" ]; then
+            echo "::error::no flat ESLint config in ${{ inputs.package-dir }} — tsdoc-conventions.md rules 2-6 and 12 are enforced through it"
+            exit 1
+          fi
+          if ! grep -q "guardrails/ts/eslint.tsdoc" "$cfg"; then
+            echo "::error::$cfg does not import .guardrails/ts/eslint.tsdoc.mjs — the shared rules are not loaded, so a green lint step would only mean the package's own rules passed"
+            exit 1
+          fi
+          echo "$cfg loads the shared fragment"
+      # --max-warnings=-1 is deliberate: rule 11 makes require-jsdoc a WARNING outside the gated
+      # entry points, and rule 12's history check warns everywhere, because whether a sentence is
+      # archaeology or a statement about the present is a reviewer's call. Errors still fail.
+      - name: Doc-comment lint (tsdoc/syntax, jsdoc rules)
+        if: ${{ !cancelled() && steps.wired.outcome == 'success' }}
+        run: npx eslint --max-warnings=-1 .
+      # `--ignore-scripts` above keeps install from running arbitrary lifecycle hooks; a package whose
+      # BUILD needs them says so in build-command.
+      - name: Build declarations
+        id: build
+        if: ${{ !cancelled() && (inputs.typedoc || inputs.api-report != '') }}
+        run: ${{ inputs.build-command }}
+      # Each of the remaining checks reports on its own. They read different things — typedoc reads the
+      # sources, api-extractor the emitted .d.ts, the golden a running server — and a repository needs
+      # every worklist in one run rather than one per red build. Same reason javadoc-gate stopped
+      # letting doclint hide the Checkstyle half.
+      - name: typedoc validation (notDocumented, invalidLink, notExported)
+        if: ${{ !cancelled() && inputs.typedoc && steps.build.outcome == 'success' }}
+        run: npx typedoc --emit none
+      - name: api-extractor drift on api/*.api.md
+        if: ${{ !cancelled() && inputs.api-report == 'api-extractor' && steps.build.outcome == 'success' }}
+        run: npx api-extractor run --verbose
+      - name: MCP tool-surface golden
+        if: ${{ !cancelled() && inputs.api-report == 'mcp-tool-surface' && steps.build.outcome == 'success' }}
+        run: node .guardrails/ts/scripts/mcp-tool-surface.mjs --server "${{ inputs.mcp-server }}" --golden "${{ inputs.mcp-golden }}"
