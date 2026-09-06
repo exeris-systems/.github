@@ -16,6 +16,7 @@ on:
   workflow_call:
     inputs:
       package-dir:   { type: string,  default: ".",  description: "Directory holding package.json" }
+      lint-scope:    { type: string,  default: "package", description: "'package' = every source file; 'diff' = only the files this pull request changed (tsdoc-conventions.md rule 11, for Angular apps and internal tooling)" }
       node-version:  { type: string,  default: "22" }
       typedoc:       { type: boolean, default: false, description: "Run typedoc validation (typedoc.json in package-dir)" }
       api-report:    { type: string,  default: "",   description: "'api-extractor' | 'mcp-tool-surface' | ''" }
@@ -30,6 +31,9 @@ jobs:
     defaults: { run: { working-directory: "${{ inputs.package-dir }}" } }
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `diff` needs the merge base; `package` never looks at history.
+          fetch-depth: ${{ inputs.lint-scope == 'diff' && 0 || 1 }}
       # Beside the package, not at the repository root: the fragment is imported by a relative path
       # from `eslint.config.*`, and a package that does not sit at the root would otherwise have to
       # write a different path in CI than it writes locally.
@@ -61,7 +65,33 @@ jobs:
       # archaeology or a statement about the present is a reviewer's call. Errors still fail.
       - name: Doc-comment lint (tsdoc/syntax, jsdoc rules)
         if: ${{ !cancelled() && steps.wired.outcome == 'success' }}
-        run: npx eslint --max-warnings=-1 .
+        run: |
+          set -uo pipefail
+          if [ "${{ inputs.lint-scope }}" != "diff" ]; then
+            npx eslint --max-warnings=-1 .
+            exit $?
+          fi
+          # Rule 11: Angular applications and internal tooling are checked on the files this pull
+          # request changed. eslint takes a file list natively, so the diff IS the scope — no
+          # baseline, no ratchet. Three-dot, so commits that landed on the base branch after the
+          # fork are not this pull request's files; --diff-filter=d, because a deleted file cannot
+          # be linted.
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            echo "::notice::no pull-request context — lint-scope 'diff' needs a base commit; linting the package instead"
+            npx eslint --max-warnings=-1 .
+            exit $?
+          fi
+          mapfile -t files < <(git -C "$GITHUB_WORKSPACE" diff --name-only --diff-filter=d \
+            "$base...${{ github.event.pull_request.head.sha || github.sha }}" \
+            -- "${{ inputs.package-dir }}" | grep -E '\.(ts|tsx|mts|cts)$' || true)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no changed TypeScript files in ${{ inputs.package-dir }}"
+            exit 0
+          fi
+          printf '  %s\n' "${files[@]}"
+          # Paths come out repository-relative; eslint runs in the package directory.
+          npx eslint --max-warnings=-1 $(printf '%s\n' "${files[@]}" | sed "s|^${{ inputs.package-dir }}/||")
       # `--ignore-scripts` above keeps install from running arbitrary lifecycle hooks; a package whose
       # BUILD needs them says so in build-command.
       - name: Build declarations
