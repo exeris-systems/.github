@@ -51,7 +51,18 @@ jobs:
             python .guardrails/scripts/lint_globs.py --root "${{ inputs.docs-root }}" --exclude "${{ inputs.exclude }}"
             echo 'GLOBS_EOF'
           } >> "$GITHUB_OUTPUT"
+      # Every check below reads the checkout and nothing else, so each reports on its own. A step
+      # is skipped by default once an earlier one fails, and these run in one job: measured on
+      # exeris-sdk#130, `Frontmatter, filenames, private links` failed and the registry check, the
+      # agent-file check, markdownlint, both Vale passes and the link check were all skipped — six
+      # worklists a repository needs at once, hidden by the first one to go red. Same fix as
+      # javadoc-gate.yml and tsdoc-gate.yml; this file is where it was noticed last, not first.
+      #
+      # Gated on `globs` rather than bare `!cancelled()`, because with no glob list resolved these
+      # steps do not fail on findings — they fail on having nothing to look at, which reads as a
+      # documentation problem and is not one.
       - name: Frontmatter, filenames, private links
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         env:
           GUARDRAILS_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           GUARDRAILS_EXCLUDE: ${{ inputs.exclude }}
@@ -59,6 +70,7 @@ jobs:
           python .guardrails/scripts/frontmatter_check.py --root "${{ inputs.docs-root }}" --mode "${{ inputs.mode }}" \
             ${{ inputs.section-check && '' || '--no-section-check' }}
       - name: ADR registry
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         # A repo may keep its records under docs/adr or at the root; use whichever exists.
         run: |
           dir="docs/adr"
@@ -66,8 +78,10 @@ jobs:
           [ -d "$dir" ] || { echo "no adr/ directory — nothing to check"; exit 0; }
           python .guardrails/scripts/registry_check.py --adr-dir "$dir"
       - name: Agent files
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         run: python .guardrails/scripts/agents_file_check.py
       - name: markdownlint (warning)
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         continue-on-error: true
         uses: DavidAnson/markdownlint-cli2-action@v19
         with:
@@ -79,7 +93,7 @@ jobs:
       # own header. Annotate warnings without failing; fail only on error-severity alerts, which
       # is Exeris.RetractedFigures (claims-and-evidence.md rule 4).
       - name: Vale (prose warnings — annotations only)
-        if: ${{ inputs.vale }}
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' && inputs.vale }}
         # Same treatment as markdownlint above, and for the same reason: reviewdog exits 1 whenever
         # it has a result in the diff, under every reporter and regardless of fail_on_error. There is
         # no flag that makes this step advisory, so the step is marked advisory.
@@ -99,7 +113,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Vale (errors — retracted figures fail the build)
-        if: ${{ inputs.vale }}
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' && inputs.vale }}
         uses: errata-ai/vale-action@v2
         with:
           version: 3.20.0
@@ -116,7 +130,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Link check
-        if: ${{ inputs.link-check }}
+        if: ${{ !cancelled() && steps.globs.outcome == 'success' && inputs.link-check }}
         # Links are checked in agent trees and .github too — a rotted link in CONTRIBUTING.md is a
         # rotted link. lychee.toml's exclude_path covers only generated output and the bundle.
         uses: lycheeverse/lychee-action@v2
