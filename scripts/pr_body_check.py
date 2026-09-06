@@ -17,7 +17,9 @@ FIELDS = {
     "Generated files touched": r"^(yes|no|n/a)$",
     "TCK obligation": r"^(satisfied|debt #\d+|n/a)$",
     "Compatibility impact": r"^(none|additive|breaking \(ADR-\d{3}\))$",
-    "Cross-repo impact": r"^(none|[\w.-]+:\s*.+)$",
+    # The repository half accepts a slash: the org's own bundle is `exeris-systems/.github`, and the
+    # pattern that did not allow one forced it to be written as bare `.github`, which names no repo.
+    "Cross-repo impact": r"^(none|[\w./-]+:\s*.+)$",
     "ADRs referenced": r"^(none|ADR-\d{3}(\s*,\s*ADR-\d{3})*)$",
     "Evidence state": r"^(citable|unartifacted|n/a)$",
 }

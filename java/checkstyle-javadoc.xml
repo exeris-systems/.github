@@ -2,12 +2,17 @@
 <!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN" "https://checkstyle.org/dtds/configuration_1_3.dtd">
 <!--
   Exeris Javadoc Checkstyle modules — ADR-085 §F.21, javadoc-conventions.md rules 1–5.
-  Modelled on spring-framework/src/checkstyle/checkstyle.xml (Apache-2.0). Drop into
-  exeris-kernel-build-config/src/main/resources/ and reference from the gated modules only
-  (exeris-kernel-spi, exeris-sdk-annotations, Central-published modules); everything else stays diff-aware.
+  Modelled on spring-framework/src/checkstyle/checkstyle.xml (Apache-2.0). Do NOT copy this file into
+  a repository: workflows/javadoc-gate.yml reads it from the bundle checkout, and runs it on the
+  engine pinned in java/checkstyle-engine-pom.xml. Which modules it applies to is the caller's
+  `modules` (in full) and `diff-modules` (changed files only) — javadoc-conventions.md rule 11.
 -->
 <module name="Checker">
   <property name="severity" value="error"/>
+  <!-- The gate hands this ruleset a directory in whole-module mode, and Checkstyle audits every file
+       it finds there unless told otherwise. A Javadoc ruleset has nothing to say about a .properties
+       file, and one audited anyway is a finding on a file no pull request changed. -->
+  <property name="fileExtensions" value="java"/>
   <!-- No SuppressionFilter. The obvious form of one names ${config_loc}, and Checkstyle refuses to
        parse a config whose ${config_loc} is unset — which it is whenever the plugin is pointed at a
        config outside the project, i.e. exactly how this file is used. `optional="true"` does not
@@ -78,7 +83,18 @@
     <module name="JavadocStyle">
       <property name="checkFirstSentence" value="true"/>
       <property name="checkEmptyJavadoc" value="true"/>
-      <property name="checkHtml" value="true"/>
+      <!-- checkHtml is OFF, and nothing is lost by it. Checkstyle's reader does not know that the
+           body of {@snippet} is a sample rather than markup, nor that {@code <pre>} is prose about a
+           tag: measured on one file, it reports `Extra HTML tag found: </dependency>` inside a
+           lang=xml snippet and `Unclosed HTML tag found: <pre>` inside {@code}. Neither can be
+           silenced while staying compliant with rule 8, which REQUIRES {@snippet}. 18 such findings
+           in exeris-sdk, all unfixable.
+
+           The javadoc half of this gate already checks HTML and does understand both constructs.
+           Measured on the same pair of files: `-Xdoclint:all` reports 0 on the snippet file and, on a
+           file with genuinely broken markup, `element not closed: b` and `unexpected end tag: </i>`
+           as ERRORS. Turning this off removes false positives and no coverage. -->
+      <property name="checkHtml" value="false"/>
     </module>
     <module name="NonEmptyAtclauseDescription"/>
     <!-- rule 3: tag order -->

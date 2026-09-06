@@ -57,3 +57,7 @@ jobs:
   #     # touch has to comply. Needs no pom change, so a module can go under the gate long before
   #     # it is clean.
   #     diff-modules: "exeris-kernel-core,exeris-kernel-community"
+  #     # Built so the gated modules compile, never audited. `-am` cannot find these: an annotation
+  #     # processor reaches its consumer through <annotationProcessorPaths>, which is not a reactor
+  #     # edge, so the install step dies on a missing artifact unless the module is named here.
+  #     # build-modules: "exeris-sdk-annotation-catalog"
