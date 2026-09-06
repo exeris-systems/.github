@@ -10,7 +10,7 @@ Organisation-level defaults and the reusable CI gates that enforce ADR-085. Ever
     docs-lint.yml        reusable — frontmatter/filenames/registry/private-link checks (error), markdownlint + Vale (warning; retracted figures error), lychee
     commit-lint.yml      reusable — commitlint on PR commits and on the PR title
     pr-body-check.yml    reusable — template headings + classification grammar + trailers
-    javadoc-gate.yml     reusable — maven-javadoc-plugin failOnWarnings + Javadoc Checkstyle on named modules
+    javadoc-gate.yml     reusable — Javadoc gate: whole-module on `modules`, changed-files on `diff-modules`
   PULL_REQUEST_TEMPLATE.md
   CONTRIBUTING.md
 scripts/
@@ -32,7 +32,12 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 
 1. Copy `caller-example/guardrails.yml` to `.github/workflows/guardrails.yml`. Keep `mode: ramp` until the frontmatter backfill has landed; keep `section-check: false` until subsystem/module pages carry the required sections.
 2. `exeris-docs` passes `extra-paths: "adr rfc *.md"` because its records live at the repo root.
-3. JVM repos with a gated module add the `javadoc` job with the module list, after porting `java/javadoc-plugin-block.xml` into those modules' `pom.xml`. That is the whole adoption cost: the gate checks this bundle out and reads `java/checkstyle-javadoc.xml` from there, and it uses `./mvnw` only if the repo has one.
+3. JVM repos with a gated module add the `javadoc` job. It takes two module lists, because `javadoc-conventions.md` rule 11 asks two different questions:
+
+   - `modules` — gated in full. Port `java/javadoc-plugin-block.xml` into each of these modules' own `pom.xml` (not the parent: `-am` would gate their dependencies too).
+   - `diff-modules` — gated on the pull request's changed files only, which is what rule 11 says for Kernel Core, Community and tooling. **No pom change**: this half invokes `javadoc` directly with the flags the profile would have set, so a module can be put under the gate without being made clean first.
+
+   That is the whole adoption cost: the gate checks this bundle out and reads `java/checkstyle-javadoc.xml` from there, and it uses `./mvnw` only if the repo has one.
 4. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
 5. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
 
