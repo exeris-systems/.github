@@ -22,7 +22,7 @@ scripts/
   frontmatter_check.py   docs-style-guide.md rules 2,3,5,6,7  (modes: ramp | strict)
   registry_check.py      adr-conventions.md rules 1–4         (consumer mode / registry mode)
   pr_body_check.py       pr-conventions.md rules 2–4
-  agents_file_check.py   agents-md-schema.md rules 1, 2, 4, 5, 8
+  agents_file_check.py   agents-md-schema.md rules 1, 2, 4, 5, 8  (+ machine-path, warning)
 commitlint.config.js     commit-conventions.md rules 1–4 (custom rules: exeris-header-length, exeris-mmr-sections, exeris-trailers)
 .markdownlint.yaml
 vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/styles/Exeris (Terminology, RetractedFigures, DriftPatterns, Numbers, Absolutes)
@@ -69,6 +69,21 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 ## Modes and the ramp
 
 `frontmatter_check.py --mode ramp` fails only on files changed in the PR and downgrades everything else to warnings; `--mode strict` fails on every file. The rollout (ADR-085 Engineering Protocol 4) is: ramp for two weeks on `exeris-sdk` and `exeris-kernel`, then strict there, then fan out. `registry_check.py` and `pr_body_check.py` have no ramp — they check only what the PR introduces.
+
+## Paths in agent files
+
+`agents_file_check.py` warns when an agent file hard-codes a path under somebody's home directory —
+`~/…`, `/home/<someone>/`, `/Users/<someone>/`, `C:\Users\…`. `/home/runner/` is exempt: that is the
+Actions user, and describing what CI does is describing a shared machine.
+
+It is a warning, and the message says what to do rather than what to delete. A reference to a sibling
+repository is useful — it is how the reference-first discipline works — but a reader who cloned this
+repository alone has no such directory, and the instruction does not fail for them: the grep finds
+nothing and they conclude from the silence. Naming the repository is always true; the sibling path is
+a convenience, so say it as one.
+
+Generated adapters are skipped. `check_adapters` already ties them to their source, so the only
+actionable copy is the one under `.agents/` and reporting both would double the worklist.
 
 ## What counts as generated
 

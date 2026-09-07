@@ -12,7 +12,7 @@ covers its six concerns in order, whether a rule is encoded as the right kind of
 whether a reference is linked rather than copied.
 """
 from __future__ import annotations
-import argparse, os, re, sys
+import argparse, io, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from _common import Report, read_frontmatter
 
@@ -31,6 +31,32 @@ OPERATIONAL = {os.path.join(".github", "workflows")}
 ADAPTER_FILES = ["CLAUDE.md", "GEMINI.md", ".cursorrules", ".github/copilot-instructions.md"]
 # A generated adapter says so and says where it came from (rule 7).
 GENERATED = re.compile(r"do[- ]not[- ]edit|generated from|@generated", re.I)
+
+# A path rooted in somebody's home directory is true on one machine. In a public repository an
+# instruction built on one does not fail for a reader who does not have it — the grep finds nothing
+# and they draw a conclusion from the silence. Repository names are public and carry no such
+# problem, so the fix is to name the repository and leave the sibling checkout as a convenience,
+# not to delete the reference.
+#
+# `/home/runner/` is excluded: that is the GitHub Actions user, and an agent file describing what
+# CI does is describing a real, shared machine.
+MACHINE_PATH = re.compile(
+    r"(?<![\w/~])~/[\w.]"                                    # ~/exeris-systems, ~/.m2 — not a bare ~ or ~~struck~~
+    r"|(?<![\w/])/home/(?!runner/)[a-z_][a-z0-9_-]*/"        # /home/<someone>/ but not the Actions user
+    r"|(?<![\w/])/Users/[A-Za-z][\w .-]*/"                   # macOS
+    r"|(?<![\w])[A-Za-z]:\\Users\\[^\\\s]+")               # Windows, which has no trailing-slash rule
+
+SKIP = (".git", "node_modules", "target", "build", "dist")
+
+
+def nested_checkout(dirpath: str, name: str) -> bool:
+    """True for a directory that is its own git checkout — a worktree parked under .claude/, a
+    submodule. Its files belong to that repository and are reported when *it* is checked; CI never
+    sees them at all, because a fresh clone has none. Before this, a worktree left under
+    .claude/worktrees/ produced a size ERROR against an AGENTS.md that is not this repo's copy.
+    """
+    return os.path.exists(os.path.join(dirpath, name, ".git"))
+
 
 SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # rule 8: an import is pinned to a version, never to a moving target.
@@ -107,6 +133,29 @@ def check_manifest(path: str, rep: Report):
             rep.error(rel, f"import '{nm}' fetches from {src} without a checksum", rule="pinned-import")
 
 
+def check_machine_paths(path: str, rep: Report):
+    """agents-md-schema rule 4 — an agent file is portable to whoever checks the repository out.
+
+    Warning, not error: nothing here is wrong on the machine that wrote it, and every finding
+    needs a human to decide what the reference should say instead.
+    """
+    try:
+        lines = io.open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        return
+    hits = [(i, m.group(0)) for i, l in enumerate(lines, 1)
+            for m in [MACHINE_PATH.search(l)] if m]
+    if not hits:
+        return
+    first_line, first = hits[0]
+    rep.warning(os.path.relpath(path),
+                f"{len(hits)} line(s) hard-code a path under someone's home directory "
+                f"(first: '{first}…'). An agent reading this repository on another machine has no "
+                f"such directory and the instruction fails silently — name the repository, and make "
+                f"the sibling path a stated convenience",
+                line=first_line, rule="machine-path")
+
+
 def check_adapters(rep: Report, strict: bool):
     """rules 2 and 7 — provider directories adapt; they do not author."""
     level = rep.error if strict else rep.warning
@@ -157,7 +206,7 @@ def main():
                                      "canonical semantics", rule="discovery")
 
     for dirpath, dirnames, files in os.walk("."):
-        dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules", "target", "build", "dist")]
+        dirnames[:] = [d for d in dirnames if d not in SKIP and not nested_checkout(dirpath, d)]
         if "AGENTS.md" in files and os.path.relpath(dirpath) != ".":
             rep.checked += 1
             check_agents_md(os.path.join(dirpath, "AGENTS.md"), rep, NESTED_LIMIT, "nested")
@@ -185,6 +234,30 @@ def main():
         else:
             rep.error(manifest, ".agents/ has no manifest.yaml — it records composition and the "
                                 "version-pinned bundles the repo imports (rules 5, 8)", rule="manifest")
+
+    # Portability sweep over the files a human authors. Generated adapters are skipped on purpose:
+    # check_adapters already ties them to their source, so reporting the same path twice would
+    # double a worklist whose only actionable copy is the one under .agents/.
+    authored = []
+    if os.path.exists("AGENTS.md"):
+        authored.append("AGENTS.md")
+    for dirpath, dirnames, files in os.walk("."):
+        dirnames[:] = [d for d in dirnames if d not in SKIP and not nested_checkout(dirpath, d)]
+        for f in files:
+            fp = os.path.join(dirpath, f)
+            rel = os.path.relpath(fp)
+            if rel == "AGENTS.md":
+                continue
+            in_agents = rel == ".agents" or rel.startswith(".agents" + os.sep)
+            if not (in_agents or f == "AGENTS.md" or rel in ADAPTER_FILES):
+                continue
+            if not f.endswith((".md", ".mdc", ".yaml", ".yml")):
+                continue
+            if GENERATED.search(open(fp, encoding="utf-8", errors="replace").read(600)):
+                continue
+            authored.append(rel)
+    for fp in sorted(set(authored)):
+        check_machine_paths(fp, rep)
 
     check_adapters(rep, a.strict_adapters)
     sys.exit(rep.emit())
