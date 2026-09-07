@@ -1,7 +1,33 @@
+/**
+ * Port target — copy to <package>/api-extractor.json.
+ *
+ * The committed api/<pkg>.api.md is the TS analogue of the japicmp gate (ADR-065): CI runs
+ * `api-extractor run` and fails on drift; a developer accepts a change with
+ * `api-extractor run --local` and commits the report. tsdoc-conventions.md rules 7-8.
+ *
+ * The note is a comment and not a "//" property: this schema is additionalProperties:false at
+ * the root, so a "//" key fails validation before api-extractor reads anything else.
+ */
 {
   "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
-  "//": "Port target — copy to <package>/api-extractor.json. The committed api/<pkg>.api.md is the TS analogue of the japicmp gate (ADR-065): CI runs `api-extractor run` and fails on drift; a developer accepts a change with `api-extractor run --local` and commits the report. tsdoc-conventions.md rules 7–8.",
   "mainEntryPointFilePath": "<projectFolder>/dist/index.d.ts",
+
+  /**
+   * Root-level, not under apiReport — apiReport is additionalProperties:false too.
+   *
+   * The default is "crlf". It does not break the gate: api-extractor compares the temp report
+   * with the committed one insensitive to line endings, so a CRLF temp report against an LF
+   * golden still exits 0. What it breaks is the working tree — under core.autocrlf=input the
+   * blob is LF, `--local` writes CRLF, and git reports the report as modified when its content
+   * has not changed. Silent, local-only, and easy to blame on something else.
+   *
+   * Pinned here rather than left to each repository's .gitattributes because the attribute that
+   * would fix it is `text`/`eol`, not the `linguist-generated` that ADR-085 §F.21d already asks
+   * for — a repo can follow the ADR to the letter and still see the dirty file. Delete this line
+   * if the repository has its own line-ending policy; it is a port target, not a workflow input.
+   */
+  "newlineKind": "lf",
+
   "apiReport": { "enabled": true, "reportFolder": "<projectFolder>/api/", "reportTempFolder": "<projectFolder>/build/api-extractor/" },
   "docModel": { "enabled": false },
   "dtsRollup": { "enabled": false },

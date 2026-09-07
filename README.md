@@ -57,6 +57,8 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
    export default tseslint.config(..., ...exerisTsdoc({ gated: ["src/index.ts"] }));
    ```
 
+   Locally, `.guardrails` has to be a **real directory** at that path — a symlink to a bundle checkout elsewhere does not work. Node resolves a module's realpath before searching for `node_modules`, so the fragment's `eslint-plugin-jsdoc` import is looked for beside the bundle instead of beside the package: `ERR_MODULE_NOT_FOUND`, zero files linted. Use a `git worktree` (or a copy) rather than `ln -s`, which also makes the local layout the same as the gate's — CI never hits this because it checks the bundle out.
+
    The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules.
 
    The rest is per package and opt-in: copy `ts/tsdoc.json` beside the package's `tsconfig.json`; a library that publishes adds `typedoc` (and `@microsoft/api-extractor`), ports `ts/typedoc.base.json` and `ts/api-extractor.base.json`, and sets `typedoc: true` with `api-report: api-extractor`; an MCP server sets `api-report: mcp-tool-surface`. Both stay off until the package commits the config and the golden they read — **the first golden lands in that build's own pull request, reviewed on its own**, because a golden reviewed alongside a feature is a golden nobody reads.

@@ -5,12 +5,20 @@
 //   import exerisTsdoc from "./.guardrails/ts/eslint.tsdoc.mjs";
 //   export default tseslint.config(..., ...exerisTsdoc({ gated: ["src/index.ts", "src/public/**/*.ts"] }));
 //
-// The path is `.guardrails/ts/` — where workflows/tsdoc-gate.yml checks this bundle out — and the
-// same string works locally, because every repository carries a `.guardrails` symlink to the local
-// bundle checkout. The package must install `eslint-plugin-jsdoc` and `eslint-plugin-tsdoc`
-// itself: this file imports them, and Node resolves them from the repository's node_modules.
+// The path is `.guardrails/ts/` — where workflows/tsdoc-gate.yml checks this bundle out, as a real
+// directory beside the package. The package must install `eslint-plugin-jsdoc` and
+// `eslint-plugin-tsdoc` itself, because this file imports them by bare specifier.
 // That import IS the adoption; the gate cannot inject a flat config from outside, so it verifies
 // the reference instead of assuming it.
+//
+// `.guardrails` must be a real directory here, NOT a symlink to a bundle checkout elsewhere.
+// Node resolves a module's realpath before it looks for node_modules, so from a symlinked bundle
+// it searches beside the bundle and not beside the package: measured on exeris-sdk-ui-kit with
+// node 24.17.0 / eslint 9.39.5, ERR_MODULE_NOT_FOUND on `eslint-plugin-jsdoc` and zero files
+// linted, against 14 files / 0 findings with the identical config and a real directory at the
+// same path. `NODE_OPTIONS=--preserve-symlinks` does not rescue it; it breaks npx instead.
+// CI never sees this because tsdoc-gate.yml checks the bundle out rather than linking it — which
+// is the argument for the local layout matching CI's, not for the comment being softened.
 //
 // `gated` = files whose exports are the published surface (rule 1 → error);
 // everything else gets rule 1 as a warning so the diff-aware gate can ramp.
