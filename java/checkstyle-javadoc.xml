@@ -78,6 +78,23 @@
       <property name="allowMissingParamTags" value="false"/>
       <property name="allowMissingReturnTag" value="false"/>
       <property name="validateThrows" value="false"/>
+      <!-- The default token set includes COMPACT_CTOR_DEF, and on a compact constructor this check
+           demands an @param for every record component - tags doclint does not want there and that
+           Checkstyle cannot see are already on the record header, where JavadocType requires them.
+           A gate whose two halves disagree is not a standard; measured on exeris-sdk, 24 errors,
+           all of this shape.
+
+           The trigger is narrow and cost two failed hunts before it was pinned down: the record has
+           to be NESTED (exeris-sdk nests them in a sealed interface). A top-level `public record`
+           with the identical header, an identically documented compact constructor and the same
+           missing tags reports nothing. Anyone re-testing this with a standalone probe will
+           conclude the bug does not exist - it does, and the probe has to be nested.
+
+           Nothing is lost. Verified against 13.8.0 with this token set: JavadocType still requires
+           @param per component on the record header, JavadocMethod still requires @param on an
+           ordinary constructor and @return on a method, and MissingJavadocMethod still requires the
+           compact constructor to carry a comment at all. -->
+      <property name="tokens" value="METHOD_DEF, CTOR_DEF, ANNOTATION_FIELD_DEF"/>
     </module>
     <!-- rule 2: first sentence present and well-formed -->
     <module name="JavadocStyle">
