@@ -13,7 +13,10 @@ Organisation-level defaults and the reusable CI gates that enforce ADR-085. Ever
     javadoc-gate.yml     reusable — Javadoc gate: whole-module on `modules`, changed-files on `diff-modules`
     tsdoc-gate.yml       reusable — TS doc comments + API-surface goldens (tsdoc-conventions.md)
   PULL_REQUEST_TEMPLATE.md
-  CONTRIBUTING.md
+  CONTRIBUTING.md      standards links, DCO, and the maintainers list CODE_OF_CONDUCT/SECURITY refer to
+CODE_OF_CONDUCT.md     Contributor Covenant 3.0 + reporting channel, enforcing party, AI-assisted-contribution line
+SECURITY.md            org default: private reporting, 72 h / 7 d; exeris-kernel's own file wins there
+SUPPORT.md             routing table behind the issue forms
 scripts/
   _common.py             annotations + step summary + shared regexes
   frontmatter_check.py   docs-style-guide.md rules 2,3,5,6,7  (modes: ramp | strict)
@@ -57,8 +60,9 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
    The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules.
 
    The rest is per package and opt-in: copy `ts/tsdoc.json` beside the package's `tsconfig.json`; a library that publishes adds `typedoc` (and `@microsoft/api-extractor`), ports `ts/typedoc.base.json` and `ts/api-extractor.base.json`, and sets `typedoc: true` with `api-report: api-extractor`; an MCP server sets `api-report: mcp-tool-surface`. Both stay off until the package commits the config and the golden they read — **the first golden lands in that build's own pull request, reviewed on its own**, because a golden reviewed alongside a feature is a golden nobody reads.
-4. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
-5. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
+5. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
+6. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
+7. Community-health defaults (`CODE_OF_CONDUCT.md`, `SECURITY.md`, `SUPPORT.md`) reach every repository without one of its own, from this repository's root. They name two mailboxes and a private reporting channel, so before they are published: `conduct@exeris.eu` and `security@exeris.eu` must deliver, and organisation-level private vulnerability reporting must be on (*Settings → Code security*). A code of conduct whose reporting address bounces is worse than none. Delete a repo's own `SUPPORT.md` or `CODE_OF_CONDUCT.md` only where it says nothing the default does not; `exeris-kernel/SECURITY.md` says more and stays.
 
 ## Modes and the ramp
 

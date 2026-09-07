@@ -7,7 +7,11 @@ contact_links:
     about: The tracker records work. A question, a design debate or an RFC-shaped topic belongs in Discussions.
   - name: Security vulnerability
     url: https://github.com/exeris-systems/.github/security/advisories/new
-    about: Never a public issue. Report privately; see SECURITY.md for the disclosure terms.
+    about: Never a public issue. Report on the repository concerned (Security → Report a vulnerability);
+      this form and security@exeris.eu are the fallbacks. SECURITY.md has the disclosure terms.
+  - name: Code of conduct concern
+    url: https://github.com/exeris-systems/.github/blob/main/CODE_OF_CONDUCT.md
+    about: Never a public issue either. Report to conduct@exeris.eu; the file says what happens next.
   - name: The standards these forms enforce
     url: https://github.com/exeris-systems/exeris-docs/blob/main/standards/README.md
     about: Title grammar, labels, severity vocabulary and what each form is asking for.
