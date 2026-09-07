@@ -68,6 +68,14 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 
 `frontmatter_check.py --mode ramp` fails only on files changed in the PR and downgrades everything else to warnings; `--mode strict` fails on every file. The rollout (ADR-085 Engineering Protocol 4) is: ramp for two weeks on `exeris-sdk` and `exeris-kernel`, then strict there, then fan out. `registry_check.py` and `pr_body_check.py` have no ramp — they check only what the PR introduces.
 
+## What counts as generated
+
+Two answers, and a repository should only have to give one. Directory names — `node_modules`, `target`, `build`, `dist` and the rest of `scripts/_common.py`'s taxonomy — cover output that lands where output usually lands. A committed report does not: `api/<pkg>.api.md` is generated, is meant to be in the diff, and is a Markdown file sitting in a directory with an ordinary name.
+
+For those, the repository's own `.gitattributes` is the answer, which ADR-085 §F.21d already asks for: a tree marked `linguist-generated` is skipped by `frontmatter_check.py`, `frontmatter_backfill.py` and markdownlint. Both spellings work (`linguist-generated` and `linguist-generated=true`), and `-linguist-generated` on a path puts it back under the checks. The attribute is resolved by `git check-attr`, so nested files, negation and precedence behave the way GitHub's own diff collapsing does. Off a work tree — no git, no repository — the marker is simply not read, and the directory taxonomy stands on its own.
+
+Vale and lychee still do not read it: both carry their own path lists, and a generated report is still checked for prose and links. Prose is warning-level; links are not, so a generated file full of URLs remains a reason to reach for `exclude`.
+
 ## Running locally
 
 ```

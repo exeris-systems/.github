@@ -4,14 +4,15 @@
 `walk_md` in _common.py is the single definition of what counts as documentation; the Python
 checkers get it for free. markdownlint takes globs instead, so this prints the same taxonomy in
 its form. Vale and lychee carry their own configuration files, which mirror the same lists by
-hand — each says so, and each names this module.
+hand — each says so, and each names this module; neither reads `.gitattributes`, so a generated
+tree is still linted for prose and links until they do.
 
 Usage: lint_globs.py [--root .] [--exclude 'dir another/dir']
 """
 from __future__ import annotations
 import argparse, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
-from _common import SKIP_DIRS, SKIP_PATHS
+from _common import SKIP_DIRS, SKIP_PATHS, generated_md
 
 
 def main():
@@ -30,6 +31,11 @@ def main():
     out.append(f"!{prefix}**/_*/**")
     for extra in a.exclude.split():
         out.append(f"!{extra.rstrip('/')}/**")
+    # Files the repository itself marks linguist-generated (ADR-085 §F.21d). Named one by one
+    # because "whatever git says" has no glob form; there are a handful of them per repo and the
+    # alternative is each repo repeating its own generated paths in an `exclude:`.
+    for gen in sorted(generated_md(root)):
+        out.append("!" + os.path.normpath(gen).replace(os.sep, "/"))
     print("\n".join(out))
 
 
