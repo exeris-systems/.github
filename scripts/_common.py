@@ -138,7 +138,44 @@ SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS + AGENT_DIRS + VENDORED_DIRS + LOCAL_O
 LINK_SKIP_DIRS = GENERATED_DIRS + TOOLING_DIRS + VENDORED_DIRS
 
 
-def walk_md(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS):
+# ADR-085 §F.21d asks a repository to mark generated trees `linguist-generated` in `.gitattributes`
+# (tsdoc-conventions.md rule 10 repeats it for TypeScript). That marker is the repository's own
+# statement about what it generates, and until now nothing here read it: a committed api-extractor
+# report under api/ is not one of the GENERATED_DIRS names, so it arrived as a documentation page
+# and was asked for frontmatter that the next `api:accept` run strips — a check the repository
+# cannot satisfy twice in a row. The alternative on offer was an `exclude:` in every caller, which
+# makes each repo declare what it generates a second time, in a second syntax, and lets the two
+# drift.
+#
+# Asked of git rather than parsed here. Nested `.gitattributes`, negation and precedence are git's
+# rules; a second implementation of them would be wrong in a way nobody notices until a generated
+# report is linted. `set` and `true` are the two spellings of the marker; `unset` (`-linguist-
+# generated`) deliberately puts a file back under the checks.
+GENERATED_ATTR_ON = frozenset(("set", "true"))
+
+
+def linguist_generated(paths, cwd=None) -> set[str]:
+    """The subset of `paths` that .gitattributes marks linguist-generated.
+
+    Empty when git is unavailable or this is not a work tree — the directory taxonomy above still
+    applies, so an absent marker under-skips rather than over-skips. A checker that silently
+    skipped everything on a missing git would be worse than one that checks too much.
+    """
+    paths = list(paths)
+    if not paths:
+        return set()
+    try:
+        out = subprocess.run(["git", "check-attr", "-z", "--stdin", "linguist-generated"],
+                             input="\0".join(paths) + "\0", capture_output=True, text=True, cwd=cwd)
+    except (OSError, ValueError):
+        return set()
+    if out.returncode != 0:
+        return set()
+    f = out.stdout.split("\0")
+    return {f[i] for i in range(0, len(f) - 2, 3) if f[i + 2] in GENERATED_ATTR_ON}
+
+
+def _walk_md_all(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS):
     for d, dn, fn in os.walk(root):
         dn[:] = [x for x in dn if x not in skip and not x.startswith("_")]  # _inventory, _research, _org-github are exempt
         rel = os.path.relpath(d, root)
@@ -147,6 +184,32 @@ def walk_md(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS):
         for f in fn:
             if f.endswith(".md"):
                 yield os.path.join(d, f)
+
+
+def _generated_split(root: str, found: list[str]) -> set[str]:
+    """Which of `found` git calls generated. Paths go to git the way git can resolve them."""
+    if os.path.isabs(root):
+        cwd, asked = root, {os.path.relpath(p, root): p for p in found}
+    else:
+        cwd, asked = None, {os.path.normpath(p): p for p in found}
+    return {asked[k] for k in linguist_generated(asked.keys(), cwd=cwd) if k in asked}
+
+
+def generated_md(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS) -> set[str]:
+    """Markdown files the directory taxonomy admits but `.gitattributes` calls generated.
+
+    lint_globs.py needs these by name: markdownlint takes a glob list, and "whatever git says"
+    is not expressible as a glob.
+    """
+    return _generated_split(root, list(_walk_md_all(root, skip, skip_paths)))
+
+
+def walk_md(root: str, skip=SKIP_DIRS, skip_paths=SKIP_PATHS):
+    found = list(_walk_md_all(root, skip, skip_paths))
+    generated = _generated_split(root, found)
+    for p in found:
+        if p not in generated:
+            yield p
 
 
 def repo_name() -> str:
