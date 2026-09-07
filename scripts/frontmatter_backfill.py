@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from _common import walk_md, read_frontmatter, repo_name, PRIVATE_REPOS
 
 EXEMPT_NAMES = {"README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
-                "LICENSE.md", "NOTICE.md", "PULL_REQUEST_TEMPLATE.md"}
+                "SUPPORT.md", "LICENSE.md", "NOTICE.md", "PULL_REQUEST_TEMPLATE.md"}
 
 # Directory name -> doc type. Only unambiguous mappings; anything else is reported, not guessed.
 DIR_TYPE = {

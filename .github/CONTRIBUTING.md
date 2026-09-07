@@ -35,6 +35,14 @@ If you contribute in the course of employment or on behalf of an organisation, l
 
 A commit that missed the trailer is fixed with `git commit --amend -s` (or `git rebase --signoff <base>` for several) and a force-push; there is nothing to re-sign elsewhere.
 
+## Conduct
+
+Every `exeris-systems` space is covered by the [Code of Conduct](../CODE_OF_CONDUCT.md), the Contributor Covenant 3.0. Reports go to <conduct@exeris.eu> and are acknowledged within five working days; the file states the enforcement ladder and what to do if the report concerns a maintainer. Content you submit with an AI assistant is your conduct under the Code, on the same footing as the accountability rule in [`ai-provenance.md`](https://github.com/exeris-systems/exeris-docs/blob/main/standards/ai-provenance.md).
+
+## Maintainers
+
+Arkadiusz Przychocki — founder. This is the list [`CODE_OF_CONDUCT.md`](../CODE_OF_CONDUCT.md) and [`SECURITY.md`](../SECURITY.md) mean by *the maintainers*, and it changes by pull request to this repository, so who is accountable is a matter of record rather than of memory.
+
 ## Getting help
 
-Open a GitHub Discussion in the repo concerned; architectural questions go to `exeris-docs`. Bug reports, change requests, performance findings and documentation problems are issues, not discussions — the forms are in this repository and blank issues are disabled, so the tracker records work and Discussions hold the questions.
+[`SUPPORT.md`](../SUPPORT.md) routes each kind of request. In short: open a GitHub Discussion in the repo concerned; architectural questions go to `exeris-docs`. Bug reports, change requests, performance findings and documentation problems are issues, not discussions — the forms are in this repository and blank issues are disabled, so the tracker records work and Discussions hold the questions.

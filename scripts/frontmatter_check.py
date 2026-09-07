@@ -44,7 +44,7 @@ def check_file(path: str, rep: Report, repo_vis: str, section_check: bool):
     # These render on github.com before they render on the site, and GitHub shows the frontmatter
     # block as literal text. They are reviewed ([L2]), never schema-checked.
     if name in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
-                "LICENSE.md", "NOTICE.md", "PULL_REQUEST_TEMPLATE.md"):
+                "SUPPORT.md", "LICENSE.md", "NOTICE.md", "PULL_REQUEST_TEMPLATE.md"):
         return
     rep.checked += 1
     # filename discipline (docs-style-guide rule 7, adr-conventions rule 1)
