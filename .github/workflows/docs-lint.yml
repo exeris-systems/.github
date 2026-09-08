@@ -77,9 +77,17 @@ jobs:
           [ -d "$dir" ] || dir="adr"
           [ -d "$dir" ] || { echo "no adr/ directory — nothing to check"; exit 0; }
           python .guardrails/scripts/registry_check.py --adr-dir "$dir"
+      # Three checks from the bundle, each a no-op where it does not apply: the pinned import is
+      # verified only if one is pinned, and the renderer only if the manifest is v2.
       - name: Agent files
-        if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
-        run: python .guardrails/scripts/agents_file_check.py
+        if: ${{ !cancelled() && inputs.agent-check }}
+        run: python .agents-tools/tools/agents_file_check.py
+      # agents-md-schema.md rule 7 [L1]: a provider adapter is generated, so an adapter that
+      # differs from its source is drift — whether it was hand-edited, or its source moved and
+      # nobody re-rendered.
+      - name: Agent adapters are up to date
+        if: ${{ !cancelled() && inputs.agent-check }}
+        run: python .agents-tools/tools/agents_render.py --root . --check
       - name: markdownlint (warning)
         if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         continue-on-error: true
