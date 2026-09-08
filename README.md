@@ -22,7 +22,9 @@ scripts/
   frontmatter_check.py   docs-style-guide.md rules 2,3,5,6,7  (modes: ramp | strict)
   registry_check.py      adr-conventions.md rules 1–4         (consumer mode / registry mode)
   pr_body_check.py       pr-conventions.md rules 2–4
-  agents_file_check.py   agents-md-schema.md rules 1, 2, 4, 5, 8  (+ machine-path, warning)
+  (the agent-layer tooling is NOT here — see "The agent layer moved out" below)
+  agents_render.py       renders .agents/ to each provider directory; --check is the CI drift gate
+agents/adapters/claude.yaml        one mapping file per runtime: capabilities -> tools, tier -> model
 commitlint.config.js     commit-conventions.md rules 1–4 (custom rules: exeris-header-length, exeris-mmr-sections, exeris-trailers)
 .markdownlint.yaml
 vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/styles/Exeris (Terminology, RetractedFigures, DriftPatterns, Numbers, Absolutes)
@@ -72,7 +74,7 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 
 ## Paths in agent files
 
-`agents_file_check.py` warns when an agent file hard-codes a path under somebody's home directory —
+The agent-file checker (now in `exeris-agents`) warns when an agent file hard-codes a path under somebody's home directory —
 `~/…`, `/home/<someone>/`, `/Users/<someone>/`, `C:\Users\…`. `/home/runner/` is exempt: that is the
 Actions user, and describing what CI does is describing a shared machine.
 
@@ -99,7 +101,11 @@ Vale and lychee still do not read it: both carry their own path lists, and a gen
 pip install pyyaml && pip install vale        # or brew install vale
 python scripts/frontmatter_check.py --root docs --mode strict
 python scripts/registry_check.py --index ../exeris-docs/adr-index.md
-python scripts/agents_file_check.py
+# agent layer: from the bundle, not from here
+git clone https://github.com/exeris-systems/exeris-agents ../exeris-agents
+python ../exeris-agents/tools/agents_file_check.py --root .
+python ../exeris-agents/tools/agents_render.py --root . --check
+python scripts/agents_render.py --root . --check
 npx --package @commitlint/cli --package @commitlint/config-conventional commitlint --config commitlint.config.js --from origin/main
 vale --config vale/.vale.ini docs/
 ```
@@ -124,7 +130,9 @@ Vale inline toggles are the sanctioned way to quote a retracted figure on purpos
 
 - `frontmatter_check.py` strict on `exeris-kernel/docs`: 89 files, 89 errors (all "missing frontmatter" — the expected baseline); on `exeris-docs/standards`: 14 files, 0 errors.
 - `registry_check.py` on `exeris-docs` with siblings: 92 rows, 7 errors — six registry links to kernel ADRs that exist only on `development/0.12.0` (071, 073, 074, 077, 080, 083) and one relative link into the private `exeris-telemetry-spec` (ADR-018 stubs row). Consumer mode on `exeris-kernel`: 34 files, 0 errors; on `exeris-sdk`: 1 error (space-named `ADR-003 Entity-First Development Strategy.md`).
-- `agents_file_check.py` replaced `claude_md_check.py` on 2026-09-05, when the schema moved from `CLAUDE.md` to `AGENTS.md`. It checks the entry file's presence and size, skill paths and metadata, manifest pinning, and whether provider directories carry generated markers — and nothing about wording, which the schema leaves to each repository
+- **The agent layer moved out on 2026-09-08**, to [`exeris-systems/exeris-agents`](https://github.com/exeris-systems/exeris-agents). `agents_file_check.py` — and `claude_md_check.py` before it — lived here because everything shared did. The agent layer turned out to be the one part of the shared enforcement with content a repository *vendors*, and vendoring needs a version to pin; this repository has none, since every caller consumes it at `@main`, which is exactly the moving target `agents-md-schema.md` rule 8 forbids. The bundle carries its own SemVer, and `docs-lint.yml` checks it out at `agents-ref` (default `main`, overridable per repository)
+- `agents_render.py` arrived on 2026-09-08 with schema v2, and it exists because the alternative had already failed: `exeris-docs` had no renderer and refreshed its adapters by hand, while `exeris-kernel` had two shell scripts of its own, so one schema had two implementations and a third repository had none. Adding a runtime is one mapping file under `agents/adapters/`, never a change to the renderer. Only `claude.yaml` ships today: a mapping written from memory would silently grant or withhold tools, so a vendor lands when its tool vocabulary has been read
+- The v2 checks are rules 10-13 — the `AGENT.md` profile layout and the ban on a lowercase `agent.md` (one runtime discovers that exact path, which is the canonical file on a case-insensitive filesystem), vendor-neutral frontmatter, hooks declared once with their dispatcher present, and output schemas that are real JSON Schema. Rule 14, that a covered change reran its evals, is not checkable from a checkout and stays `[L2]`
 - `pr_body_check.py`: passes a conforming body; catches placeholders, unparseable classification, empty Verification, malformed `Refs:`, and a touched ADR without `Refs:`.
 - `commitlint.config.js`: passes a conforming `fix` with Motivation/Modification/Result and the squash suffix; rejects a 117-char subject, a `fix` without the sections, `Refs: ADR-11`, and the type `destructive:`; passes `docs(adr): …` without a body and `report(entity-read-by-id): …` with a `Claim:` trailer.
 <!-- vale Exeris.RetractedFigures = NO -->
