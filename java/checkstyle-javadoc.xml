@@ -67,6 +67,24 @@
       <property name="scope" value="public"/>
       <property name="allowMissingPropertyJavadoc" value="false"/>
       <property name="ignoreMethodNamesRegex" value="^(toString|hashCode|equals)$"/>
+      <!-- javadoc-conventions.md rule 1's one exemption, and the only knob in this ruleset.
+           `documented` (the default) requires a doc comment on every public member. `exempt` drops
+           the requirement for a method whose body is a single line, which is what a fluent builder
+           setter is: `public Builder enabled(boolean v) { this.enabled = v; return this; }`.
+           Measured on exeris-sdk, 204 of them, and 204 doc comments repeating `this.x = v` would
+           ship in a -javadoc.jar on Maven Central for good.
+
+           Line count is a poor proxy for triviality and is chosen for want of a better one that
+           Checkstyle can express: `public Instant deadline() { return start.plus(ttl); }` is
+           exempted too. That is why the gate's input is named for the policy and not for this
+           property — the predicate can be replaced here without touching a single caller.
+
+           The value arrives as a property so the caller decides, and the default keeps the standard
+           when nobody does. Verified against 13.8.0 on the exeris-sdk corpus: no properties file at
+           all -> 204 errors; `1` -> 0; `-1` -> 204; a MISSPELLED key -> 204, so a typo in a caller
+           cannot quietly disarm the gate; a non-numeric value -> exit 254 with a config error
+           rather than a pass. -->
+      <property name="minLineCount" value="${exeris.trivialAccessors}" default="-1"/>
     </module>
     <module name="JavadocType">
       <property name="scope" value="public"/>
