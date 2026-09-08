@@ -52,6 +52,10 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
 
    That is the whole adoption cost: the gate checks this bundle out and reads `java/checkstyle-javadoc.xml` from there, and it uses `./mvnw` only if the repo has one.
 
+   One optional input, `trivial-accessors`, is a policy and not a tuning knob. The default, `documented`, is `javadoc-conventions.md` rule 1 as written: every public member carries a doc comment. `exempt` drops that for a method whose body is a single line — what a fluent builder setter is — and a repository takes it only where something else carries the coverage, which for `exeris-sdk` is doclint plus its own completeness test. The gate writes which policy is in force into the step summary, because a green tick otherwise means two different things in two repositories and the result does not say which.
+
+   It is named for the policy rather than for `minLineCount`, the Checkstyle property behind it. Line count is a poor proxy for triviality — `public Instant deadline() { return start.plus(ttl); }` is exempted along with the setters — and a better predicate should be able to replace it in this bundle without every caller changing a line of YAML.
+
 4. TypeScript packages add the `tsdoc` job. Adoption is two devDependencies (`eslint-plugin-jsdoc`, `eslint-plugin-tsdoc`) and one import in the package's flat config:
 
    ```js

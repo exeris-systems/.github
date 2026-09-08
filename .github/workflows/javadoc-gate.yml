@@ -21,6 +21,7 @@ on:
       java-version: { type: string, default: "25" }
       java-distribution: { type: string, default: "temurin" }
       source-root:  { type: string, default: "src/main/java", description: "Source root inside each gated module" }
+      trivial-accessors: { type: string, default: "documented", description: "javadoc-conventions.md rule 1: 'documented' (default) requires a doc comment on every public member; 'exempt' drops it for single-line bodies — a fluent builder setter. Named for the policy, not for the Checkstyle property that implements it, so the predicate can change without touching callers." }
       extra-maven-args: { type: string, default: "" }
 permissions:
   contents: read
@@ -69,6 +70,29 @@ jobs:
           ${{ steps.mvn.outputs.cmd }} -q -B -ntp -f .guardrails/java/checkstyle-engine-pom.xml \
             dependency:build-classpath -Dmdep.outputFile="$RUNNER_TEMP/cs-cp.txt"
           java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main --version
+      # The one policy the ruleset takes from the caller. Validated here rather than passed through:
+      # Checkstyle answers a non-numeric value with exit 254 and a config error, which is loud but
+      # says nothing about which input was wrong.
+      #
+      # Written to the step summary because a green tick otherwise means two different things in two
+      # repositories and the result does not say which. An opt-out that is only visible in a YAML file
+      # somebody has to go and read is an opt-out nobody reviews.
+      - name: Resolve the doc-comment policy
+        id: policy
+        run: |
+          set -euo pipefail
+          case "${{ inputs.trivial-accessors }}" in
+            documented) v="-1" ;;
+            exempt)     v="1"  ;;
+            *) echo "::error::trivial-accessors must be 'documented' or 'exempt', got '${{ inputs.trivial-accessors }}'"; exit 1 ;;
+          esac
+          echo "exeris.trivialAccessors=$v" > "$RUNNER_TEMP/checkstyle.properties"
+          if [ "$v" = "1" ]; then
+            echo "### Javadoc gate: trivial accessors are **exempt**" >> "$GITHUB_STEP_SUMMARY"
+            echo "This repository has opted out of the Checkstyle half of \`javadoc-conventions.md\` rule 1 for single-line method bodies. Doclint and the repository's own completeness test carry that coverage here." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Javadoc gate: doc comments required on every public member (rule 1, unmodified)." >> "$GITHUB_STEP_SUMMARY"
+          fi
       # Install first, and skip Checkstyle while doing it. Two reasons, both learned the hard way on
       # exeris-kernel. A repository whose Checkstyle plugin takes a reactor module as a plugin
       # DEPENDENCY (for the ruleset) cannot resolve it from the reactor — plugin dependencies come
@@ -172,7 +196,7 @@ jobs:
       # The CLI's exit status is the number of ERROR-severity findings; warnings print and do not
       # fail. That is what keeps rule 12's history check advisory, as ADR-085 §J.31 says it is.
       - name: Checkstyle Javadoc modules on fully gated modules
-        if: ${{ !cancelled() && steps.cs.outcome == 'success' && inputs.modules != '' }}
+        if: ${{ !cancelled() && steps.cs.outcome == 'success' && steps.policy.outcome == 'success' && inputs.modules != '' }}
         run: |
           set -uo pipefail
           failed=0
@@ -186,12 +210,13 @@ jobs:
             fi
             echo "::group::checkstyle — $module"
             java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main \
-              -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" "$src" || failed=1
+              -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" \
+              -p "$RUNNER_TEMP/checkstyle.properties" "$src" || failed=1
             echo "::endgroup::"
           done
           exit $failed
       - name: Checkstyle Javadoc modules on changed files only
-        if: ${{ !cancelled() && steps.cs.outcome == 'success' && steps.targets.outputs.any == 'true' }}
+        if: ${{ !cancelled() && steps.cs.outcome == 'success' && steps.policy.outcome == 'success' && steps.targets.outputs.any == 'true' }}
         run: |
           set -uo pipefail
           failed=0
@@ -200,7 +225,8 @@ jobs:
             mapfile -t files < "$n.files"
             echo "::group::checkstyle — $module (${#files[@]} changed file(s))"
             java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main \
-              -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" "${files[@]}" || failed=1
+              -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" \
+              -p "$RUNNER_TEMP/checkstyle.properties" "${files[@]}" || failed=1
             echo "::endgroup::"
           done
           exit $failed
