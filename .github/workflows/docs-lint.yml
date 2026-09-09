@@ -21,6 +21,15 @@ on:
       # Accepted and ignored: the repository root subsumes it. Kept so the callers written against the
       # previous model keep working — and start linting what they had left off their path list.
       extra-paths:      { type: string,  default: "",       description: "Deprecated and ignored; the default root is the whole repository" }
+      # The agent layer lives in exeris-systems/exeris-agents (ADR-085 §C.11), which is checked out
+      # below rather than vendored here. `agent-check: false` is for a repository that has no
+      # .agents/ at all — the checks are already silent on one, so it is an opt-out and not a
+      # requirement.
+      agent-check:      { type: boolean, default: true,     description: "Run the agent-file check and the adapter render check" }
+      # `main` is the honest default: exeris-agents publishes no tags yet, and a default naming a
+      # tag that does not exist is a check that silently does not run. A caller that wants the
+      # tooling frozen passes a sha, which is what every `uses:` in these repositories already does.
+      agents-ref:       { type: string,  default: "main",   description: "Ref of exeris-systems/exeris-agents to run the agent-layer checks from" }
 permissions:
   contents: read
   pull-requests: read
@@ -34,6 +43,10 @@ jobs:
         if: ${{ github.repository != 'exeris-systems/.github' }}
         uses: actions/checkout@v4
         with: { repository: exeris-systems/.github, path: .guardrails }
+      - name: Fetch the agent bundle (exeris-systems/exeris-agents)
+        if: ${{ inputs.agent-check }}
+        uses: actions/checkout@v4
+        with: { repository: exeris-systems/exeris-agents, ref: "${{ inputs.agents-ref }}", path: .agents-tools }
       - name: Use this checkout as the bundle (organisation repository only)
         if: ${{ github.repository == 'exeris-systems/.github' }}
         # This repository *is* the bundle. Checking it out from @main would test the merged version
@@ -42,7 +55,12 @@ jobs:
         run: rsync -a --exclude .git --exclude .guardrails ./ .guardrails/
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install pyyaml
+      # jsonschema is the agent-file check's rule-13 half. Without it that check DOWNGRADES to a
+      # JSON-syntax test and says so in a warning — a schema with a broken `$ref` or an
+      # unsatisfiable `allOf` then passes, which is the shape of green this repository exists to
+      # refuse. Installed unconditionally: it is one wheel, and a conditional pip step is a second
+      # place the agent-check flag has to be right.
+      - run: pip install pyyaml jsonschema
       - name: Resolve lint globs
         id: globs
         run: |
