@@ -73,12 +73,18 @@ jobs:
         # otherwise fail on a missing file — and the pull request that ADDS the script is itself
         # such a caller. Degrades to the fallback, which is the behaviour this replaces.
         run: |
-          if [ -f .guardrails/scripts/agents_pin.py ]; then
-            python3 .guardrails/scripts/agents_pin.py --fallback "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
-          else
-            echo "::notice::agents_pin.py absent from the pinned .guardrails checkout; using '$FALLBACK'"
-            printf 'ref=%s\nsource=input\n' "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
-          fi
+          # `.guardrails` first, then this checkout: the organisation repository gets `.guardrails`
+          # from the rsync two steps BELOW, so at this point it has none — and it is the one repo
+          # that always has `scripts/` of its own. Without the second path the script would never
+          # run in the repository that owns it, which is where it is least affordable to be wrong.
+          for candidate in .guardrails/scripts/agents_pin.py scripts/agents_pin.py; do
+            if [ -f "$candidate" ]; then
+              python3 "$candidate" --fallback "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::notice::agents_pin.py is in neither .guardrails/ nor scripts/; using '$FALLBACK'"
+          printf 'ref=%s\nsource=input\n' "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
       - name: Fetch the agent bundle (exeris-systems/exeris-agents)
         if: ${{ inputs.agent-check }}
         uses: actions/checkout@v4
