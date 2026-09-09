@@ -91,7 +91,13 @@ jobs:
         # This repository *is* the bundle. Checking it out from @main would test the merged version
         # rather than the one in the pull request; copying the working checkout keeps every path
         # below identical and tests the code actually under review.
-        run: rsync -a --exclude .git --exclude .guardrails ./ .guardrails/
+        # `.agents-tools` is excluded too, and not for tidiness: it is the bundle checkout fetched
+        # two steps above, and copying it here strips the `.git` that marks it as somebody else's
+        # repository. The checker skips a nested checkout by that marker, so the copy — unlike the
+        # original — is walked, and the bundle's own AGENTS.md is reported against this
+        # repository's nested-file limit. It crossed 4 KB in exeris-agents on 2026-09-09 and turned
+        # this job red for a file this repository does not own.
+        run: rsync -a --exclude .git --exclude .guardrails --exclude .agents-tools ./ .guardrails/
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       # jsonschema is the agent-file check's rule-13 half. Without it that check DOWNGRADES to a
