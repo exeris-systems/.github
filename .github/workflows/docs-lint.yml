@@ -42,7 +42,19 @@ jobs:
       - name: Fetch shared guardrails (exeris-systems/.github)
         if: ${{ github.repository != 'exeris-systems/.github' }}
         uses: actions/checkout@v4
-        with: { repository: exeris-systems/.github, path: .guardrails }
+        # `job_workflow_sha` is the commit THIS reusable workflow file came from, so the scripts it
+        # calls come from the same commit it does. Without it a caller's `uses: …@<sha>` pinned the
+        # workflow and not the scripts, and the two could disagree — which is not theoretical:
+        # #23 deleted `scripts/agents_file_check.py`, and every caller still on an older
+        # `docs-lint.yml` then invoked a file that no longer existed on the default branch. It is
+        # exit code 2, a hard failure, and it hit exeris-kernel within minutes of that merge.
+        #
+        # Empty context, if a runner ever gives one, means `actions/checkout` takes the default
+        # branch — today's behaviour, so this degrades to what it replaces rather than to nothing.
+        with:
+          repository: exeris-systems/.github
+          path: .guardrails
+          ref: ${{ github.job_workflow_sha }}
       - name: Fetch the agent bundle (exeris-systems/exeris-agents)
         if: ${{ inputs.agent-check }}
         uses: actions/checkout@v4
