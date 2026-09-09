@@ -26,10 +26,18 @@ on:
       # .agents/ at all — the checks are already silent on one, so it is an opt-out and not a
       # requirement.
       agent-check:      { type: boolean, default: true,     description: "Run the agent-file check and the adapter render check" }
-      # `main` is the honest default: exeris-agents publishes no tags yet, and a default naming a
-      # tag that does not exist is a check that silently does not run. A caller that wants the
-      # tooling frozen passes a sha, which is what every `uses:` in these repositories already does.
-      agents-ref:       { type: string,  default: "main",   description: "Ref of exeris-systems/exeris-agents to run the agent-layer checks from" }
+      # Empty by default, and resolved from the caller's OWN `.agents/manifest.yaml` — the
+      # `imports[].ref` it already pins. Naming it twice was the duplication: a caller passed the
+      # same commit here and in its manifest, Dependabot moves a `uses:` sha and has no rule for an
+      # input, and the two then drift in silence. The manifest is the authority on which bundle a
+      # repository vendors, and `agents_bundle.py verify` fails when the tooling disagrees with it,
+      # so reading it here is not a new source of truth — it is the removal of a second one.
+      #
+      # An explicit value still wins, for the case the manifest cannot serve: testing a repository
+      # against tooling it does not yet pin. With neither, `main` — the honest fallback while
+      # exeris-agents publishes no tags, since a default naming a tag that does not exist is a
+      # check that silently does not run.
+      agents-ref:       { type: string,  default: "",       description: "Ref of exeris-systems/exeris-agents. Empty (default) reads the caller's .agents/manifest.yaml pin; falls back to main" }
 permissions:
   contents: read
   pull-requests: read
@@ -55,10 +63,50 @@ jobs:
           repository: exeris-systems/.github
           path: .guardrails
           ref: ${{ github.job_workflow_sha }}
+      - name: Resolve the agent bundle ref
+        id: agents-pin
+        if: ${{ inputs.agent-check }}
+        env:
+          EXPLICIT: ${{ inputs.agents-ref }}
+        run: |
+          if [ -n "$EXPLICIT" ]; then
+            echo "ref=$EXPLICIT" >> "$GITHUB_OUTPUT"
+            echo "agent bundle ref: $EXPLICIT (explicit input)"
+            exit 0
+          fi
+          ref=$(python3 - <<'PY'
+          import os, re, sys
+          # Scoped to `imports:`, not the first `ref:` in the file. An unscoped reader takes
+          # whatever `ref:` appears first, which is the defect the hook dispatcher was corrected
+          # for one repository over — a manifest could then resolve a different bundle here than
+          # the renderer and the checker resolve.
+          p = ".agents/manifest.yaml"
+          if not os.path.exists(p):
+              print(""); sys.exit()
+          out, inside = "", False
+          for line in open(p, encoding="utf-8"):
+              if re.match(r"^[A-Za-z_-]+:", line):
+                  inside = line.startswith("imports:")
+                  continue
+              if not inside:
+                  continue
+              m = re.match(r"^\s+ref:\s*([0-9a-fA-F]{7,40})\s*$", line)
+              if m:
+                  out = m.group(1)
+                  break
+          print(out)
+          PY
+          )
+          echo "ref=${ref:-main}" >> "$GITHUB_OUTPUT"
+          if [ -n "$ref" ]; then
+            echo "agent bundle ref: $ref (from this repository's .agents/manifest.yaml)"
+          else
+            echo "agent bundle ref: main (no pin in .agents/manifest.yaml)"
+          fi
       - name: Fetch the agent bundle (exeris-systems/exeris-agents)
         if: ${{ inputs.agent-check }}
         uses: actions/checkout@v4
-        with: { repository: exeris-systems/exeris-agents, ref: "${{ inputs.agents-ref }}", path: .agents-tools }
+        with: { repository: exeris-systems/exeris-agents, ref: "${{ steps.agents-pin.outputs.ref }}", path: .agents-tools }
       - name: Use this checkout as the bundle (organisation repository only)
         if: ${{ github.repository == 'exeris-systems/.github' }}
         # This repository *is* the bundle. Checking it out from @main would test the merged version
