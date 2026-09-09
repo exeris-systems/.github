@@ -26,10 +26,13 @@ on:
       # .agents/ at all — the checks are already silent on one, so it is an opt-out and not a
       # requirement.
       agent-check:      { type: boolean, default: true,     description: "Run the agent-file check and the adapter render check" }
-      # `main` is the honest default: exeris-agents publishes no tags yet, and a default naming a
-      # tag that does not exist is a check that silently does not run. A caller that wants the
-      # tooling frozen passes a sha, which is what every `uses:` in these repositories already does.
-      agents-ref:       { type: string,  default: "main",   description: "Ref of exeris-systems/exeris-agents to run the agent-layer checks from" }
+      # A FALLBACK, not the answer. The ref comes from the caller's own `.agents/manifest.yaml`
+      # (`imports[].ref`) whenever it pins one, because that is the ref the repository *means* and
+      # a second, separately-supplied ref is a second owner of the same fact. This value is used
+      # where the caller pins nothing — a repository with no `.agents/`, an `imports: []`, or a
+      # manifest this cannot read. `main` is the honest fallback: exeris-agents publishes no tags
+      # yet, and a default naming a tag that does not exist is a check that silently does not run.
+      agents-ref:       { type: string,  default: "main",   description: "Fallback ref of exeris-systems/exeris-agents, used only when the caller's manifest pins none" }
 permissions:
   contents: read
   pull-requests: read
@@ -55,16 +58,52 @@ jobs:
           repository: exeris-systems/.github
           path: .guardrails
           ref: ${{ github.job_workflow_sha }}
+      # The tooling and the semantics were pinned in two places: this workflow's input named the
+      # ref the checks RUN from, and `.agents/manifest.yaml` named the ref the repository IS on.
+      # Nothing bound them, so a repository could be checked by tools from a version it does not
+      # pin — and the failure is silent in the worst direction, because the checks pass against the
+      # wrong rules. Reading the pin is the only arrangement in which the two cannot drift.
+      - name: Resolve the bundle ref from the caller's pin
+        if: ${{ inputs.agent-check }}
+        id: bundle-ref
+        env:
+          FALLBACK: ${{ inputs.agents-ref }}
+        # Guarded on the script's presence, not assumed: `.guardrails` is pinned to
+        # `job_workflow_sha`, so a caller running a docs-lint from before this step existed would
+        # otherwise fail on a missing file — and the pull request that ADDS the script is itself
+        # such a caller. Degrades to the fallback, which is the behaviour this replaces.
+        run: |
+          # `.guardrails` first, then this checkout: the organisation repository gets `.guardrails`
+          # from the rsync two steps BELOW, so at this point it has none — and it is the one repo
+          # that always has `scripts/` of its own. Without the second path the script would never
+          # run in the repository that owns it, which is where it is least affordable to be wrong.
+          for candidate in .guardrails/scripts/agents_pin.py scripts/agents_pin.py; do
+            if [ -f "$candidate" ]; then
+              python3 "$candidate" --fallback "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::notice::agents_pin.py is in neither .guardrails/ nor scripts/; using '$FALLBACK'"
+          printf 'ref=%s\nsource=input\n' "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
       - name: Fetch the agent bundle (exeris-systems/exeris-agents)
         if: ${{ inputs.agent-check }}
         uses: actions/checkout@v4
-        with: { repository: exeris-systems/exeris-agents, ref: "${{ inputs.agents-ref }}", path: .agents-tools }
+        with:
+          repository: exeris-systems/exeris-agents
+          ref: "${{ steps.bundle-ref.outputs.ref }}"
+          path: .agents-tools
       - name: Use this checkout as the bundle (organisation repository only)
         if: ${{ github.repository == 'exeris-systems/.github' }}
         # This repository *is* the bundle. Checking it out from @main would test the merged version
         # rather than the one in the pull request; copying the working checkout keeps every path
         # below identical and tests the code actually under review.
-        run: rsync -a --exclude .git --exclude .guardrails ./ .guardrails/
+        # `.agents-tools` is excluded too, and not for tidiness: it is the bundle checkout fetched
+        # two steps above, and copying it here strips the `.git` that marks it as somebody else's
+        # repository. The checker skips a nested checkout by that marker, so the copy — unlike the
+        # original — is walked, and the bundle's own AGENTS.md is reported against this
+        # repository's nested-file limit. It crossed 4 KB in exeris-agents on 2026-09-09 and turned
+        # this job red for a file this repository does not own.
+        run: rsync -a --exclude .git --exclude .guardrails --exclude .agents-tools ./ .guardrails/
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       # jsonschema is the agent-file check's rule-13 half. Without it that check DOWNGRADES to a
