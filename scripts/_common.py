@@ -114,8 +114,11 @@ def changed_files(base: str | None) -> set[str] | None:
 # out of an opt-in path list — a path forgotten from such a list is silently unchecked, which is how
 # exeris-docs/standards/ went unlinted while the standard it holds was being made binding.
 GENERATED_DIRS = ("node_modules", "target", "build", "dist", ".docusaurus", ".next", "out")
-# The guardrail bundle is checked out into the workspace it lints; .git is not content.
-TOOLING_DIRS = (".git", ".guardrails")
+# Tooling checked out into the workspace it lints; .git is not content. `.agents-tools` is the
+# agent bundle (exeris-systems/exeris-agents), fetched by docs-lint.yml at a pinned ref: its
+# README, CHANGELOG and policies are another repository's documentation, and every finding against
+# them is one no consumer can act on. It is checked where it lives, by its own CI.
+TOOLING_DIRS = (".git", ".guardrails", ".agents-tools")
 # Agent trees carry their own schema (agents-md-schema.md) and are checked by agents_file_check.py.
 # A SKILL.md cannot also carry the docs frontmatter without breaking the agent runtime that reads it.
 AGENT_DIRS = (".agents", ".claude", ".codex", ".cursor", ".gemini", ".clinerules")
