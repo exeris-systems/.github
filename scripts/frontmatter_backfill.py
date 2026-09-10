@@ -15,10 +15,16 @@ What it will not do:
   * invent `type` silently — a file it cannot place is reported as low confidence and left alone
     unless --include-unplaced is given, in which case it gets the fallback and appears in the report.
 
-`last-verified` is set from the file's last commit date, which is NOT what the field means.
-docs-style-guide.md rule 3 defines it as the date a human last confirmed the page matches the code;
-a commit date only says when the text last moved. Every file this script touches is therefore listed
-in the report as owing a verification pass. Treat the report as the worklist, not as a receipt.
+`last-verified` is written for NARRATIVE PAGES ONLY, and there it is set from the file's last
+commit date, which is NOT what the field means. docs-style-guide.md rule 2 defines it as the date a
+human last confirmed the page matches the code; a commit date only says when the text last moved.
+Every narrative page this script touches is therefore listed in the report as owing a verification
+pass. Treat the report as the worklist, not as a receipt.
+
+Records — ADRs, their stubs, RFCs, research notes — do not receive the key at all. There is no
+verification pass for them to owe: a record states a decision as of its own date and cannot be
+falsified by a later commit. Writing the key there manufactured the assertion this docstring warns
+about and then asked a human to discharge something that was never true.
 
 Usage:
   frontmatter_backfill.py [--root .] [--apply] [--report backfill-report.md]
@@ -27,7 +33,7 @@ Usage:
 from __future__ import annotations
 import argparse, datetime, os, re, subprocess, sys
 sys.path.insert(0, os.path.dirname(__file__))
-from _common import walk_md, read_frontmatter, repo_name, PRIVATE_REPOS
+from _common import walk_md, read_frontmatter, repo_name, PRIVATE_REPOS, RECORD_TYPES
 
 EXEMPT_NAMES = {"README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
                 "SUPPORT.md", "LICENSE.md", "NOTICE.md", "PULL_REQUEST_TEMPLATE.md"}
@@ -153,7 +159,9 @@ def main():
         title, title_sure = infer_title(text, path)
         date, date_sure = last_commit_date(path)
         fields = {"title": title, "type": typ, "visibility": vis, "owning-repo": repo,
-                  "status": infer_status(text, typ), "last-verified": date}
+                  "status": infer_status(text, typ)}
+        if typ not in RECORD_TYPES:
+            fields["last-verified"] = date
         m = ADR_N.match(os.path.basename(path))
         if typ in ("adr", "adr-link") and m:
             fields["slug"] = f"adr/ADR-{m.group(1)}"
@@ -175,9 +183,11 @@ def main():
             fh.write(f"# Frontmatter backfill — {repo}\n\n")
             fh.write(f"{len(rows)} file(s) received a generated frontmatter block on "
                      f"{datetime.date.today().isoformat()}.\n\n"
-                     "`last-verified` on every one of them is the file's **last commit date**, not a "
-                     "verification date: nobody has yet confirmed these pages match the code. This "
-                     "list is the worklist for that pass (docs-style-guide.md rule 3).\n\n"
+                     "`last-verified` on every **narrative page** here is the file's **last commit "
+                     "date**, not a verification date: nobody has yet confirmed these pages match "
+                     "the code. This list is the worklist for that pass (docs-style-guide.md rule "
+                     "2). Records carry no such key and owe no such pass — a decision as of its own "
+                     "date is not a claim about the code today (adr-conventions.md rule 6).\n\n"
                      "| File | type | type inferred | title from H1 | date from git |\n"
                      "|:--|:--|:--|:--|:--|\n")
             for p, t, ts, tis, ds in rows:
