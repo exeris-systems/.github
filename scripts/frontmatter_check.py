@@ -19,10 +19,19 @@ from __future__ import annotations
 import argparse, datetime, glob, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from _common import (Report, read_frontmatter, changed_files, walk_md, DOC_TYPES, STATUSES, VISIBILITY,
-                     ADR_FILE, ADR_LINK, RFC_FILE, RESEARCH_FILE, PRIVATE_REPOS, repo_name)
+                     RECORD_TYPES, ADR_FILE, ADR_LINK, RFC_FILE, RESEARCH_FILE, PRIVATE_REPOS,
+                     repo_name)
 
-REQUIRED = ["title", "type", "visibility", "owning-repo", "last-verified"]
-RECORD_TYPES = {"adr", "adr-link", "rfc", "research"}
+REQUIRED = ["title", "type", "visibility", "owning-repo"]
+# `last-verified` is a claim about the code as it stands — "the date a human last confirmed this
+# page matches the code" (docs-style-guide.md rule 2). A record makes no such claim and cannot: an
+# ADR from February describes a decision taken in February, and no later commit can falsify it.
+# Requiring the key there leaves two ways to fill it, both wrong — a date asserting a verification
+# nobody performed, or the decision's own date wearing a name that means something else.
+#
+# This is not a new rule. `adr-conventions.md` rule 6 already lists a record's frontmatter as
+# `type`, `status` and `slug`; the checker simply never respected it.
+NARRATIVE_ONLY = ["last-verified"]
 REQUIRED_SECTIONS = {
     "tutorial": ["## Prerequisites", "## Where this does not apply"],
     "howto": ["## Prerequisites", "## Where this does not apply"],
@@ -73,6 +82,10 @@ def check_file(path: str, rep: Report, repo_vis: str, section_check: bool):
     for k in REQUIRED:
         if k not in fm or fm[k] in (None, ""):
             rep.error(rel, f"frontmatter key '{k}' is required", rule="frontmatter")
+    if fm.get("type") not in RECORD_TYPES:
+        for k in NARRATIVE_ONLY:
+            if k not in fm or fm[k] in (None, ""):
+                rep.error(rel, f"frontmatter key '{k}' is required", rule="frontmatter")
     is_template = bool(TEMPLATE_FILE.search(name))
 
     def placeholder(val) -> bool:

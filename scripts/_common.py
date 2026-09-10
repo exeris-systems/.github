@@ -24,6 +24,13 @@ DOC_TYPES = {
     "benchmark-report", "claims", "methodology", "refactor-note", "working-note", "migration-guide",
 }
 STATUSES = {"draft", "active", "stale", "superseded", "retracted"}
+# A record states a decision as of its own date: an ADR, its cross-repo stub, an RFC, a research
+# note. It does not drift, because it is not an assertion about the code as it stands today — which
+# is why `adr-conventions.md` rule 6 enumerates a record's frontmatter without `last-verified`.
+# Named here rather than in each script because two of them ask the question and an answer given
+# twice is an answer that can differ: the checker would stop requiring the key while the backfill
+# went on writing it.
+RECORD_TYPES = {"adr", "adr-link", "rfc", "research"}
 VISIBILITY = {"public", "enterprise-private"}
 
 ADR_FILE = re.compile(r"^ADR-(\d{3})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
