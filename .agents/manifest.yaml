@@ -1,0 +1,27 @@
+# Composition and delivery metadata for this repository's agent material.
+#
+# This repository is a bundle CONSUMER and nothing else. It authors no role profile, no skill and
+# no agent workflow: its `[L2]` routine is prose (`docs-guardrails-review.md`) handed to a runner
+# by `.github/workflows/docs-review.yml`, and the schema below is the shape that routine's verdict
+# has to take. The keys that name profiles, skills, workflows, policies, references and hooks are
+# therefore absent rather than empty — `agents_file_check.py` asserts the manifest and the
+# filesystem agree in BOTH directions, so an empty list here would claim a directory that is not
+# there, and the check reads absent and empty the same way.
+#
+# No `adapters:` for the same reason: an adapter is generated FROM authored material, and there is
+# none to render.
+version: 2
+repository: .github
+
+# The organisation bundle, pinned and vendored under .agents/vendor/ (agents-md-schema.md rule 8).
+# `ref` is the commit the tree was taken from and `sha256` a digest over every byte of it, so a
+# hand-edit of the vendored copy fails CI instead of becoming a silent local fork. Bumping the
+# version means re-vendoring; the pin and the tree are one fact and land together.
+imports:
+  - bundle: exeris-agents
+    version: 2.0.0
+    ref: dfe373ffb67c63c80daf6e90a6a36903dd12e640
+    sha256: sha256:56284cb7d8c08efeffe837ad5cb2a5d2e93fc8d4fbd5a0984af1d32d5426116c
+
+schemas:
+  - verdict

@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-05
+last-verified: 2026-09-10
 ---
 
 # exeris-systems/.github: the shared enforcement for the documentation standards
@@ -59,6 +59,8 @@ defect in the gate. Both are worth fixing; suppressing the check is neither. `co
 | `vale/` | Exeris style plus the vendored Quarkus package (Apache-2.0, see `styles/Quarkus/NOTICE.md`) |
 | `caller-example/guardrails.yml` | The file each repo copies — the whole per-repo footprint |
 | `docs-guardrails-review.md`, `pr-review.patch.md` | The `[L2]` review routine and its router patch |
+| `.agents/` | The pinned, digest-verified copy of `exeris-agents` and the verdict schema composed over it |
+| `labels-from-verdict.json` | Which verdict field applies which label from `labels.yml` |
 
 ## When to stop and ask
 

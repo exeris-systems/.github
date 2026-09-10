@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review verdict (.github)",
+  "description": "The bundle's shape, narrowed to the one reviewing role this repository runs and to the pull-request scope vocabulary of ADR-085 §E.16. The three-state `decision`, the `findings` shape and the `checks_run` contract are the base's; the vocabulary here is local, and `tag` is added on a finding. §E.16's classes carry spaces, which the base permits: it bounds `scope_class` by length and nothing else, so a class reaches the verdict spelled the way the pull-request body spells it.\n\n`agent` is the role, not the routine: `docs-guardrails-review.md` is a document a runner is handed, and the same role would still be the author if that file were split or renamed. The four `unevaluatedProperties: false` — the root, a finding, a check entry, a handoff — are this file's because the base declares none; the base's own `description` says why the closers belong here, and `agents_file_check.py` names any object that ends up without one.",
+  "allOf": [
+    { "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json" },
+    {
+      "properties": {
+        "agent": {
+          "enum": [
+            "exeris-org-docs-reviewer"
+          ]
+        },
+        "scope_class": {
+          "enum": [
+            "runtime hot path",
+            "runtime non-hot",
+            "test-tooling",
+            "docs-only"
+          ]
+        },
+        "findings": {
+          "items": {
+            "allOf": [
+              { "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json#/properties/findings/items" },
+              {
+                "properties": {
+                  "tag": {
+                    "description": "The bracketed severity this finding carries, and optional because a finding need not be tagged. It belongs to the finding rather than to the verdict: one review reports a `[HARD BLOCK]` and a `[DOC DEBT]` in the same run, and ADR-087 §B.7 maps a finding's tag to a label. The enum is the seven severities `docs-guardrails-review.md` emits and no others: a value nobody can check against a file in this repository is a value the routine may never emit. The rest of the review vocabulary — `CATEGORY-C`, `SYNC`, `PERFORMANCE`, `PHASE`, `HEURISTIC` — lives in `pr-review.md`, the Claude Project document ADR-085 §J.33 still points at, and is left out on purpose until that document is in git and can be checked the same way.",
+                    "enum": [
+                      "HARD BLOCK",
+                      "CONTRACT",
+                      "CATEGORY-B",
+                      "CROSS-REPO",
+                      "DOC DEBT",
+                      "TCK DEBT",
+                      "STYLE"
+                    ]
+                  }
+                }
+              }
+            ],
+            "unevaluatedProperties": false
+          }
+        },
+        "checks_run": {
+          "items": {
+            "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json#/properties/checks_run/items",
+            "unevaluatedProperties": false
+          }
+        },
+        "handoffs": {
+          "items": {
+            "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json#/properties/handoffs/items",
+            "unevaluatedProperties": false
+          }
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}
