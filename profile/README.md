@@ -1,4 +1,4 @@
-# <img width="45" height="45" alt="ExerisLogo" src="https://github.com/user-attachments/assets/56d05057-21c2-4baa-a669-6de8001ec341" /> Exeris Systems
+# <img width="45" height="45" alt="ExerisLogo" src="https://avatars.githubusercontent.com/u/263136662?s=400&u=4d97816554998a13d547145e42108bb202f4c683&v=4" /> Exeris Systems
 
 **A JVM runtime where the things that usually need a second process run in yours — at a measured, published resident cost.**
 
