@@ -10,8 +10,11 @@
     "TCK DEBT": "tck-debt"
   },
   "remove-on": {
-    "$comment": "A PASS after a BLOCKED on the same pull request takes the block off. The labels show the review's current answer, not the worst one it ever gave.",
+    "$comment": "A verdict short of BLOCKED takes the block off. `PASS` and `CONDITIONAL` both say the same thing about `hard-block`: this run found nothing that refuses the merge outright. Leaving it on a CONDITIONAL left the label saying the worst answer the review ever gave, which is what the comment above says it must not do.",
     "PASS": [
+      "hard-block"
+    ],
+    "CONDITIONAL": [
       "hard-block"
     ]
   }

@@ -1,4 +1,5 @@
-# Reusable: run the L2 documentation and hygiene review on a pull request — ADR-085 §J.33.
+# Reusable: run the L2 documentation and hygiene review on a pull request — ADR-085 §J.33,
+# ADR-087 §B.
 #
 # §J.33 places `docs-guardrails-review` as a step inside `pr-review.md`, "a Claude Project document
 # maintained outside the git repositories". That is where it still lives, and it is why the review
@@ -11,10 +12,22 @@
 # checked out and handed to Claude verbatim, so there is exactly one copy and changing it changes
 # every repository at once.
 #
-# A separate job rather than an extra sentence appended to the code-review prompt: a slash command
-# takes its own arguments, and trailing instructions after one are not reliably honoured. Two
-# prompts, each unambiguous. The cost is a second Claude run, which is why this one is gated on the
-# pull request actually touching documentation or Java.
+# PRODUCE AND PUBLISH ARE TWO JOBS, AND ONLY THE SECOND WRITES (ADR-087 §B.5). The produce job runs
+# the model and writes a verdict; the publish job posts it, labels the pull request and is the
+# required check. The split is not cosmetic: every write goes through the `exeris-bot` installation
+# token, so neither job's own GITHUB_TOKEN needs a write scope, and the step that executes
+# model-generated commands holds none. A caller's permission block therefore does not change.
+#
+# A reviewed pull request ends up with TWO comments, and that is not an accident. The runner posts
+# its own review — that is the artefact §B.10's fallback reads when no file was written — and the
+# publish job posts the verdict under the organisation's byline, edited in place on every later push.
+# The runner's comment is the production; the bot's is the publication, and it is the one the labels
+# and the required check follow.
+#
+# The routine, the schema and the label map are read from `exeris-systems/.github`'s DEFAULT BRANCH,
+# never from the pull request under review — including when this repository reviews itself. A pull
+# request that rewrites the contract is judged by the contract that is in force, which is the only
+# reading under which a red result means anything.
 name: docs-review
 on:
   workflow_call:
@@ -23,21 +36,75 @@ on:
         type: string
         default: ""
         description: "Additional path globs that should trigger the docs review, one per line"
+      runner:
+        type: string
+        default: "claude-code-action"
+        description: >-
+          Which runner produces the verdict. A configuration point, not a decision point
+          (ADR-087 §B.12): a human sets it in the caller, the publish step records what ran and
+          selects nothing. One value is supported today; the input exists so that adding a second
+          is a caller edit rather than a workflow rewrite.
+      publish:
+        type: boolean
+        default: false
+        description: >-
+          Whether the verdict is published and gated. OFF by default, and deliberately: until a real
+          run has shown whether the runner writes `verdict.json` and what identity it posts under
+          (ADR-087 Engineering Protocol 4), the publish job has one possible source of a verdict and
+          nobody knows whether it produces one. Switching it on for every caller at merge would put
+          an unexplained red or green on pull requests in repositories that did not ask for it.
+          `exeris-systems/.github` turns it on for itself first; a caller turns it on when the
+          answers exist.
+      mandatory-gates:
+        type: string
+        default: ""
+        description: >-
+          Comma-separated L1 gates whose `not-run` makes the required check red (ADR-087 §B.8).
+          Empty means the routine's own list. Name more here in a repository whose caller runs more.
     secrets:
       claude_code_oauth_token: { required: true }
+      # OPTIONAL, and that is a compatibility statement as much as a design one. `exeris-sdk` and
+      # `exeris-tooling` track this workflow at `@main` and pass secrets BY NAME, not by inheriting;
+      # a new required secret would stop their whole guardrails file parsing on the merge commit,
+      # which is the failure `caller_permissions_check.py` exists because of. It is also what
+      # ADR-087 Engineering Protocol 1 asks for: items 2-3 land "and run under the provider's
+      # identity until the Apps exist".
+      #
+      # Without them the review is not published and no label moves; the required check still
+      # decides. Publication degrades, the gate does not.
+      exeris_bot_app_id: { required: false }
+      exeris_bot_private_key: { required: false }
 permissions:
   contents: read
   pull-requests: read
   issues: read
   id-token: write
+
 jobs:
-  docs-review:
+  produce:
     runs-on: ubuntu-latest
     # Drafts and dependency bumps are not reviewed, matching claude-code-review.yml and
     # pr-conventions.md rule 6.
+    # THIS CONDITION IS ALSO WHAT HOLDS §C.14a's TRIGGER CLOSED, and that is worth saying because
+    # nothing else here does. The produce job runs the model on the pull request's HEAD checkout,
+    # which includes its `AGENTS.md`, its `.agents/**` and its provider adapters — the instruction
+    # files the runner reads. §C.14a requires those to be restored from the merge base whenever the
+    # author is not a member of the organisation, and that is NOT implemented. Today no outside pull
+    # request reaches the runner at all, because of the line below. Anything that changes that —
+    # `pull_request_target`, or reviewing forks — must implement §C.14a first, in the same change.
+    #
+    # A fork's pull request receives no secrets, so the runner has no credential and the review
+    # cannot happen. Skipped deliberately rather than left to fail: a permanent red on every
+    # community pull request would make `exeris-kernel`'s open-core promise unmergeable, and a
+    # required check that can never pass is not a gate, it is a wall. The path that reviews a fork
+    # safely is `pull_request_target` with the risk analysis that deserves, and it is not this
+    # pull request's.
     if: >-
       github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.fork == false &&
       github.event.pull_request.user.login != 'dependabot[bot]'
+    outputs:
+      relevant: ${{ steps.relevant.outputs.any_changed }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -54,6 +121,7 @@ jobs:
             **/*.java
             ${{ inputs.extra-paths }}
       - name: Docs and hygiene review
+        id: review
         if: ${{ steps.relevant.outputs.any_changed == 'true' }}
         uses: anthropics/claude-code-action@v1
         with:
@@ -70,8 +138,73 @@ jobs:
             checked against the repository: the routine asks whether documentation matches the code,
             which means opening the code.
 
+            Close as the routine's `## Verdict` section requires: write the verdict object to
+            `verdict.json` in the root of this checkout, and repeat the same object as a fenced
+            `json` block at the end of the review you post. The schema it must satisfy is
+            `.guardrails/.agents/schemas/verdict.schema.json` — read it from there, not from this
+            repository's own `.agents/`, which is a different contract. If you cannot write files,
+            the fenced block alone is the stated fallback and the review is still complete.
+
             Post one review comment. If every step passes, say so in one line rather than
             summarising the routine back.
-      - name: Say why the review was skipped
-        if: ${{ steps.relevant.outputs.any_changed != 'true' }}
-        run: echo "No Markdown or Java changed — docs-guardrails-review has nothing to look at." >> "$GITHUB_STEP_SUMMARY"
+      # TWO artefacts, not one with two paths. `upload-artifact@v4` roots an artefact at the least
+      # common ancestor of the paths it is given: `verdict.json` sits in the workspace and the
+      # runner's execution log in RUNNER_TEMP, so their LCA is `/home/runner/work` and the verdict
+      # arrives as `<repo>/<repo>/verdict.json` — a path the publish job does not look at, silently,
+      # and only when the review SUCCEEDED and produced a log. The happy path was the broken one.
+      #
+      # `if-no-files-found: ignore` is ADR-087 §B.10 made operational: a runner that cannot write
+      # files produces no artefact, and the publish job says so rather than failing here.
+      - name: Keep the verdict for the publish job
+        if: ${{ !cancelled() && steps.relevant.outputs.any_changed == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: l2-verdict-${{ github.event.pull_request.number }}
+          path: verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+      # Separate, because §C.14 wants the execution log as its own artefact with its own digest when
+      # the capture step arrives, and because it is the only way the verdict keeps its own path.
+      - name: Keep the runner's execution log, if it exposed one
+        if: ${{ !cancelled() && steps.review.outputs.execution_file != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: l2-execution-${{ github.event.pull_request.number }}
+          path: ${{ steps.review.outputs.execution_file }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    needs: produce
+    # `inputs.publish` is the staging of ADR-087 Engineering Protocol 1, not a feature flag: items
+    # 2-3 land before the Apps and before the experiment, and a caller adopts the gate when there is
+    # something known to adopt.
+    # `always()` is what makes the gate fail-closed: a produce job that crashed, timed out or was
+    # cancelled must still reach a publish job that finds no verdict and goes red. Without it the
+    # required check would be skipped, and a skipped required check is green.
+    if: ${{ always() && inputs.publish }}
+    # The publishing half is its own reusable workflow because §B.11 requires more than one producer
+    # to reach it: a repository's own `claude-code-review.yml` calls it with the same inputs and its
+    # own `schema`, and both reviews then publish under one identity and one label map.
+    uses: exeris-systems/.github/.github/workflows/publish-verdict.yml@main
+    with:
+      verdict-artifact: l2-verdict-${{ github.event.pull_request.number }}
+      execution-artifact: l2-execution-${{ github.event.pull_request.number }}
+      expect-agent: exeris-org-docs-reviewer
+      runner: ${{ inputs.runner }}
+      routine: docs-guardrails-review.md
+      mandatory-gates: ${{ inputs.mandatory-gates }}
+      produce-outcome: ${{ needs.produce.result }}
+      produce-relevant: ${{ needs.produce.outputs.relevant }}
+      # Three conditions skip the producing job and the reason named two of them, so a fork was
+      # recorded as a draft. The plan is supposed to say which skip it was.
+      skip-reason: >-
+        ${{ github.event.pull_request.head.repo.fork
+            && 'the pull request comes from a fork, which receives no secrets, so the runner has no credential to review with'
+            || 'the pull request is a draft or a dependency bump, which this review does not read' }}
+    # Named rather than inherited: `exeris-kernel` and `exeris-sdk` both refused `secrets: inherit`
+    # under SonarCloud S7631, and the caller example follows what they do rather than what would be
+    # shorter. An absent secret arrives as an empty string and the publish half says so.
+    secrets:
+      exeris_bot_app_id: ${{ secrets.exeris_bot_app_id }}
+      exeris_bot_private_key: ${{ secrets.exeris_bot_private_key }}

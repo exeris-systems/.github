@@ -16,6 +16,18 @@ permissions:
   pull-requests: read
 
 jobs:
+  # THIS REPOSITORY DOES NOT YET RUN THE REVIEW IT MAKES MANDATORY FOR EVERY OTHER ONE, and its own
+  # header two paragraphs up says why that is wrong: "A gate its owner does not run is a gate nobody
+  # has tested." The job belongs here and cannot be added in the same pull request that creates the
+  # workflow it calls — `docs-review.yml` reaches `publish-verdict.yml` at `@main`, which on a pull
+  # request ADDING that file resolves to nothing and takes the whole run down with it. A job that
+  # calls a reusable workflow may not carry `continue-on-error` either; the permitted keys are name,
+  # needs, if, permissions, uses, with, secrets, strategy and concurrency, which is measured rather
+  # than assumed — the attempt produced a run with zero jobs.
+  #
+  # It goes in the pull request after this one, and that run is where ADR-087 Engineering Protocol 4
+  # gets its answers: whether the runner writes `verdict.json` at all, and what identity it posts
+  # under. Until it does, `verdict-authors` stays empty and the fenced fallback stays off.
   docs:
     uses: ./.github/workflows/docs-lint.yml
     with:
@@ -63,3 +75,14 @@ jobs:
       - name: The label map names only tags and labels that exist
         if: ${{ !cancelled() }}
         run: python scripts/label_map_check.py
+      # The publish step of ADR-087 §B.5-B.10 decides whether a pull request in any repository may
+      # merge, and nothing in this repository's CI can run it end to end: it needs a model, a token
+      # and a pull request in a caller. What it can run is every rule the step applies, which is
+      # where the rules live — `publish_verdict.py` plans and never writes, so the plan is checkable
+      # with no network. Each red path §B.8 names has a case, and each case was confirmed to fail
+      # when the rule it covers is removed from the planner.
+      - name: The publish step's rules, one case per red path
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet jsonschema referencing
+          python scripts/publish_verdict_suite.py --root .

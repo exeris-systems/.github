@@ -39,12 +39,50 @@ jobs:
     uses: exeris-systems/.github/.github/workflows/commit-lint.yml@main
   pr-body:
     uses: exeris-systems/.github/.github/workflows/pr-body-check.yml@main
-  # The L2 review of ADR-085 §J.33. Without this job the routine runs only in Cowork sessions and
-  # never on a pull request. `secrets: inherit` passes CLAUDE_CODE_OAUTH_TOKEN through; the job
-  # skips itself when no Markdown or Java changed.
+  # The L2 review of ADR-085 §J.33, published under the organisation's identity by ADR-087 §B.
+  # Without this job the routine runs only in Cowork sessions and never on a pull request.
+  #
+  # ONE JOB BY DEFAULT: `produce` runs the model and posts its review, exactly as before the split.
+  # Publication is opt-in (`publish: true` below), and until you turn it on nothing is labelled and
+  # nothing is gated — which is deliberate, because whether the runner writes a verdict file at all
+  # is ADR-087 Engineering Protocol 4's open question and `exeris-systems/.github` answers it on
+  # itself first.
+  #
+  # With `publish: true` a second job appears and IS THE REQUIRED CHECK — red when the verdict is
+  # absent, invalid, BLOCKED, or rests on a mandatory gate that did not run. The produce job is
+  # never the required one, because a review that crashed has to reach the step that notices.
+  #
+  # THE CHECK NAME THEN HAS THREE SEGMENTS, because the publish half is its own reusable workflow:
+  # `docs-review / publish / verdict`. CONFIRM IT AGAINST A REAL RUN before adding it to a branch
+  # protection rule — a required check whose name does not exist never reports, and a pull request
+  # waiting on one can never merge. Without `publish: true` the only check this job contributes is
+  # `docs-review / produce`.
+  #
+  # Secrets are named rather than inherited, matching exeris-kernel and exeris-sdk, which both
+  # refused `secrets: inherit` under SonarCloud S7631. The two EXERIS_BOT_* lines are optional: drop
+  # them and the review still runs, it is simply not published under the organisation's identity
+  # and no label moves — and with `publish: true` but no secrets, the gate still decides while
+  # nothing is posted. The permission block above does not grow either way
+  # — every write goes through the App's installation token, so neither job's own GITHUB_TOKEN holds
+  # one (ADR-087 §B.5).
   docs-review:
     uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
-    secrets: inherit
+    secrets:
+      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
+      exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
+    # with:
+    #   # PUBLICATION IS OFF BY DEFAULT. Turn it on once `exeris-systems/.github` has run the review
+    #   # on itself and answered ADR-087 Engineering Protocol 4 — whether the runner writes a
+    #   # verdict file, and what identity it posts under. Until then this job produces a review and
+    #   # publishes nothing, which is what it did before the split.
+    #   publish: true
+    #   # Which runner produces the verdict. One value is supported today; it is recorded, never
+    #   # selected — ADR-087 §B.12.
+    #   runner: claude-code-action
+    #   # L1 gates whose `not-run` makes the required check red, beyond the routine's own three
+    #   # (docs-lint, commit-lint, pr-body-check). Name a repo's own mandatory gates here.
+    #   mandatory-gates: "docs-lint,commit-lint,pr-body-check,javadoc-gate"
   # javadoc:                    # JVM repos with a gated module only
   #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
   #   with:

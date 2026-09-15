@@ -43,7 +43,13 @@ SEMVER = re.compile(r"\A(\d+)\.(\d+)\.(\d+)(?:[-+].*)?\Z")
 
 
 def pinned_version(path: str, rep: Report) -> str | None:
-    """The version this manifest pins for the bundle, or None when it pins none."""
+    """The version this manifest pins, None when it pins none, and "" when it could not be read.
+
+    Three outcomes, not two. A manifest that will not parse and a manifest that pins nothing are
+    opposite facts — the second is explicitly not a finding — and collapsing them printed
+    "pins no exeris-agents … with nothing to compare" directly under the error saying the file could
+    not be read at all.
+    """
     import yaml
     rel = os.path.relpath(path)
     try:
@@ -51,7 +57,7 @@ def pinned_version(path: str, rep: Report) -> str | None:
             manifest = yaml.safe_load(fh) or {}
     except Exception as exc:
         rep.error(rel, f"manifest.yaml is not valid YAML ({type(exc).__name__})", rule="caller-pin")
-        return None
+        return ""
     for imp in manifest.get("imports") or []:
         if isinstance(imp, dict) and imp.get("bundle") == BUNDLE and imp.get("version"):
             return str(imp["version"])
@@ -85,6 +91,8 @@ def main() -> int:
             continue
         rep.checked += 1
         theirs = pinned_version(path, rep)
+        if theirs == "":
+            continue  # already reported, and it is not a repository that pins nothing
         if theirs is None:
             print(f"{rel}: pins no {BUNDLE} — validated against {BUNDLE} {ours} with nothing "
                   f"to compare")

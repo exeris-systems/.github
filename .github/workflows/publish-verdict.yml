@@ -1,0 +1,321 @@
+# Reusable: publish one L2 review verdict under the organisation's identity — ADR-087 §B.5-B.11.
+#
+# THIS IS PREPARATION FOR §B.11, NOT §B.11. The section requires a repository's own routine and the
+# organisation's to publish "under one identity and one contract", which is impossible while the
+# publishing half lives inside one producer's workflow — so it lives here, and `docs-review.yml`
+# calls it. But TODAY IT SERVES ONE PRODUCER, and two things in it are the organisation routine's
+# rather than any producer's: the schema below is fixed, and `publish_verdict.py` always adds the
+# organisation's three mandatory gates to whatever a caller names. A repository told to "add a
+# publish job" right now would find its verdict refused by the schema and its merge gated on gates
+# it does not run. Both become inputs with the §B.6a amendment that says whose composition
+# validates, and the three callers land with it.
+#
+# It posts, it labels, and it is the required check. It reads no diff, runs no model and reorders no
+# finding — §E.23. Everything it decides is decided by `publish_verdict.py plan`, which touches no
+# network and is exercised case by case by `publish_verdict_suite.py` in this repository's own CI.
+#
+# WHICH SCHEMA VALIDATES is fixed here and is NOT an input. `.github`'s composed schema narrows
+# `agent` to `exeris-org-docs-reviewer`, so a verdict from `kernel-pr-review.md` — `agent:
+# exeris-evaluator` — will not validate against it, and a repository's own routine therefore cannot
+# publish through this workflow yet. Taking the schema from the reviewed checkout would fix that and
+# would also let a pull request weaken the contract it is judged by, which is the invariant this
+# whole file rests on. §B.6a says where the BASE comes from and is silent on whose COMPOSITION
+# validates, because it was written with one producer in mind; the input arrives with the amendment
+# that answers it, together with the three callers that need it, and not before.
+#
+# NESTED PIN, AND WHAT IT COSTS AT HOME. `docs-review.yml` reaches this file at `@main` — a relative
+# path resolves in the calling repository, which for a reusable workflow is somebody else's. Two
+# consequences, and the second is the worse one.
+#
+# A caller that pins `docs-review.yml` by SHA does not pin this half; a change here reaches every
+# repository at once, exactly as a change to any other file in this repository does.
+#
+# And `guardrails.yml`'s own header says it calls the reusable workflows by relative path "so a pull
+# request is checked against the version in the pull request — not against `@main`, which would test
+# the wrong code". Through this nesting that promise does not hold for the publishing half: when
+# this repository reviews itself, the half that decides comes from `main`, not from the pull request
+# proposing to change it. The file that owns this code is the one least able to test it. Closing
+# both needs either a ref the caller passes down or the two halves in one file, and neither is
+# decided here.
+name: publish-verdict
+on:
+  workflow_call:
+    inputs:
+      verdict-artifact:
+        type: string
+        default: ""
+        description: "Artifact holding verdict.json, and the runner's execution log where it exposed one"
+      labels-map:
+        type: string
+        default: ".guardrails/labels-from-verdict.json"
+      mandatory-gates:
+        type: string
+        default: ""
+        description: "L1 gates whose `not-run` is red (ADR-087 §B.8). Empty means the routine's own list."
+      runner:
+        type: string
+        default: ""
+        description: "What produced the verdict, recorded in the footer and never selected on"
+      routine:
+        type: string
+        default: ""
+        description: "The routine file the producer ran, named in the provenance footer (§A.3)"
+      produce-outcome:
+        type: string
+        required: true
+        description: "The producing job's `result`. `skipped` is the only value that is green without a verdict."
+      produce-relevant:
+        type: string
+        default: "true"
+        description: "`false` when a deterministic path filter decided there was nothing to review"
+      execution-artifact:
+        type: string
+        default: ""
+        description: "Artifact holding the runner's execution log, where the runner exposed one"
+      expect-agent:
+        type: string
+        default: ""
+        description: >-
+          The role this publication is for. It keys the comment marker when there is no verdict to
+          read a role from, which is the path a reader most needs a comment on.
+      bot-login:
+        type: string
+        default: "exeris-bot[bot]"
+        description: >-
+          The publishing identity, in one place: the arbiter reads markers from it and the apply step
+          edits its comments. Two copies that disagree read one set of comments and write another.
+      verdict-authors:
+        type: string
+        default: ""
+        description: >-
+          Logins whose comments may carry the fenced fallback verdict of §B.10. EMPTY MEANS THE
+          FALLBACK IS OFF. "Any Bot" was the first reading and it is not a filter: the runner posts
+          as `github-actions[bot]`, an identity every workflow in the repository can write under,
+          including one the reviewed pull request adds — which would let a pull request green its own
+          required check. Name the runner's login here once a real run has shown what it is.
+      skip-reason:
+        type: string
+        default: ""
+        description: "Which skip it was, when the producing job was skipped rather than run"
+    secrets:
+      # OPTIONAL, because ADR-087 Engineering Protocol 1 says items 2-3 "land first … and run under
+      # the provider's identity until the Apps exist" — nothing before the Apps needs a token. A
+      # required secret here would also break, at parse time, every caller that passes secrets by
+      # name rather than inheriting: `exeris-sdk` and `exeris-tooling` both do, and both track
+      # `@main`.
+      #
+      # Without them the review is not published and no label moves, and the required check still
+      # decides. Publication degrades; the gate does not.
+      exeris_bot_app_id: { required: false }
+      exeris_bot_private_key: { required: false }
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  # The job name is the last segment of the check name, and the check name is what a branch
+  # protection rule names. Through `docs-review.yml` this reads `docs-review / publish / verdict`;
+  # called straight from a repository's own `guardrails.yml` it reads `<job> / verdict`. CONFIRM THE
+  # NAME AGAINST A REAL RUN BEFORE MAKING IT REQUIRED — a required check whose name does not exist
+  # never reports, and a pull request waiting on one can never merge.
+  verdict:
+    runs-on: ubuntu-latest
+    # The caller's own `concurrency` cancels superseded RUNS, and `if: always()` deliberately lets a
+    # cancelled run reach this job — so without a group here two pushes in quick succession edit one
+    # comment and one label set at the same time. Queued rather than cancelled: the later write is
+    # the one that should stand, and cancelling the earlier one mid-write is how half a plan lands.
+    concurrency:
+      group: publish-verdict-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Fetch the contract (exeris-systems/.github, default branch)
+        uses: actions/checkout@v4
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - name: The SHA the contract was read at
+        id: contract
+        run: echo "sha=$(git -C .guardrails rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Check the reviewed repository's agent tree out
+        id: caller
+        uses: actions/checkout@v4
+        with: { path: caller, sparse-checkout: .agents, sparse-checkout-cone-mode: false }
+        continue-on-error: true
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install --quiet pyyaml jsonschema referencing
+      - name: The verdict the producing job left, if it left one
+        if: ${{ inputs.verdict-artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.verdict-artifact }}
+          path: produced
+        continue-on-error: true
+      # Read with the job's own token, which holds `pull-requests: read` and nothing more. This is
+      # the fallback source of §B.10, and it is also where the arbiter reads what another routine
+      # has already published.
+      - name: The runner's execution log, if it exposed one
+        if: ${{ inputs.execution-artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.execution-artifact }}
+          path: execution
+        continue-on-error: true
+      - name: The reviews already on this pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # The author is part of the contract, not decoration: §B.10's fallback is "the fenced block
+          # from the review THE RUNNER POSTED", and a pull request is a surface anyone can write to.
+          # `source` travels with the id because the two endpoints have separate id spaces — a review
+          # id PATCHed against issues/comments edits an unrelated comment or 404s.
+          { gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              --jq '.[] | {id, source: "issue-comment", author: .user.login, author_type: .user.type, created_at, body}'
+            gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+              --jq '.[] | {id, source: "review", author: .user.login, author_type: .user.type, created_at: .submitted_at, body}'
+          } | jq -s '.' > comments.json
+      - name: Is there an identity to publish under?
+        id: identity
+        env:
+          APP_ID: ${{ secrets.exeris_bot_app_id }}
+        run: |
+          if [ -n "$APP_ID" ]; then echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::publish_verdict: no exeris_bot_app_id was passed, so this review is not published and no label moves. The required check still decides. Pass exeris_bot_app_id and exeris_bot_private_key from the caller to turn publication on."
+          fi
+      - name: Mint the exeris-bot token
+        id: bot
+        if: ${{ steps.identity.outputs.have == 'true' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.exeris_bot_app_id }}
+          private-key: ${{ secrets.exeris_bot_private_key }}
+      # Every caller-controlled value reaches the shell through `env`, never through `${{ }}` inside
+      # the script: a label named `"; rm -rf /` is a thing a person can create, and a run block that
+      # interpolates one is how it executes.
+      # §B.6a. It runs BEFORE the plan and its finding is handed to the planner rather than failing
+      # a step of its own: a second red beside the gate is a red the pull request's author cannot
+      # tell from BLOCKED, and §B.8 does not list it. It lands in the comment beside the review.
+      - name: The reviewed repository's bundle pin against this one's
+        id: pin
+        env:
+          CALLER_CHECKOUT: ${{ steps.caller.outcome }}
+        run: |
+          set -euo pipefail
+          problem=""
+          # A checkout that failed and a repository that carries no `.agents/` tree look identical
+          # from the file system, and they are opposite facts: the second means there is nothing to
+          # compare, the first means the comparison did not happen. Reading them as one silently
+          # skipped §B.6a and published green — in a workflow whose whole argument is that a skipped
+          # check is a green one.
+          if [ "$CALLER_CHECKOUT" != "success" ]; then
+            problem="the reviewed repository's agent tree could not be checked out (${CALLER_CHECKOUT}), so its bundle pin was never compared with this repository's"
+          elif [ -f caller/.agents/manifest.yaml ]; then
+            if ! out=$(python .guardrails/scripts/caller_bundle_check.py \
+                         --root .guardrails --caller caller/.agents/manifest.yaml 2>&1); then
+              # `sed -n` exits 0 with no match; `grep` exits 1, and under `pipefail` that killed this
+              # step before the line below could run — the fallback was unreachable code. The phrase
+              # it matched was wrong as well: three of the four things this script reports (invalid
+              # YAML, no pin, an unparseable version) never contain it.
+              problem=$(printf '%s' "$out" | sed -n 's/^::error[^:]*:://p' | head -1)
+              [ -n "$problem" ] || problem=$(printf '%s' "$out" | tail -1)
+              [ -n "$problem" ] || problem="caller_bundle_check.py refused the caller's pin"
+            fi
+          fi
+          { echo "problem<<EOF"; echo "$problem"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+      - name: The labels already on this pull request
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: printf '%s' "$LABELS" | jq -r '.[]' > current-labels.txt
+      - name: Plan the publication
+        env:
+          OUTCOME: ${{ inputs.produce-outcome }}
+          RELEVANT: ${{ inputs.produce-relevant }}
+          RUNNER: ${{ inputs.runner }}
+          ROUTINE: ${{ inputs.routine }}
+          LABELS_MAP: ${{ inputs.labels-map }}
+          MANDATORY: ${{ inputs.mandatory-gates }}
+          SKIP_REASON: ${{ inputs.skip-reason }}
+          VERDICT_AUTHORS: ${{ inputs.verdict-authors }}
+          EXPECT_AGENT: ${{ inputs.expect-agent }}
+          BOT_LOGIN: ${{ inputs.bot-login }}
+          PIN_PROBLEM: ${{ steps.pin.outputs.problem }}
+          ROUTINE_SHA: ${{ steps.contract.outputs.sha }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ -n "$SKIP_REASON" ]; then extra=(--skip-reason "$SKIP_REASON"); fi
+          # The runner's execution log, when the action exposed one. Its name is the action's, not
+          # ours. ADR-087 Engineering Protocol 4 asks whether the action exposes it at all — the
+          # footer answers that on a real run rather than by prediction.
+          # `find` on a missing directory exits non-zero, and under `pipefail` that killed this step
+          # before the planner ran — on exactly the path where the artefact is absent, which is the
+          # path §B.10's fallback exists for.
+          if [ -d execution ]; then
+            log=$(find execution -maxdepth 2 -type f | head -1 || true)
+            if [ -n "$log" ]; then extra+=(--execution-log "$log"); fi
+          fi
+          if [ -n "$PIN_PROBLEM" ]; then extra+=(--pin-problem "$PIN_PROBLEM"); fi
+          python .guardrails/scripts/publish_verdict.py plan \
+            --schema .guardrails/.agents/schemas/verdict.schema.json \
+            --labels-map "$LABELS_MAP" \
+            --out plan.json \
+            --verdict produced/verdict.json \
+            --comments comments.json \
+            --produce-outcome "$OUTCOME" \
+            --produce-relevant "$RELEVANT" \
+            ${extra[@]+"${extra[@]}"} \
+            --mandatory "$MANDATORY" \
+            --runner "$RUNNER" \
+            --routine "$ROUTINE" \
+            --routine-sha "$ROUTINE_SHA" \
+            --verdict-authors "$VERDICT_AUTHORS" \
+            --expect-agent "$EXPECT_AGENT" \
+            --bot-login "$BOT_LOGIN" \
+            --current-labels-file current-labels.txt
+      # The only step that writes, and it writes as `exeris-bot` — the organisation's byline, never
+      # a claim that the bot reviewed anything (§A.3).
+      - name: Publish the review and apply the labels
+        if: ${{ steps.identity.outputs.have == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BOT_LOGIN: ${{ inputs.bot-login }}
+        run: |
+          set -euo pipefail
+          # `jq -r` on an empty string writes a newline, so `[ -s ]` is true for nothing at all —
+          # which posted a blank comment, markerless, once per push, on every path without a verdict.
+          # Ask the plan, not the file.
+          if [ "$(jq -r '.comment | length' plan.json)" -gt 0 ]; then
+            jq -r '.comment' plan.json > comment.md
+            # One comment per ROUTINE, edited in place. Keyed by role because §B.11 has two routines
+            # on one pull request, and a single marker would have each overwrite the other's review.
+            agent=$(jq -r '.agent // ""' plan.json)
+            # Only this bot's own issue comments are candidates to edit: a marker quoted inside a
+            # review would otherwise hand a review id to the issue-comment endpoint.
+            existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " --arg bot "$BOT_LOGIN" \
+              'map(select(.source == "issue-comment" and .author == $bot
+                          and .body != null and (.body | startswith($m))))
+               | last | .id // empty' comments.json)
+            if [ -n "$existing" ]; then
+              gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@comment.md --silent
+            else
+              gh api "repos/$REPO/issues/$PR/comments" -F body=@comment.md --silent
+            fi
+          fi
+          # `while read` rather than `for … in $(…)`: a label is allowed to contain a space, and the
+          # word split would apply half of one and then fail on the other half.
+          jq -r '.labels_add[]' plan.json | while IFS= read -r label; do
+            [ -n "$label" ] && gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" --silent
+          done
+          jq -r '.labels_remove[]' plan.json | while IFS= read -r label; do
+            [ -n "$label" ] && gh api -X DELETE \
+              "repos/$REPO/issues/$PR/labels/$(jq -rn --arg l "$label" '$l|@uri')" --silent
+          done
+      - name: The required check
+        if: ${{ !cancelled() }}
+        run: python .guardrails/scripts/publish_verdict.py gate --plan plan.json
