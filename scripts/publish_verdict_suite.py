@@ -196,7 +196,10 @@ def main() -> int:
                 "--labels-map", os.path.join(root, "labels-from-verdict.json"),
                 "--out", os.path.join(tmp, "plan.json"), "--produce-outcome", "skipped",
                 "--skip-reason", "the pull request is a draft or a dependency bump"]
-        subprocess.run(args, capture_output=True, text=True, check=True)
+        # Same redirect every other case gets through `run`: without it this planner appends to the
+        # real step summary and the suite's own report arrives with a stray plan on top of it.
+        subprocess.run(args, capture_output=True, text=True, check=True,
+                       env={**os.environ, "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary.md")})
         with open(os.path.join(tmp, "plan.json"), encoding="utf-8") as fh:
             p = json.load(fh)
         assert p["conclusion"] == "green" and "draft" in p["reason"], p
@@ -274,14 +277,15 @@ def main() -> int:
                 failures += 1
                 print(f"::error title=publish_verdict_suite::{name}: {type(exc).__name__}: {exc}")
 
-    text = (f"## publish_verdict_suite\n\nRan **{len(cases)}** cases — "
-            f"**{failures} failures**.\n")
+    # The count goes to stdout unconditionally, and to the step summary as well when there is one.
+    # A gate that reports only into the summary leaves a log in which a passing run and a run that
+    # did nothing look identical, and the run that did nothing is the one worth catching.
+    print(f"publish_verdict_suite: ran {len(cases)} cases, {failures} failures")
     step = os.environ.get("GITHUB_STEP_SUMMARY")
     if step:
         with open(step, "a", encoding="utf-8") as fh:
-            fh.write(text)
-    else:
-        print(text)
+            fh.write(f"## publish_verdict_suite\n\nRan **{len(cases)}** cases — "
+                     f"**{failures} failures**.\n")
     return 1 if failures else 0
 
 
