@@ -3,11 +3,20 @@
 
 The review's verdict is validated here, against the base vendored here, while the routine that
 produced it ran in the caller's checkout against the caller's pin. Those are two versions of one
-contract, and only one difference between them matters: the bundle's SemVer promises that a MINOR
-adds and never requires, so a verdict written against 1.5.0 still satisfies 1.4.0's base and a
-differing MINOR or PATCH is not a finding. A differing MAJOR is, because nothing promises anything
-across one — and the failure to catch it is a verdict validated against a shape it was never
-written to.
+contract, and the difference between them matters in one direction.
+
+A differing MAJOR is a finding either way: nothing promises anything across one, and the failure to
+catch it is a verdict validated against a shape it was never written to.
+
+Within a MAJOR the direction decides. ADR-087 §B.6a reasons that the bundle's SemVer promises a
+MINOR adds and never requires, so a differing MINOR or PATCH is not a finding — and that holds only
+while the validating schema is open. This repository's composed schema closes what it composes
+(`unevaluatedProperties: false` at four objects, because 2.0.0's bases close nothing), so a field a
+newer MINOR added is a field this repository's copy has no name for, and an unevaluated property is
+refused. A caller *behind* still validates: it emits a subset of what is named here. A caller
+*ahead* does not. §B.6a does not make that distinction and is owed the amendment that does; this
+script refuses the ahead case now, because the alternative is a red publication step whose message
+names the wrong cause.
 
 Both versions are named in the finding. "Incompatible pin" without them sends the reader to two
 repositories to discover which way round it was.
@@ -38,7 +47,8 @@ def pinned_version(path: str, rep: Report) -> str | None:
     import yaml
     rel = os.path.relpath(path)
     try:
-        manifest = yaml.safe_load(open(path, encoding="utf-8")) or {}
+        with open(path, encoding="utf-8") as fh:
+            manifest = yaml.safe_load(fh) or {}
     except Exception as exc:
         rep.error(rel, f"manifest.yaml is not valid YAML ({type(exc).__name__})", rule="caller-pin")
         return None
@@ -91,9 +101,16 @@ def main() -> int:
                            f"verdict across a MAJOR, so the base it was written to is not the base "
                            f"it would be validated against", rule="caller-pin")
             continue
+        if (int(their.group(2)), int(their.group(3))) > (int(mine.group(2)), int(mine.group(3))):
+            rep.error(rel, f"pins {BUNDLE} {theirs} and this repository vendored {ours}: within "
+                           f"MAJOR {mine.group(1)} the caller is ahead. The composed schema here "
+                           f"closes what it composes, so a property {theirs} added is a property "
+                           f"{ours} has no name for and the verdict is refused as unevaluated. "
+                           f"Vendor {theirs} here, or pin the caller back", rule="caller-pin")
+            continue
         if (their.group(2), their.group(3)) != (mine.group(2), mine.group(3)):
-            print(f"{rel}: pins {BUNDLE} {theirs}, this repository vendored {ours} — same MAJOR, "
-                  f"validated against {ours}")
+            print(f"{rel}: pins {BUNDLE} {theirs}, this repository vendored {ours} — same MAJOR and "
+                  f"behind it, validated against {ours}")
 
     sys.exit(rep.emit())
 
