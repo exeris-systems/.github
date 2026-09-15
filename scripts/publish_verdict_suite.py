@@ -84,6 +84,10 @@ def exec_log(*verdicts, model="claude-sonnet-5", version="2.1.272") -> list:
     ]
 
 
+def marker_line(decision: str, agent: str = "exeris-org-docs-reviewer") -> str:
+    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
+
+
 def by_person(body: str, cid: int = 3) -> dict:
     """Anyone with an account, which on a public pull request is anyone at all."""
     return {"id": cid, "source": "issue-comment", "author": "mallory",
@@ -603,6 +607,24 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict(), execution_log=exec_log(verdict()))
         assert "harness: claude-code 2.1.272" in p["comment"], p["comment"][-400:]
         assert "model: claude-sonnet-5" in p["comment"], p["comment"][-400:]
+
+    @case("a real verdict replaces whatever this role last published")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(decision="CONDITIONAL",
+                                               findings=[finding(tag="DOC DEBT")]))
+        assert p["marker_search"] == "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer ", p
+        # It matches a previous comment of any decision, including a previous no-verdict notice.
+        for d in ("PASS", "BLOCKED", "NONE", "INVALID"):
+            assert marker_line(d).startswith(p["marker_search"]), d
+
+    @case("a run with no verdict cannot erase a published one")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="failure")
+        assert p["marker_search"] == (
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=NONE -->"), p
+        # A comment carrying real findings does not match it; only another notice does.
+        assert not marker_line("CONDITIONAL").startswith(p["marker_search"]), "would overwrite"
+        assert marker_line("NONE").startswith(p["marker_search"])
 
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):

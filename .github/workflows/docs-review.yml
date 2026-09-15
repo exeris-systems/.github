@@ -99,9 +99,21 @@ jobs:
     # required check that can never pass is not a gate, it is a wall. The path that reviews a fork
     # safely is `pull_request_target` with the risk analysis that deserves, and it is not this
     # pull request's.
+    # A LABEL CHANGE MUST NOT START A REVIEW, because the publication applies labels. Measured: the
+    # publish step added `doc-debt` at 20:12:17 and a new run began at 20:12:20 with `exeris-bot` as
+    # its actor; the runner refuses a non-human actor, so the produce job failed and the publish job
+    # replaced a comment carrying real findings with "no verdict". The publication destroyed itself
+    # in three seconds. A label change alters no diff, so there is nothing to review either way.
+    #
+    # The actor condition is the same guard from the other side: any bot-initiated run would be
+    # refused by the runner and end as a failed produce, which is a red required check for a reason
+    # that has nothing to do with the pull request.
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.fork == false &&
+      github.event.action != 'labeled' &&
+      github.event.action != 'unlabeled' &&
+      !endsWith(github.actor, '[bot]') &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     outputs:
       relevant: ${{ steps.relevant.outputs.any_changed }}
@@ -199,7 +211,11 @@ jobs:
       # Three conditions skip the producing job and the reason named two of them, so a fork was
       # recorded as a draft. The plan is supposed to say which skip it was.
       skip-reason: >-
-        ${{ github.event.pull_request.head.repo.fork
+        ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled')
+            && 'the event was a label change, which alters no diff — and the publication applies labels, so reviewing on one would have the review trigger itself'
+            || endsWith(github.actor, '[bot]')
+            && 'the run was started by a bot, and the runner refuses a non-human actor'
+            || github.event.pull_request.head.repo.fork
             && 'the pull request comes from a fork, which receives no secrets, so the runner has no credential to review with'
             || 'the pull request is a draft or a dependency bump, which this review does not read' }}
     # Named rather than inherited: `exeris-kernel` and `exeris-sdk` both refused `secrets: inherit`

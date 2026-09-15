@@ -129,9 +129,15 @@ jobs:
       group: publish-verdict-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     steps:
-      - name: Fetch the contract (exeris-systems/.github, default branch)
+      # `ref` is NAMED, and that is not redundant. `actions/checkout` reads the default branch only
+      # for a DIFFERENT repository; pointed at the one the workflow is running in, it takes the
+      # triggering SHA — so when `exeris-systems/.github` reviewed itself the contract came from
+      # `refs/remotes/pull/N/merge`, which is the pull request proposing to change it. Measured on
+      # run 35017181561. Everything this file says about being judged by the rule in force depends
+      # on this line.
+      - name: Fetch the contract (exeris-systems/.github@main)
         uses: actions/checkout@v7
-        with: { repository: exeris-systems/.github, path: .guardrails }
+        with: { repository: exeris-systems/.github, ref: main, path: .guardrails }
       - name: The SHA the contract was read at
         id: contract
         run: echo "sha=$(git -C .guardrails rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -300,10 +306,12 @@ jobs:
             jq -r '.comment' plan.json > comment.md
             # One comment per ROUTINE, edited in place. Keyed by role because §B.11 has two routines
             # on one pull request, and a single marker would have each overwrite the other's review.
-            agent=$(jq -r '.agent // ""' plan.json)
-            # Only this bot's own issue comments are candidates to edit: a marker quoted inside a
-            # review would otherwise hand a review id to the issue-comment endpoint.
-            existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " --arg bot "$BOT_LOGIN" \
+            # The plan says what to match. A real verdict replaces whatever this role last
+            # published; a no-verdict notice replaces only another notice, so a failed run cannot
+            # erase findings. Only this bot's own issue comments are candidates: a marker quoted
+            # inside a review would otherwise hand a review id to the issue-comment endpoint.
+            search=$(jq -r '.marker_search // ""' plan.json)
+            existing=$(jq -r --arg m "$search" --arg bot "$BOT_LOGIN" \
               'map(select(.source == "issue-comment" and .author == $bot
                           and .body != null and (.body | startswith($m))))
                | last | .id // empty' comments.json)

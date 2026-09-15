@@ -451,7 +451,8 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
 
 def cmd_plan(args) -> int:
     plan: dict = {"labels_add": [], "labels_remove": [], "comment": "", "conclusion": "red",
-                  "reason": "", "verdict_source": "none", "standing": {}, "agent": ""}
+                  "reason": "", "verdict_source": "none", "standing": {}, "agent": "",
+                  "marker_search": ""}
 
     # §B.8's one green without a verdict, and the only one. It is decided here rather than in the
     # workflow's shell because it is the rule most likely to be got wrong and it was: an early crash
@@ -473,6 +474,11 @@ def cmd_plan(args) -> int:
                           f"`{args.produce_outcome or 'unknown'}`.")
         # The absent verdict is the case §B.9's reasoning matters most for, and it was the one case
         # that posted nothing: a required check went red with the explanation only in a job log.
+        # Replaces only a previous no-verdict notice, never a comment carrying a real verdict. A
+        # later run that produced nothing — a crashed runner, a refused actor — otherwise overwrote
+        # findings somebody has to act on, and the pull request lost them. Both can stand: the last
+        # verdict, and a note that a later run reached none.
+        plan["marker_search"] = marker(plan["agent"], "NONE")
         plan["comment"] = (marker(plan["agent"], "NONE")
                            + "\n## L2 review — no verdict\n\n"
                            + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
@@ -482,6 +488,8 @@ def cmd_plan(args) -> int:
         return finish(plan, args)
 
     plan["agent"] = str(verdict.get("agent", ""))
+    # A real verdict replaces whatever this role last published, decision included.
+    plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} "
     errors = schema_errors(verdict, args.schema)
     if errors:
         plan["reason"] = ("the verdict does not validate against the composed schema — "
