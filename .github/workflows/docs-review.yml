@@ -85,6 +85,14 @@ jobs:
     runs-on: ubuntu-latest
     # Drafts and dependency bumps are not reviewed, matching claude-code-review.yml and
     # pr-conventions.md rule 6.
+    # THIS CONDITION IS ALSO WHAT HOLDS §C.14a's TRIGGER CLOSED, and that is worth saying because
+    # nothing else here does. The produce job runs the model on the pull request's HEAD checkout,
+    # which includes its `AGENTS.md`, its `.agents/**` and its provider adapters — the instruction
+    # files the runner reads. §C.14a requires those to be restored from the merge base whenever the
+    # author is not a member of the organisation, and that is NOT implemented. Today no outside pull
+    # request reaches the runner at all, because of the line below. Anything that changes that —
+    # `pull_request_target`, or reviewing forks — must implement §C.14a first, in the same change.
+    #
     # A fork's pull request receives no secrets, so the runner has no credential and the review
     # cannot happen. Skipped deliberately rather than left to fail: a permanent red on every
     # community pull request would make `exeris-kernel`'s open-core promise unmergeable, and a

@@ -65,6 +65,11 @@ jobs:
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
       exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
     # with:
+    #   # PUBLICATION IS OFF BY DEFAULT. Turn it on once `exeris-systems/.github` has run the review
+    #   # on itself and answered ADR-087 Engineering Protocol 4 — whether the runner writes a
+    #   # verdict file, and what identity it posts under. Until then this job produces a review and
+    #   # publishes nothing, which is what it did before the split.
+    #   publish: true
     #   # Which runner produces the verdict. One value is supported today; it is recorded, never
     #   # selected — ADR-087 §B.12.
     #   runner: claude-code-action

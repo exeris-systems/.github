@@ -1,10 +1,14 @@
 # Reusable: publish one L2 review verdict under the organisation's identity — ADR-087 §B.5-B.11.
 #
-# THE PRODUCER IS INTERCHANGEABLE AND THE PUBLICATION IS ONE. §B.11 puts a repository's own routine
-# and the organisation's on the same pull request, and requires both to publish "under one identity
-# and one contract". That is only possible if the publishing half is callable from more than one
-# producer, so it lives here rather than inside `docs-review.yml`: that workflow calls it, and a
-# repository's own `claude-code-review.yml` can call it with the same inputs.
+# THIS IS PREPARATION FOR §B.11, NOT §B.11. The section requires a repository's own routine and the
+# organisation's to publish "under one identity and one contract", which is impossible while the
+# publishing half lives inside one producer's workflow — so it lives here, and `docs-review.yml`
+# calls it. But TODAY IT SERVES ONE PRODUCER, and two things in it are the organisation routine's
+# rather than any producer's: the schema below is fixed, and `publish_verdict.py` always adds the
+# organisation's three mandatory gates to whatever a caller names. A repository told to "add a
+# publish job" right now would find its verdict refused by the schema and its merge gated on gates
+# it does not run. Both become inputs with the §B.6a amendment that says whose composition
+# validates, and the three callers land with it.
 #
 # It posts, it labels, and it is the required check. It reads no diff, runs no model and reorders no
 # finding — §E.23. Everything it decides is decided by `publish_verdict.py plan`, which touches no
@@ -19,11 +23,20 @@
 # validates, because it was written with one producer in mind; the input arrives with the amendment
 # that answers it, together with the three callers that need it, and not before.
 #
-# NESTED PIN. `docs-review.yml` reaches this file at `@main` — a relative path resolves in the
-# calling repository, which for a reusable workflow is somebody else's. A caller that pins
-# `docs-review.yml` by SHA therefore does not pin this half. That is a real hole in the pinning
-# story, written down rather than left to be discovered: a change here reaches every repository at
-# once, exactly as a change to any other file in this repository does.
+# NESTED PIN, AND WHAT IT COSTS AT HOME. `docs-review.yml` reaches this file at `@main` — a relative
+# path resolves in the calling repository, which for a reusable workflow is somebody else's. Two
+# consequences, and the second is the worse one.
+#
+# A caller that pins `docs-review.yml` by SHA does not pin this half; a change here reaches every
+# repository at once, exactly as a change to any other file in this repository does.
+#
+# And `guardrails.yml`'s own header says it calls the reusable workflows by relative path "so a pull
+# request is checked against the version in the pull request — not against `@main`, which would test
+# the wrong code". Through this nesting that promise does not hold for the publishing half: when
+# this repository reviews itself, the half that decides comes from `main`, not from the pull request
+# proposing to change it. The file that owns this code is the one least able to test it. Closing
+# both needs either a ref the caller passes down or the two halves in one file, and neither is
+# decided here.
 name: publish-verdict
 on:
   workflow_call:
