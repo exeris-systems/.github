@@ -65,8 +65,19 @@ jobs:
   # nothing is posted. The permission block above does not grow either way
   # — every write goes through the App's installation token, so neither job's own GITHUB_TOKEN holds
   # one (ADR-087 §B.5).
+  # `needs` puts the review after the gates it is meant to complement, and `l1-results` hands it
+  # their conclusions. Without the second, the reviewer tries to read a CI step summary, its harness
+  # denies the network call, and every mandatory gate lands in the verdict as `not-run` — which the
+  # publish step correctly turns red, for ever, on every pull request.
   docs-review:
+    needs: [docs, commits, pr-body]
+    if: ${{ always() }}
     uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
+    with:
+      l1-results: >-
+        {"docs-lint": "${{ needs.docs.result }}",
+         "commit-lint": "${{ needs.commits.result }}",
+         "pr-body-check": "${{ needs.pr-body.result }}"}
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}

@@ -84,6 +84,10 @@ def exec_log(*verdicts, model="claude-sonnet-5", version="2.1.272") -> list:
     ]
 
 
+def marker_line(decision: str, agent: str = "exeris-org-docs-reviewer") -> str:
+    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
+
+
 def by_person(body: str, cid: int = 3) -> dict:
     """Anyone with an account, which on a public pull request is anyone at all."""
     return {"id": cid, "source": "issue-comment", "author": "mallory",
@@ -92,7 +96,8 @@ def by_person(body: str, cid: int = 3) -> dict:
 
 def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="success",
         relevant="true", current="", mandatory="", execution_log=None,
-        authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer") -> dict:
+        authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
+        l1="") -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
     args = [sys.executable, PLANNER, "plan",
             "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
@@ -122,6 +127,8 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
         args += ["--verdict-authors", authors]
     if pin_problem:
         args += ["--pin-problem", pin_problem]
+    if l1:
+        args += ["--l1-results", l1 if isinstance(l1, str) else json.dumps(l1)]
     labels = os.path.join(tmp, "labels.txt")
     with open(labels, "w", encoding="utf-8") as fh:
         fh.write("".join(f"{s}\n" for s in current.split("|") if s))
@@ -603,6 +610,68 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict(), execution_log=exec_log(verdict()))
         assert "harness: claude-code 2.1.272" in p["comment"], p["comment"][-400:]
         assert "model: claude-sonnet-5" in p["comment"], p["comment"][-400:]
+
+    @case("a real verdict replaces whatever this role last published")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(decision="CONDITIONAL",
+                                               findings=[finding(tag="DOC DEBT")]))
+        assert p["marker_search"] == "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer ", p
+        # It matches a previous comment of any decision, including a previous no-verdict notice.
+        for d in ("PASS", "BLOCKED", "NONE", "INVALID"):
+            assert marker_line(d).startswith(p["marker_search"]), d
+
+    @case("a run with no verdict cannot erase a published one")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="failure")
+        assert p["marker_search"] == (
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=NONE -->"), p
+        # A comment carrying real findings does not match it; only another notice does.
+        assert not marker_line("CONDITIONAL").startswith(p["marker_search"]), "would overwrite"
+        assert marker_line("NONE").startswith(p["marker_search"])
+
+    GREEN_L1 = {"docs-lint": "success", "commit-lint": "success", "pr-body-check": "success"}
+
+    @case("CI's own conclusion decides a mandatory gate, not the review's reading of it")
+    def _(tmp):
+        # The review could not reach a step summary and said so honestly. The workflow that ran the
+        # gate knows better, and the gate decides on what the workflow knows.
+        v = verdict()
+        v["checks_run"] = [{"check": g, "result": "not-run", "detail": "no network in this sandbox"}
+                           for g in ("docs-lint", "commit-lint", "pr-body-check")]
+        red = run(root, tmp, verdict_doc=v)
+        assert red["conclusion"] == "red", red
+        green = run(root, tmp, verdict_doc=v, l1=GREEN_L1)
+        assert green["conclusion"] == "green", green
+        # What the review read is still published verbatim — §B.9 is about the reader, not the gate.
+        assert "not-run" in green["comment"], green["comment"][:300]
+
+    @case("a gate CI reports as failed does not by itself redden this check")
+    def _(tmp):
+        # The decision is recorded in the routine: §B.8 names the ABSENT and the UNRUN, and a gate
+        # that ran and failed is already red in its own right, on the same pull request, where its
+        # author will look. A `PASS` resting on one is a [CONTRACT] finding for a human. The path is
+        # also unreachable in practice — the produce job skips when a gate is not green — and this
+        # case exists so that the decision is testable rather than only written down.
+        v = verdict()
+        v["checks_run"] = [{"check": g, "result": "pass"} for g in
+                           ("docs-lint", "commit-lint", "pr-body-check")]
+        p = run(root, tmp, verdict_doc=v, l1={**GREEN_L1, "commit-lint": "failure"})
+        assert p["conclusion"] == "green", p
+
+    @case("a review skipped because its gates failed is red, and names them")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped",
+                l1={**GREEN_L1, "docs-lint": "failure", "pr-body-check": "cancelled"})
+        assert p["conclusion"] == "red", p
+        assert "docs-lint" in p["reason"] and "pr-body-check" in p["reason"], p
+        assert "did not pass" in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    @case("a skip with every gate green is still the ordinary green skip")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1)
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
 
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):

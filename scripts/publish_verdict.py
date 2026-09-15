@@ -336,7 +336,23 @@ def plan_labels(verdict: dict, mapping: dict, current: set[str],
     return sorted(want - current), sorted(remove & current)
 
 
-def unrun_mandatory(verdict: dict, mandatory: list[str]) -> list[str]:
+def ci_results(raw: str) -> dict[str, str]:
+    """What CI knows about its own gates, as `{gate: conclusion}`.
+
+    The authority on whether `docs-lint` ran is the workflow that ran it, not a model reading a page
+    it may not be able to reach. Measured on the first real run: the runner's harness denied every
+    `gh` call, so the review reported all three mandatory gates as `not-run` and the required check
+    was red for ever — a verdict about the pull request's prose, defeated by the reviewer's inability
+    to read a step summary.
+    """
+    try:
+        doc = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return {k: str(v) for k, v in doc.items()} if isinstance(doc, dict) else {}
+
+
+def unrun_mandatory(verdict: dict, mandatory: list[str], ci: dict[str, str] | None = None) -> list[str]:
     """Mandatory gates this verdict does not stand on — §B.8's second red.
 
     Two ways to not stand on one, and only the first was implemented. A gate reported `not-run` says
@@ -349,6 +365,11 @@ def unrun_mandatory(verdict: dict, mandatory: list[str]) -> list[str]:
     for entry in verdict.get("checks_run") or []:
         if entry.get("check") in mandatory:
             reported[entry["check"]] = entry.get("result")
+    # CI's own conclusion wins where it has one. The verdict still publishes what the review read —
+    # §B.9 — but what the gate decides on is what the workflow observed.
+    for gate, conclusion in (ci or {}).items():
+        if gate in mandatory and conclusion:
+            reported[gate] = "pass" if conclusion == "success" else "fail"
     return sorted(g for g in mandatory if reported.get(g, "not-run") == "not-run")
 
 
@@ -451,8 +472,25 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
 
 def cmd_plan(args) -> int:
     plan: dict = {"labels_add": [], "labels_remove": [], "comment": "", "conclusion": "red",
-                  "reason": "", "verdict_source": "none", "standing": {}, "agent": ""}
+                  "reason": "", "verdict_source": "none", "standing": {}, "agent": "",
+                  "marker_search": ""}
 
+    # A producing job skipped because a gate it depends on failed is not a skip with nothing to
+    # review — it is a review that never happened on a pull request that is already broken. Green
+    # there would be the skipped-required-check problem wearing a different hat.
+    ci = ci_results(args.l1_results)
+    failed_l1 = sorted(g for g, c in ci.items() if c and c != "success")
+    if args.produce_outcome == "skipped" and failed_l1:
+        plan.update(conclusion="red", verdict_source="none",
+                    reason=("the review did not run because the gates it waits on did not pass: "
+                            + ", ".join(failed_l1)))
+        plan["agent"] = args.expect_agent or "unknown"
+        plan["marker_search"] = marker(plan["agent"], "NONE")
+        plan["comment"] = (marker(plan["agent"], "NONE")
+                           + "\n## L2 review — not run\n\nThe L1 gates this review waits on did "
+                           + "not pass: " + ", ".join(f"`{g}`" for g in failed_l1)
+                           + ".\n\nFix those first; the review runs once they are green.\n")
+        return finish(plan, args)
     # §B.8's one green without a verdict, and the only one. It is decided here rather than in the
     # workflow's shell because it is the rule most likely to be got wrong and it was: an early crash
     # leaves `produce-relevant` EMPTY, and "not true" read as "filtered out" turned every crash into
@@ -473,6 +511,11 @@ def cmd_plan(args) -> int:
                           f"`{args.produce_outcome or 'unknown'}`.")
         # The absent verdict is the case §B.9's reasoning matters most for, and it was the one case
         # that posted nothing: a required check went red with the explanation only in a job log.
+        # Replaces only a previous no-verdict notice, never a comment carrying a real verdict. A
+        # later run that produced nothing — a crashed runner, a refused actor — otherwise overwrote
+        # findings somebody has to act on, and the pull request lost them. Both can stand: the last
+        # verdict, and a note that a later run reached none.
+        plan["marker_search"] = marker(plan["agent"], "NONE")
         plan["comment"] = (marker(plan["agent"], "NONE")
                            + "\n## L2 review — no verdict\n\n"
                            + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
@@ -482,6 +525,8 @@ def cmd_plan(args) -> int:
         return finish(plan, args)
 
     plan["agent"] = str(verdict.get("agent", ""))
+    # A real verdict replaces whatever this role last published, decision included.
+    plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} "
     errors = schema_errors(verdict, args.schema)
     if errors:
         plan["reason"] = ("the verdict does not validate against the composed schema — "
@@ -522,7 +567,7 @@ def cmd_plan(args) -> int:
     # one; silently dropping the three the routine makes mandatory is the opposite of what a
     # fail-closed gate should do with an ambiguous input.
     mandatory = sorted({s for s in (MANDATORY_DEFAULT + "," + (args.mandatory or "")).split(",") if s})
-    unrun = unrun_mandatory(verdict, mandatory)
+    unrun = unrun_mandatory(verdict, mandatory, ci)
 
     plan["labels_add"] = add
     plan["labels_remove"] = remove
@@ -591,6 +636,8 @@ def main() -> int:
     p.add_argument("--current-labels-file", default="",
                    help="labels already on the pull request, one per line")
     p.add_argument("--produce-relevant", default="true")
+    p.add_argument("--l1-results", default="",
+                   help='{"docs-lint": "success", ...} — what CI concluded about its own gates')
     p.add_argument("--verdict-authors", default="",
                    help="logins whose comments may carry a verdict; any Bot when empty")
     p.add_argument("--expect-agent", default="",
