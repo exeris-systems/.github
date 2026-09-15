@@ -18,9 +18,46 @@ RANK = {"none": 0, "read": 1, "write": 2}
 WF_DIR = os.path.join(".github", "workflows")
 
 
-def declared(path: str) -> dict:
+def declared(path: str, seen: set[str] | None = None) -> dict:
+    """The permissions a called workflow needs, ITS OWN NESTED CALLS INCLUDED.
+
+    A reusable workflow may call another, and the caller's block still has to be the union of
+    everything down the chain — GitHub rejects the file at the top, in the adopting repository, with
+    no logs. Reading one level was right while no workflow here nested; `docs-review.yml` now calls
+    `publish-verdict.yml`, and a checker that stops at the first level answers "0 problems" to the
+    question it exists to ask. The union happens to hold today, which is exactly when a gate quietly
+    stops covering its subject.
+    """
+    seen = seen if seen is not None else set()
+    real = os.path.realpath(path)
+    if real in seen:
+        return {}
+    seen.add(real)
     with open(path, encoding="utf-8") as fh:
-        return yaml.safe_load(fh).get("permissions") or {}
+        wf = yaml.safe_load(fh) or {}
+    need = dict(wf.get("permissions") or {})
+    for spec in (wf.get("jobs") or {}).values():
+        uses = (spec or {}).get("uses", "")
+        if not uses:
+            continue
+        nested = nested_path(uses)
+        if nested is None:
+            continue
+        if not os.path.exists(nested):
+            continue
+        for key, value in declared(nested, seen).items():
+            if RANK.get(value, 0) > RANK.get(need.get(key, "none"), 0):
+                need[key] = value
+    return need
+
+
+def nested_path(uses: str) -> str | None:
+    """Where a `uses:` reference lands in THIS repository, or None when it points elsewhere."""
+    if uses.startswith("./"):
+        return uses[2:]
+    if "exeris-systems/.github/" in uses:
+        return os.path.join(WF_DIR, uses.split("/")[-1].split("@")[0])
+    return None
 
 
 def main() -> int:
