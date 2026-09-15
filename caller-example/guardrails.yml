@@ -42,20 +42,27 @@ jobs:
   # The L2 review of ADR-085 §J.33, published under the organisation's identity by ADR-087 §B.
   # Without this job the routine runs only in Cowork sessions and never on a pull request.
   #
-  # Two jobs come with it: `produce` runs the model, and the publish half posts the review, applies
-  # the labels of labels-from-verdict.json and IS THE REQUIRED CHECK — red when the verdict is
-  # absent, invalid, BLOCKED, or rests on a mandatory gate that did not run. The produce job is not
-  # the required one, because a review that crashed has to reach the step that notices.
+  # ONE JOB BY DEFAULT: `produce` runs the model and posts its review, exactly as before the split.
+  # Publication is opt-in (`publish: true` below), and until you turn it on nothing is labelled and
+  # nothing is gated — which is deliberate, because whether the runner writes a verdict file at all
+  # is ADR-087 Engineering Protocol 4's open question and `exeris-systems/.github` answers it on
+  # itself first.
   #
-  # THE CHECK NAME HAS THREE SEGMENTS, because the publish half is its own reusable workflow:
+  # With `publish: true` a second job appears and IS THE REQUIRED CHECK — red when the verdict is
+  # absent, invalid, BLOCKED, or rests on a mandatory gate that did not run. The produce job is
+  # never the required one, because a review that crashed has to reach the step that notices.
+  #
+  # THE CHECK NAME THEN HAS THREE SEGMENTS, because the publish half is its own reusable workflow:
   # `docs-review / publish / verdict`. CONFIRM IT AGAINST A REAL RUN before adding it to a branch
   # protection rule — a required check whose name does not exist never reports, and a pull request
-  # waiting on one can never merge.
+  # waiting on one can never merge. Without `publish: true` the only check this job contributes is
+  # `docs-review / produce`.
   #
   # Secrets are named rather than inherited, matching exeris-kernel and exeris-sdk, which both
   # refused `secrets: inherit` under SonarCloud S7631. The two EXERIS_BOT_* lines are optional: drop
-  # them and the review still runs and still gates, it is simply not published under the
-  # organisation's identity and no label moves. The permission block above does not grow either way
+  # them and the review still runs, it is simply not published under the organisation's identity
+  # and no label moves — and with `publish: true` but no secrets, the gate still decides while
+  # nothing is posted. The permission block above does not grow either way
   # — every write goes through the App's installation token, so neither job's own GITHUB_TOKEN holds
   # one (ADR-087 §B.5).
   docs-review:

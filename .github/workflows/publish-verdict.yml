@@ -299,7 +299,7 @@ jobs:
             # review would otherwise hand a review id to the issue-comment endpoint.
             existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " --arg bot "$BOT_LOGIN" \
               'map(select(.source == "issue-comment" and .author == $bot
-                          and .body != null and (.body | contains($m))))
+                          and .body != null and (.body | startswith($m))))
                | last | .id // empty' comments.json)
             if [ -n "$existing" ]; then
               gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@comment.md --silent

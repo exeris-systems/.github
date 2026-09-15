@@ -51,6 +51,42 @@ def declared(path: str, seen: set[str] | None = None) -> dict:
     return need
 
 
+def inputs_of(path: str) -> tuple[set[str], set[str]]:
+    """The inputs a called workflow declares, and the subset it requires."""
+    with open(path, encoding="utf-8") as fh:
+        wf = yaml.safe_load(fh) or {}
+    # PyYAML reads the bare key `on` as the boolean True (YAML 1.1), so both spellings are looked up.
+    trigger = wf.get("on") or wf.get(True) or {}
+    declared_inputs = ((trigger.get("workflow_call") or {}).get("inputs")) or {}
+    required = {k for k, v in declared_inputs.items() if isinstance(v, dict) and v.get("required")}
+    return set(declared_inputs), required
+
+
+def check_with(path: str, job: str, spec: dict, called: str, bad: list) -> None:
+    """Every `with:` key names an input the called workflow declares, and carries a value.
+
+    `permissions` is not the only way one file here can invalidate another's. A `with:` key the
+    called workflow does not declare is rejected as an invalid workflow, in the adopting repository,
+    on the first push, with no logs — the same failure this script already exists to prevent, by the
+    same mechanism, and it was not covered: a pull request in this repository once pasted an input
+    DEFINITION into a `with:` block and every gate here passed it.
+    """
+    given = spec.get("with") or {}
+    if not isinstance(given, dict):
+        return
+    declared, required = inputs_of(called)
+    for key, value in given.items():
+        if key not in declared:
+            bad.append(f"{path}: job `{job}` passes `with: {key}`, which `{called}` does not "
+                       f"declare as an input — GitHub rejects the whole file")
+        if isinstance(value, (dict, list)):
+            bad.append(f"{path}: job `{job}` passes `with: {key}` as a "
+                       f"{type(value).__name__}; an input takes a scalar, and a mapping here is an "
+                       f"input definition pasted where its value belongs")
+    for key in sorted(required - set(given)):
+        bad.append(f"{path}: job `{job}` omits `with: {key}`, which `{called}` declares required")
+
+
 def nested_path(uses: str) -> str | None:
     """Where a `uses:` reference lands in THIS repository, or None when it points elsewhere."""
     if uses.startswith("./"):
@@ -78,6 +114,7 @@ def main() -> int:
             if not os.path.exists(called):
                 bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
                 continue
+            check_with(path, job, spec, called, bad)
             for key, value in declared(called).items():
                 if RANK.get(value, 0) > RANK.get(need.get(key, "none"), 0):
                     need[key] = value
@@ -85,6 +122,19 @@ def main() -> int:
             if RANK.get(grants.get(key, "none"), 0) < RANK[value]:
                 bad.append(f"{path}: grants `{key}: {grants.get(key, 'none')}` but a called "
                            f"workflow declares `{key}: {value}` — GitHub rejects the whole file")
+    # The caller-example is not the only file here that calls a reusable workflow: `docs-review.yml`
+    # calls `publish-verdict.yml`, and that call is the one no gate was reading.
+    for name in sorted(os.listdir(WF_DIR)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        path = os.path.join(WF_DIR, name)
+        with open(path, encoding="utf-8") as fh:
+            wf = yaml.safe_load(fh) or {}
+        for job, spec in (wf.get("jobs") or {}).items():
+            called = nested_path((spec or {}).get("uses", ""))
+            if called and os.path.exists(called):
+                check_with(path, job, spec, called, bad)
+
     for line in bad:
         print(f"::error::{line}")
     print(f"## caller_permissions_check\n\n{len(bad)} problem(s).")

@@ -69,9 +69,19 @@ MARKER_RE = re.compile(r"<!-- exeris-bot: l2-verdict agent=([^\s]+) decision=([A
 # is `<!--` again; escaping the angle brackets leaves no way to spell a delimiter at all. Markdown
 # renders the entities as the characters, so a reader still sees what the finding said.
 def plain(value) -> str:
-    """Model-authored text, unable to carry markup into a comment the bot signs."""
+    """Text from the repository under review, unable to carry markup or break the table it lands in.
+
+    EVERY string that reaches a comment the bot signs goes through here, not only a finding's: the
+    validator quotes an instance value back at you, and a pin mismatch quotes a version string, and
+    both come from the reviewed repository as surely as a finding does. Escaping at the call sites
+    meant remembering; escaping at the boundary means the next path added gets it for free.
+
+    The pipe is escaped because these values land in a Markdown table, and one pipe in a finding
+    turns a five-column row into seven, dropping the `fix` into a cell GitHub truncates.
+    """
     return (str(value if value is not None else "")
-            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("|", "\\|"))
 
 
 def marker(agent: str, decision: str) -> str:
@@ -312,12 +322,12 @@ def provenance(args) -> list[str]:
             h = doc.get("harness") if isinstance(doc.get("harness"), dict) else {}
             harness = h.get("client") or doc.get("client")
             version = h.get("version") or doc.get("version")
-        lines.append(f"model: `{plain(model)}`" if model else
+        lines.append(f"model: {plain(model)}" if model else
                      "model: the execution log carries no model id")
         # §A.3 names provider, model id, harness AND version, and "provenance survives a swap" is
         # the reason: a footer that cannot say which client ran, at what version, cannot tell one
         # runner from another after the swap it exists to survive. Absent is said, never implied.
-        lines.append(f"harness: `{plain(harness)}` `{plain(version)}`" if harness and version else
+        lines.append(f"harness: {plain(harness)} {plain(version)}" if harness and version else
                      f"harness: the execution log names "
                      f"{'no version' if harness else 'no client'}")
     else:
@@ -342,7 +352,10 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
             tag = plain(f.get("tag"))
             where = plain(f.get("location"))
             blocking = " **(blocking)**" if f.get("blocking") else ""
-            out.append(f"| {tag}{blocking} | `{where}` | {plain(f.get('what'))} — "
+            # No backticks around `where`: CommonMark does not decode entities inside a code span,
+            # so an escaped `Foo<T>.java` would render as `Foo&lt;T&gt;.java`. Escaped plain text
+            # renders as the characters it means.
+            out.append(f"| {tag}{blocking} | {where} | {plain(f.get('what'))} — "
                        f"{plain(f.get('why'))} | {plain(f.get('fix'))} |")
         out.append("")
     else:
@@ -351,7 +364,7 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     if checks:
         out += ["### Gates the review read", ""]
         for c in checks:
-            out.append(f"- `{plain(c.get('check'))}`: **{plain(c.get('result'))}**"
+            out.append(f"- {plain(c.get('check'))}: **{plain(c.get('result'))}**"
                        + (f" — {plain(c['detail'])}" if c.get("detail") else ""))
         out.append("")
     # §B.9: never swallowed, and said in the place a reader looks rather than only in the exit code.
@@ -361,7 +374,7 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
                 f"whatever the decision says.", ""]
     if pin_problem:
         out += [f"> The pull request's own bundle pin does not match the one this verdict was "
-                f"validated against: {pin_problem} A verdict written to one shape and checked "
+                f"validated against: {plain(pin_problem)} A verdict written to one shape and checked "
                 f"against another is not a verdict about this pull request, so the required check "
                 f"is red whatever the decision says (ADR-087 §B.6a).", ""]
     out += ["---", "", f"Published by `exeris-bot`; it is the publisher, never the reviewer. "
@@ -417,7 +430,9 @@ def cmd_plan(args) -> int:
         plan["comment"] = (marker(refused_agent, "INVALID")
                            + "\n## L2 review verdict refused\n\nA verdict was produced and it does not "
                            "conform to `.agents/schemas/verdict.schema.json`:\n\n"
-                           + "\n".join(f"- `{e}`" for e in errors[:10])
+                           # The validator quotes the instance value it refused, so these
+                           # strings are the reviewed repository's words too.
+                           + "\n".join(f"- {plain(e)}" for e in errors[:10])
                            + "\n\nNothing was labelled. The required check is red.\n")
         return finish(plan, args)
 

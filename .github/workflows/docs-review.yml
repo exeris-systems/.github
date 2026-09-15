@@ -193,17 +193,6 @@ jobs:
       expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
-      publish:
-        type: boolean
-        default: false
-        description: >-
-          Whether the verdict is published and gated. OFF by default, and deliberately: until a real
-          run has shown whether the runner writes `verdict.json` and what identity it posts under
-          (ADR-087 Engineering Protocol 4), the publish job has one possible source of a verdict and
-          nobody knows whether it produces one. Switching it on for every caller at merge would put
-          an unexplained red or green on pull requests in repositories that did not ask for it.
-          `exeris-systems/.github` turns it on for itself first; a caller turns it on when the
-          answers exist.
       mandatory-gates: ${{ inputs.mandatory-gates }}
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
