@@ -98,51 +98,44 @@ def nested_path(uses: str) -> str | None:
     return None
 
 
+def audit(path: str, wf: dict, bad: list) -> None:
+    """One file's calls: the target exists, its `with:` is well formed, and the block is the union.
+
+    The same three questions for `caller-example/guardrails.yml` and for a reusable workflow here
+    that calls another. Asking them in two places asked them differently three times running — the
+    second copy skipped a missing target, and neither copy checked this repository's own caller's
+    permissions, which is the block that caps every nested call in it.
+    """
+    grants = wf.get("permissions") or {}
+    need: dict[str, str] = {}
+    for job, spec in (wf.get("jobs") or {}).items():
+        called = nested_path((spec or {}).get("uses", ""))
+        if called is None:
+            continue
+        if not os.path.exists(called):
+            bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
+            continue
+        check_with(path, job, spec, called, bad)
+        for key, value in declared(called).items():
+            if RANK.get(value, 0) > RANK.get(need.get(key, "none"), 0):
+                need[key] = value
+    if not need:
+        return
+    for key, value in sorted(need.items()):
+        if RANK.get(grants.get(key, "none"), 0) < RANK[value]:
+            bad.append(f"{path}: grants `{key}: {grants.get(key, 'none')}` but a called "
+                       f"workflow declares `{key}: {value}` — GitHub rejects the whole file")
+
+
 def main() -> int:
-    bad = []
-    for name in sorted(os.listdir("caller-example")):
-        if not name.endswith((".yml", ".yaml")):
-            continue
-        path = os.path.join("caller-example", name)
-        with open(path, encoding="utf-8") as fh:
-            caller = yaml.safe_load(fh)
-        grants = caller.get("permissions") or {}
-        need: dict[str, str] = {}
-        for job, spec in (caller.get("jobs") or {}).items():
-            uses = spec.get("uses", "")
-            if "exeris-systems/.github/" not in uses:
+    bad: list[str] = []
+    for directory in ("caller-example", WF_DIR):
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith((".yml", ".yaml")):
                 continue
-            called = os.path.join(WF_DIR, uses.split("/")[-1].split("@")[0])
-            if not os.path.exists(called):
-                bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
-                continue
-            check_with(path, job, spec, called, bad)
-            for key, value in declared(called).items():
-                if RANK.get(value, 0) > RANK.get(need.get(key, "none"), 0):
-                    need[key] = value
-        for key, value in sorted(need.items()):
-            if RANK.get(grants.get(key, "none"), 0) < RANK[value]:
-                bad.append(f"{path}: grants `{key}: {grants.get(key, 'none')}` but a called "
-                           f"workflow declares `{key}: {value}` — GitHub rejects the whole file")
-    # The caller-example is not the only file here that calls a reusable workflow: `docs-review.yml`
-    # calls `publish-verdict.yml`, and that call is the one no gate was reading.
-    for name in sorted(os.listdir(WF_DIR)):
-        if not name.endswith((".yml", ".yaml")):
-            continue
-        path = os.path.join(WF_DIR, name)
-        with open(path, encoding="utf-8") as fh:
-            wf = yaml.safe_load(fh) or {}
-        for job, spec in (wf.get("jobs") or {}).items():
-            called = nested_path((spec or {}).get("uses", ""))
-            if called is None:
-                continue
-            # Symmetric with the caller-example loop above, and for the same reason: a `uses:` that
-            # names a file which is not here is the same invalid workflow as a `with:` key that is
-            # not an input, and a rename is exactly as easy to get wrong as a key.
-            if not os.path.exists(called):
-                bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
-                continue
-            check_with(path, job, spec, called, bad)
+            path = os.path.join(directory, name)
+            with open(path, encoding="utf-8") as fh:
+                audit(path, yaml.safe_load(fh) or {}, bad)
 
     for line in bad:
         print(f"::error::{line}")
