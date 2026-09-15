@@ -73,6 +73,8 @@ def check_with(path: str, job: str, spec: dict, called: str, bad: list) -> None:
     """
     given = spec.get("with") or {}
     if not isinstance(given, dict):
+        bad.append(f"{path}: job `{job}` has a `with:` that is a {type(given).__name__} rather than "
+                   f"a mapping of input names to values")
         return
     declared, required = inputs_of(called)
     for key, value in given.items():
@@ -132,8 +134,15 @@ def main() -> int:
             wf = yaml.safe_load(fh) or {}
         for job, spec in (wf.get("jobs") or {}).items():
             called = nested_path((spec or {}).get("uses", ""))
-            if called and os.path.exists(called):
-                check_with(path, job, spec, called, bad)
+            if called is None:
+                continue
+            # Symmetric with the caller-example loop above, and for the same reason: a `uses:` that
+            # names a file which is not here is the same invalid workflow as a `with:` key that is
+            # not an input, and a rename is exactly as easy to get wrong as a key.
+            if not os.path.exists(called):
+                bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
+                continue
+            check_with(path, job, spec, called, bad)
 
     for line in bad:
         print(f"::error::{line}")
