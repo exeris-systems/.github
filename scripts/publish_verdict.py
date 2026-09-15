@@ -163,6 +163,53 @@ def fenced_verdicts(comments_json: str, trusted: set[str]) -> list[dict]:
     return found
 
 
+def execution_verdicts(path: str) -> list[dict]:
+    """Fenced `json` verdicts in what the runner itself said, oldest first.
+
+    The third source and the best one. The runner writes an execution log, the produce job uploads it
+    already, and the model's own final message is in it — so the verdict reaches the publish step
+    without the runner needing permission to write a file or to post a comment, both of which its
+    harness denies (measured: one `Write` call and twenty-five `gh` calls, all refused by the action's
+    permission mode). It is also the only source whose authorship is not a question: an artefact of
+    the run is not a surface anyone can write to, which is why §B.10's comment fallback needs a
+    trusted-author list and this needs none.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError:
+        return []
+    try:
+        doc = json.loads(raw)
+        events = doc if isinstance(doc, list) else [doc]
+    except json.JSONDecodeError:
+        events = []
+        for line in raw.splitlines():
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    texts: list[str] = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        message = ev.get("message")
+        for part in (message.get("content") if isinstance(message, dict) else None) or []:
+            if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
+                texts.append(part["text"])
+        if ev.get("type") == "result" and isinstance(ev.get("result"), str):
+            texts.append(ev["result"])
+    found = []
+    for block in FENCE.findall("\n".join(texts)):
+        try:
+            doc = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(doc, dict) and "agent" in doc and "decision" in doc:
+            found.append(doc)
+    return found
+
+
 def load_verdict(args, validates) -> tuple[dict | None, str, str]:
     """The verdict, the source it came from, and why it is absent when it is.
 
@@ -182,6 +229,13 @@ def load_verdict(args, validates) -> tuple[dict | None, str, str]:
         if not isinstance(doc, dict):
             return None, "file", f"`{args.verdict}` is not a JSON object"
         return doc, "file", ""
+    if args.execution_log and os.path.exists(args.execution_log):
+        candidates = execution_verdicts(args.execution_log)
+        for doc in reversed(candidates):
+            if validates(doc):
+                return doc, "execution log", ""
+        if candidates:
+            return candidates[-1], "execution log", ""
     if args.comments and os.path.exists(args.comments):
         trusted = {s for s in (args.verdict_authors or "").split(",") if s}
         if not trusted:
@@ -198,7 +252,8 @@ def load_verdict(args, validates) -> tuple[dict | None, str, str]:
             return candidates[-1], "fenced block", ""
         return None, "none", ("no `verdict.json`, and no comment by a trusted author carries a "
                               "fenced `json` verdict")
-    return None, "none", "no `verdict.json` was produced and no comments were read"
+    return None, "none", ("no `verdict.json`, no verdict in the runner's execution log, and no "
+                          "comments were read")
 
 
 _VALIDATOR_CACHE: dict[str, object] = {}
@@ -322,6 +377,17 @@ def provenance(args) -> list[str]:
             h = doc.get("harness") if isinstance(doc.get("harness"), dict) else {}
             harness = h.get("client") or doc.get("client")
             version = h.get("version") or doc.get("version")
+        elif isinstance(doc, list):
+            # The shape the runner actually writes: an event list whose `system`/`init` event names
+            # the model and the harness version, and whose `result` event names every model used.
+            init = next((e for e in doc if isinstance(e, dict) and e.get("type") == "system"
+                         and e.get("subtype") == "init"), {})
+            result = next((e for e in doc if isinstance(e, dict)
+                           and e.get("type") == "result"), {})
+            used = sorted((result.get("modelUsage") or {}))
+            model = ", ".join(used) or init.get("model")
+            version = init.get("claude_code_version")
+            harness = "claude-code" if version else None
         lines.append(f"model: {plain(model)}" if model else
                      "model: the execution log carries no model id")
         # §A.3 names provider, model id, harness AND version, and "provenance survives a swap" is

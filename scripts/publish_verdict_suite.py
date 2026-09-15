@@ -72,6 +72,18 @@ def by_bot(body: str, cid: int = 2) -> dict:
             "author_type": "Bot", "created_at": f"2026-09-15T00:00:{cid:02d}Z", "body": body}
 
 
+def exec_log(*verdicts, model="claude-sonnet-5", version="2.1.272") -> list:
+    """The event list the runner writes: an init event, the model's text, and a result."""
+    text = "\n\n".join("Prose about the review.\n\n```json\n" + json.dumps(v) + "\n```"
+                        for v in verdicts)
+    return [
+        {"type": "system", "subtype": "init", "model": model, "claude_code_version": version},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}},
+        {"type": "result", "subtype": "success", "result": text,
+         "modelUsage": {model: {}}},
+    ]
+
+
 def by_person(body: str, cid: int = 3) -> dict:
     """Anyone with an account, which on a public pull request is anyone at all."""
     return {"id": cid, "source": "issue-comment", "author": "mallory",
@@ -536,6 +548,61 @@ def main() -> int:
             findings=[finding(what="a finding with a | pipe in it, which is legal in a string")]))
         row = [l for l in p["comment"].splitlines() if l.startswith("| ") and "pipe" in l][0]
         assert row.count("|") - row.count("\\|") == 5, (row.count("|"), row)
+
+    @case("the verdict is read from the runner's execution log")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None,
+                execution_log=exec_log(verdict(decision="CONDITIONAL",
+                                               findings=[finding(tag="DOC DEBT")])))
+        assert p["verdict_source"] == "execution log", p
+        assert p["conclusion"] == "green", p
+        assert p["labels_add"] == ["doc-debt"], p
+
+    @case("a verdict quoted in the review's prose is not mistaken for the review's own")
+    def _(tmp):
+        # The real verdict, then an illustration the model wrote afterwards while explaining a
+        # finding. Taking the last block on the page would publish the illustration.
+        illustration = {"agent": "exeris-evaluator", "decision": "BLOCKED",
+                        "scope_class": "runtime hot path", "findings": [finding(blocking=True)],
+                        "checks_run": [{"check": "docs-lint", "result": "pass"}]}
+        p = run(root, tmp, verdict_doc=None,
+                execution_log=exec_log(verdict(decision="PASS"), illustration))
+        assert p["verdict_source"] == "execution log", p
+        assert p["conclusion"] == "green", p
+        assert "exeris-org-docs-reviewer" in p["comment"], p["comment"][:120]
+
+    @case("the file still wins over the execution log")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(),
+                execution_log=exec_log(verdict(decision="BLOCKED",
+                                               findings=[finding(blocking=True)])))
+        assert p["verdict_source"] == "file" and p["conclusion"] == "green", p
+
+    @case("the execution log wins over a comment, and needs no trusted author to do it")
+    def _(tmp):
+        body = "```json\n" + json.dumps(verdict(decision="BLOCKED",
+                                                findings=[finding(blocking=True)])) + "\n```"
+        p = run(root, tmp, verdict_doc=None, authors="",
+                comments=[by_runner(body)],
+                execution_log=exec_log(verdict(decision="PASS")))
+        assert p["verdict_source"] == "execution log", p
+        assert p["conclusion"] == "green", p
+
+    @case("a log the runner wrote without a verdict falls through to no verdict")
+    def _(tmp):
+        log = [{"type": "system", "subtype": "init", "model": "claude-sonnet-5"},
+               {"type": "assistant", "message": {"content": [
+                   {"type": "text", "text": "I could not complete the review."}]}},
+               {"type": "result", "subtype": "success", "result": "I could not complete the review."}]
+        p = run(root, tmp, verdict_doc=None, execution_log=log, outcome="success")
+        assert p["conclusion"] == "red" and p["verdict_source"] == "none", p
+        assert "execution log" in p["reason"], p
+
+    @case("the footer names the harness and every model the run used")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(), execution_log=exec_log(verdict()))
+        assert "harness: claude-code 2.1.272" in p["comment"], p["comment"][-400:]
+        assert "model: claude-sonnet-5" in p["comment"], p["comment"][-400:]
 
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):
