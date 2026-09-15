@@ -89,6 +89,42 @@ def check_with(path: str, job: str, spec: dict, called: str, bad: list) -> None:
         bad.append(f"{path}: job `{job}` omits `with: {key}`, which `{called}` declares required")
 
 
+class _DuplicateKeyLoader(yaml.SafeLoader):
+    """A loader that refuses what PyYAML silently forgives.
+
+    On a duplicate mapping key PyYAML keeps the LAST value and says nothing. GitHub rejects the file
+    outright — "'l1-results' is already defined" — and answers with a run carrying zero jobs, no
+    logs and a conclusion of `failure`, which took every gate in this repository down with it. So the
+    one tool that could have caught it was the one guaranteed not to: every check here parses with
+    PyYAML, sees a well-formed mapping, and reports 0 problems.
+    """
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"key {key!r} is defined more than once", key_node.start_mark)
+            seen.add(key)
+        return super().construct_mapping(node, deep)
+
+
+_DuplicateKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _DuplicateKeyLoader.construct_mapping)
+
+
+def check_duplicate_keys(path: str, text: str, bad: list) -> None:
+    """Every mapping in a workflow file defines each key once."""
+    try:
+        yaml.load(text, Loader=_DuplicateKeyLoader)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        where = f" at line {mark.line + 1}" if mark else ""
+        bad.append(f"{path}: {getattr(exc, 'problem', exc)}{where} — GitHub rejects the whole file, "
+                   f"and PyYAML does not, so no other check here can see it")
+
+
 def nested_path(uses: str) -> str | None:
     """Where a `uses:` reference lands in THIS repository, or None when it points elsewhere."""
     if uses.startswith("./"):
@@ -135,7 +171,9 @@ def main() -> int:
                 continue
             path = os.path.join(directory, name)
             with open(path, encoding="utf-8") as fh:
-                audit(path, yaml.safe_load(fh) or {}, bad)
+                text = fh.read()
+            check_duplicate_keys(path, text, bad)
+            audit(path, yaml.safe_load(text) or {}, bad)
 
     for line in bad:
         print(f"::error::{line}")
