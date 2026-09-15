@@ -52,7 +52,8 @@ def main() -> int:
                   rule="bundle-pin")
         sys.exit(rep.emit())
     rep.checked += 1
-    text = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
     try:
         manifest = yaml.safe_load(text) or {}
     except Exception as exc:

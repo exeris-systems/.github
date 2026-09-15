@@ -68,7 +68,8 @@ def enums(path: str, at: tuple[str, ...] = ()) -> dict[str, set[str]]:
     `allOf` is a conjunction, so a property constrained in more than one branch allows the
     intersection — which is what narrowing means and what a validator will enforce.
     """
-    return _enums(json.load(open(path, encoding="utf-8")), path, at, set())
+    with open(path, encoding="utf-8") as fh:
+        return _enums(json.load(fh), path, at, set())
 
 
 def _enums(node, path: str, at: tuple[str, ...], seen: set) -> dict[str, set[str]]:
@@ -100,7 +101,8 @@ def _enums(node, path: str, at: tuple[str, ...], seen: set) -> dict[str, set[str
         key = (os.path.realpath(target), pointer)
         if key not in seen and os.path.exists(target):
             seen.add(key)
-            document = json.load(open(target, encoding="utf-8"))
+            with open(target, encoding="utf-8") as fh:
+                document = json.load(fh)
             landed = pointed_at(document, pointer) if pointer.startswith("/") else document
             merge(_enums(landed, target, at, seen))
 
@@ -131,14 +133,16 @@ def main() -> int:
 
     rep.checked += 1
     try:
-        mapping = json.load(open(map_path, encoding="utf-8"))
+        with open(map_path, encoding="utf-8") as fh:
+            mapping = json.load(fh)
     except Exception as exc:
         rep.error(rel, f"not valid JSON ({type(exc).__name__}: {exc})", rule="label-map")
         sys.exit(rep.emit())
 
     allowed = {at: enums(schema_path, at) for at, _ in SECTIONS.values()}
-    labels = {entry.get("name") for entry in (yaml.safe_load(open(labels_path, encoding="utf-8"))
-                                              or []) if isinstance(entry, dict)}
+    with open(labels_path, encoding="utf-8") as fh:
+        labels = {entry.get("name") for entry in (yaml.safe_load(fh) or [])
+                  if isinstance(entry, dict)}
 
     for section, values in mapping.items():
         if section.startswith("$"):
