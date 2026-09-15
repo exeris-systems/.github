@@ -117,7 +117,7 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict())
         assert p["conclusion"] == "green", p
         assert p["labels_add"] == [] and p["labels_remove"] == [], p
-        assert "L2 documentation and hygiene review" in p["comment"], p
+        assert "## L2 review — `exeris-org-docs-reviewer` — **PASS**" in p["comment"], p
         assert gate(tmp, p) == 0
 
     @case("an absent verdict is red, and says the produce job's outcome")
@@ -229,6 +229,36 @@ def main() -> int:
         assert p["labels_add"] == ["doc-debt"], p
         assert p["conclusion"] == "green", p
 
+    @case("another routine's fenced verdict is not published under this routine's name")
+    def _(tmp):
+        # exeris-kernel's own review, posted after the organisation's, on the same pull request.
+        theirs = ("## L2 review\n\n```json\n"
+                  + json.dumps({"agent": "exeris-evaluator", "decision": "BLOCKED",
+                                "scope_class": "runtime hot path",
+                                "findings": [finding(blocking=True)],
+                                "checks_run": [{"check": "docs-lint", "result": "pass"}]})
+                  + "\n```\n")
+        mine = ("## L2 review\n\n```json\n"
+                + json.dumps(verdict(decision="CONDITIONAL", findings=[finding(tag="DOC DEBT")]))
+                + "\n```\n")
+        p = run(root, tmp, verdict_doc=None,
+                comments=[{"body": mine}, {"body": theirs}])
+        assert p["verdict_source"] == "fenced block", p
+        assert p["conclusion"] == "green", p
+        assert p["labels_add"] == ["doc-debt"], p
+        assert "exeris-org-docs-reviewer" in p["comment"], p["comment"][:120]
+
+    @case("with only a foreign verdict on the page, this routine reports none of its own")
+    def _(tmp):
+        theirs = ("```json\n"
+                  + json.dumps({"agent": "exeris-evaluator", "decision": "PASS",
+                                "scope_class": "docs-only", "findings": [],
+                                "checks_run": [{"check": "docs-lint", "result": "pass"}]})
+                  + "\n```")
+        p = run(root, tmp, verdict_doc=None, comments=[{"body": theirs}])
+        assert p["conclusion"] == "red", p
+        assert "does not validate" in p["reason"], p
+
     @case("a fenced block that is not a verdict is not mistaken for one")
     def _(tmp):
         body = "A finding quotes a schema:\n\n```json\n{\"type\": \"object\"}\n```\n"
@@ -252,12 +282,40 @@ def main() -> int:
         assert "exposed no execution log" in p["comment"], p["comment"][-400:]
         assert "Engineering Protocol 4" in p["comment"], p["comment"][-400:]
 
-    @case("the comment carries the marker the apply step edits in place on")
+    @case("the marker is keyed by role, so two routines do not overwrite one comment")
     def _(tmp):
         p = run(root, tmp, verdict_doc=verdict())
-        assert p["comment"].startswith("<!-- exeris-bot: l2-verdict -->"), p["comment"][:80]
+        assert p["comment"].startswith(
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=PASS -->"), \
+            p["comment"][:100]
         bad = run(root, tmp, verdict_doc=verdict(agent="nope"))
-        assert "<!-- exeris-bot: l2-verdict -->" in bad["comment"], bad["comment"][:80]
+        assert "decision=INVALID" in bad["comment"], bad["comment"][:100]
+
+    @case("a PASS does not unblock a pull request another routine is still blocking")
+    def _(tmp):
+        other = ("<!-- exeris-bot: l2-verdict agent=exeris-evaluator decision=BLOCKED -->\n"
+                 "## L2 review — `exeris-evaluator` — **BLOCKED**")
+        p = run(root, tmp, verdict_doc=verdict(), current="hard-block",
+                comments=[{"body": other}])
+        assert p["labels_remove"] == [], p
+        assert p["standing"] == {"exeris-evaluator": "BLOCKED"}, p
+        # Its own conclusion is still its own: this routine found nothing and says so.
+        assert p["conclusion"] == "green", p
+
+    @case("a PASS does unblock when the other routine has come back green")
+    def _(tmp):
+        other = "<!-- exeris-bot: l2-verdict agent=exeris-evaluator decision=PASS -->"
+        p = run(root, tmp, verdict_doc=verdict(), current="hard-block",
+                comments=[{"body": other}])
+        assert p["labels_remove"] == ["hard-block"], p
+
+    @case("a routine never reads its own earlier marker as another opinion")
+    def _(tmp):
+        mine = ("<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=BLOCKED -->")
+        p = run(root, tmp, verdict_doc=verdict(), current="hard-block",
+                comments=[{"body": mine}])
+        assert p["standing"] == {}, p
+        assert p["labels_remove"] == ["hard-block"], p
 
     @case("the comment names the publisher and does not call it the reviewer")
     def _(tmp):

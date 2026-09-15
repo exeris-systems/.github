@@ -51,10 +51,39 @@ SKIP_DEFAULT = ("the produce job was skipped by the deterministic path filter �
 FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.S)
 
 # The bot edits its own comment rather than adding one per push. A pull request reviewed eight
-# times carries one verdict — the current one — and the eight are in the job logs where a history
-# belongs. The marker is how the apply step finds the comment to edit; it is invisible in the
-# rendered body.
-MARKER = "<!-- exeris-bot: l2-verdict -->"
+# times carries one verdict per routine — the current one — and the eight are in the job logs where
+# a history belongs. The marker is how the apply step finds the comment to edit, and it is keyed by
+# ROLE: ADR-087 §B.11 has a repository running its own routine and the organisation's, and one
+# comment overwritten by the other is one of the two reviews suppressed.
+#
+# It also carries the decision, which is what lets a later run of a different routine see what this
+# one concluded without re-reading a verdict it does not have. That is the whole arbiter: §B.11 says
+# the stricter decides `hard-block`, and nothing else on a pull request records who blocked it.
+MARKER_RE = re.compile(r"<!-- exeris-bot: l2-verdict agent=([^\s]+) decision=([A-Z]+) -->")
+
+
+def marker(agent: str, decision: str) -> str:
+    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
+
+
+def standing_verdicts(comments_json: str, exclude_agent: str) -> dict[str, str]:
+    """What every OTHER routine's published comment currently says, by role.
+
+    Read from the markers the bot itself wrote, not from the verdicts: a verdict produced by another
+    workflow in another job is not in this job's checkout, and its published comment is.
+    """
+    try:
+        payload = json.loads(comments_json)
+    except json.JSONDecodeError:
+        return {}
+    out: dict[str, str] = {}
+    for item in payload if isinstance(payload, list) else [payload]:
+        if not isinstance(item, dict) or not isinstance(item.get("body"), str):
+            continue
+        for agent, decision in MARKER_RE.findall(item["body"]):
+            if agent != exclude_agent:
+                out[agent] = decision
+    return out
 
 
 def emit(text: str) -> None:
@@ -94,8 +123,16 @@ def fenced_verdicts(comments_json: str) -> list[dict]:
     return found
 
 
-def load_verdict(args) -> tuple[dict | None, str, str]:
-    """The verdict, the source it came from, and why it is absent when it is."""
+def load_verdict(args, validates) -> tuple[dict | None, str, str]:
+    """The verdict, the source it came from, and why it is absent when it is.
+
+    The fenced fallback searches a pull request that may carry more than one review. ADR-087 §B.11
+    puts a repository's own routine and the organisation's on the same pull request, each posting its
+    own fenced verdict, and taking "the last block on the page" would publish whichever review
+    finished later under this routine's name. The schema is the filter: a composed schema names the
+    role it belongs to, so a candidate that validates here is this routine's and one that does not is
+    somebody else's. Newest first, because a routine that ran twice should publish its latest answer.
+    """
     if args.verdict and os.path.exists(args.verdict):
         try:
             with open(args.verdict, encoding="utf-8") as fh:
@@ -108,7 +145,12 @@ def load_verdict(args) -> tuple[dict | None, str, str]:
     if args.comments and os.path.exists(args.comments):
         with open(args.comments, encoding="utf-8") as fh:
             candidates = fenced_verdicts(fh.read())
+        for doc in reversed(candidates):
+            if not validates(doc):
+                continue
+            return doc, "fenced block", ""
         if candidates:
+            # Report against the newest, which is the one a reader will look at.
             return candidates[-1], "fenced block", ""
         return None, "none", ("no `verdict.json` and no fenced `json` verdict in any comment on this "
                               "pull request")
@@ -147,7 +189,8 @@ def schema_errors(verdict: dict, schema_path: str) -> list[str]:
     return out
 
 
-def plan_labels(verdict: dict, mapping: dict, current: set[str]) -> tuple[list[str], list[str]]:
+def plan_labels(verdict: dict, mapping: dict, current: set[str],
+                standing: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """Labels to add and to remove, from the decision and from every finding's tag (§B.7).
 
     Keyed off a finding's tag rather than a verdict-wide severity, because one review reports a
@@ -168,6 +211,12 @@ def plan_labels(verdict: dict, mapping: dict, current: set[str]) -> tuple[list[s
     # A label this verdict asks for is never also removed, and a label the pull request does not
     # carry is never removed either: the apply step would be deleting something that is not there.
     remove = set(mapping.get("remove-on", {}).get(decision) or []) - want
+    # §B.11's arbiter. A `PASS` from one routine does not take the block off a pull request another
+    # routine is still blocking — the stricter decides. Without this the two reviews race, and the
+    # one that finishes last wins regardless of what it found.
+    held = {mapping.get("decision", {}).get(d) for d in (standing or {}).values()}
+    held.discard(None)
+    remove -= held
     return sorted(want - current), sorted(remove & current)
 
 
@@ -212,7 +261,9 @@ def provenance(args) -> list[str]:
 def compose_comment(verdict: dict, args, unrun: list[str], source: str) -> str:
     """The published review: the verdict's own words, every `not-run` verbatim, then provenance."""
     decision = verdict.get("decision", "?")
-    out = [MARKER, f"## L2 documentation and hygiene review — **{decision}**", ""]
+    agent = str(verdict.get("agent", "unknown"))
+    out = [marker(agent, str(decision)),
+           f"## L2 review — `{agent}` — **{decision}**", ""]
     label = verdict.get("decision_label")
     if label:
         out += [str(label), ""]
@@ -248,25 +299,31 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str) -> str:
 
 def cmd_plan(args) -> int:
     plan: dict = {"labels_add": [], "labels_remove": [], "comment": "", "conclusion": "red",
-                  "reason": "", "verdict_source": "none"}
+                  "reason": "", "verdict_source": "none", "standing": {}, "agent": ""}
 
     if args.produce_outcome == "skipped":
         plan.update(conclusion="green", verdict_source="none",
                     reason=args.skip_reason or SKIP_DEFAULT)
         return finish(plan, args)
 
-    verdict, source, why = load_verdict(args)
+    verdict, source, why = load_verdict(args, lambda d: not schema_errors(d, args.schema))
     plan["verdict_source"] = source
     if verdict is None:
         plan["reason"] = (f"no verdict to publish: {why}. The produce job reported "
                           f"`{args.produce_outcome or 'unknown'}`.")
         return finish(plan, args)
 
+    plan["agent"] = str(verdict.get("agent", ""))
     errors = schema_errors(verdict, args.schema)
     if errors:
         plan["reason"] = ("the verdict does not validate against the composed schema — "
                           + "; ".join(errors[:5]))
-        plan["comment"] = (MARKER + "\n## L2 review verdict refused\n\nA verdict was produced and it does not "
+        # A refused verdict still gets a marker, so the comment is edited in place on the next push
+        # instead of a fresh refusal joining the last one. Its decision reads INVALID: it is not a
+        # decision the arbiter may act on, and nothing in the label map names that word.
+        refused_agent = str(verdict.get("agent", "unknown"))
+        plan["comment"] = (marker(refused_agent, "INVALID")
+                           + "\n## L2 review verdict refused\n\nA verdict was produced and it does not "
                            "conform to `.agents/schemas/verdict.schema.json`:\n\n"
                            + "\n".join(f"- `{e}`" for e in errors[:10])
                            + "\n\nNothing was labelled. The required check is red.\n")
@@ -275,7 +332,12 @@ def cmd_plan(args) -> int:
     with open(args.labels_map, encoding="utf-8") as fh:
         mapping = json.load(fh)
     current = {s for s in (args.current_labels or "").split(",") if s}
-    add, remove = plan_labels(verdict, mapping, current)
+    standing = {}
+    if args.comments and os.path.exists(args.comments):
+        with open(args.comments, encoding="utf-8") as fh:
+            standing = standing_verdicts(fh.read(), str(verdict.get("agent", "")))
+    add, remove = plan_labels(verdict, mapping, current, standing)
+    plan["standing"] = standing
     mandatory = [s for s in (args.mandatory or MANDATORY_DEFAULT).split(",") if s]
     unrun = unrun_mandatory(verdict, mandatory)
 
