@@ -14,20 +14,41 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  # The union the docs-review job's chain declares, which `caller_permissions_check.py` now verifies
+  # by walking the nested call rather than stopping at the first level. `issues: read` lets the
+  # routine see the debt issues of issue-conventions.md rule 6; `id-token: write` is the runner
+  # action's own token exchange. Neither job writes with them — every write goes through the App.
+  issues: read
+  id-token: write
 
 jobs:
-  # THIS REPOSITORY DOES NOT YET RUN THE REVIEW IT MAKES MANDATORY FOR EVERY OTHER ONE, and its own
-  # header two paragraphs up says why that is wrong: "A gate its owner does not run is a gate nobody
-  # has tested." The job belongs here and cannot be added in the same pull request that creates the
-  # workflow it calls — `docs-review.yml` reaches `publish-verdict.yml` at `@main`, which on a pull
-  # request ADDING that file resolves to nothing and takes the whole run down with it. A job that
-  # calls a reusable workflow may not carry `continue-on-error` either; the permitted keys are name,
-  # needs, if, permissions, uses, with, secrets, strategy and concurrency, which is measured rather
-  # than assumed — the attempt produced a run with zero jobs.
+  # The L2 review this repository makes mandatory for every other one, run on this repository. Its
+  # absence was the plainest contradiction in the file: the header above says "A gate its owner does
+  # not run is a gate nobody has tested", and this was the gate.
   #
-  # It goes in the pull request after this one, and that run is where ADR-087 Engineering Protocol 4
-  # gets its answers: whether the runner writes `verdict.json` at all, and what identity it posts
-  # under. Until it does, `verdict-authors` stays empty and the fenced fallback stays off.
+  # `publish: true` HERE AND NOWHERE ELSE YET. The publishing half is opt-in precisely so that this
+  # repository can answer ADR-087 Engineering Protocol 4 on its own pull requests before anyone
+  # else's depend on the answers: whether `claude-code-action` can write `verdict.json`, and what
+  # identity it posts under. Both are unknown, so this job is EXPECTED to be able to go red on the
+  # no-verdict path — that red is the measurement, and it blocks nothing, because no check here is
+  # required. A caller turns publication on once the answers exist.
+  #
+  # `verdict-authors` is not passed and stays empty, which keeps §B.10's fenced fallback off: the
+  # only identity it could otherwise trust is one every workflow in this repository can write under.
+  # It gets a value, through a new `docs-review.yml` input, when a run has shown what that value is.
+  #
+  # The relative path checks this pull request's `docs-review.yml`. The publishing half still comes
+  # from `@main` — a reusable workflow cannot name another by relative path — so this run tests the
+  # producing half as proposed and the deciding half as released. That limit is named in
+  # `publish-verdict.yml`'s own header and is not closed here.
+  docs-review:
+    uses: ./.github/workflows/docs-review.yml
+    with:
+      publish: true
+    secrets:
+      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
+      exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
   docs:
     uses: ./.github/workflows/docs-lint.yml
     with:
