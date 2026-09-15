@@ -82,7 +82,9 @@ SUMMARY: <verdict — PASS | CONDITIONAL | BLOCKED>
 
 ## Verdict
 
-The review also emits one JSON object valid against [`.agents/schemas/verdict.schema.json`](.agents/schemas/verdict.schema.json), written to `verdict.json` in the root of the checkout under review. That file is the contract the publication step reads; the same object, repeated as a fenced `json` block at the end of the posted review, is what it parses instead where the runner cannot write files.
+The review also emits one JSON object valid against the composed verdict schema this repository ships, [`.agents/schemas/verdict.schema.json`](.agents/schemas/verdict.schema.json). `docs-review.yml` checks this repository out into `.guardrails/`, so at run time inside a caller that file is `.guardrails/.agents/schemas/verdict.schema.json`; only when `.github` reviews itself is it the path the link names. Read it from the checkout of *this* repository either way — a caller's own `.agents/schemas/verdict.schema.json` is that repository's schema, narrowed to that repository's roles, and is a different contract that does not know this routine's role or its `tag`.
+
+Write the object to `verdict.json` in the root of the checkout under review, and repeat it as a fenced `json` block at the end of the posted review. The file is what the publication step reads and the block is the stated fallback where the runner cannot write files (ADR-087 §B.10). Until that step exists — the produce and publish split of ADR-087 Engineering Protocol 2 — no step consumes either, and the block is what a human reads.
 
 `SUMMARY` above is `decision`, and the three words are the same three words, so nothing maps. `PASS with DOC DEBT` was never a third state: a `[DOC DEBT]` finding does not block on its own, so that run is `PASS` with a finding tagged `DOC DEBT`, and the label the publication step applies carries the rest. `CONDITIONAL` is for findings that have to be addressed before the merge and do not, on their own, refuse it.
 
