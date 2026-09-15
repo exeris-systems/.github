@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-10
+last-verified: 2026-09-15
 ---
 
 # Docs & Hygiene Review — Exeris Systems (L2 step, ADR-085 §J.33)

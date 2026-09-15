@@ -74,8 +74,15 @@ jobs:
     runs-on: ubuntu-latest
     # Drafts and dependency bumps are not reviewed, matching claude-code-review.yml and
     # pr-conventions.md rule 6.
+    # A fork's pull request receives no secrets, so the runner has no credential and the review
+    # cannot happen. Skipped deliberately rather than left to fail: a permanent red on every
+    # community pull request would make `exeris-kernel`'s open-core promise unmergeable, and a
+    # required check that can never pass is not a gate, it is a wall. The path that reviews a fork
+    # safely is `pull_request_target` with the risk analysis that deserves, and it is not this
+    # pull request's.
     if: >-
       github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.fork == false &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     outputs:
       relevant: ${{ steps.relevant.outputs.any_changed }}
@@ -121,18 +128,30 @@ jobs:
 
             Post one review comment. If every step passes, say so in one line rather than
             summarising the routine back.
-      # `if-no-files-found: ignore` is the fallback of ADR-087 §B.10 made operational: a runner that
-      # cannot write files produces no artifact, the publish job finds none, and it reads the fenced
-      # block from the review instead. A missing artifact is a route, not an error — but which route
-      # was taken is recorded, so a repository that silently stopped producing the file is visible.
+      # TWO artefacts, not one with two paths. `upload-artifact@v4` roots an artefact at the least
+      # common ancestor of the paths it is given: `verdict.json` sits in the workspace and the
+      # runner's execution log in RUNNER_TEMP, so their LCA is `/home/runner/work` and the verdict
+      # arrives as `<repo>/<repo>/verdict.json` — a path the publish job does not look at, silently,
+      # and only when the review SUCCEEDED and produced a log. The happy path was the broken one.
+      #
+      # `if-no-files-found: ignore` is ADR-087 §B.10 made operational: a runner that cannot write
+      # files produces no artefact, and the publish job says so rather than failing here.
       - name: Keep the verdict for the publish job
         if: ${{ !cancelled() && steps.relevant.outputs.any_changed == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: l2-verdict-${{ github.event.pull_request.number }}
-          path: |
-            verdict.json
-            ${{ steps.review.outputs.execution_file }}
+          path: verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+      # Separate, because §C.14 wants the execution log as its own artefact with its own digest when
+      # the capture step arrives, and because it is the only way the verdict keeps its own path.
+      - name: Keep the runner's execution log, if it exposed one
+        if: ${{ !cancelled() && steps.review.outputs.execution_file != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: l2-execution-${{ github.event.pull_request.number }}
+          path: ${{ steps.review.outputs.execution_file }}
           if-no-files-found: ignore
           retention-days: 7
 
@@ -148,6 +167,8 @@ jobs:
     uses: exeris-systems/.github/.github/workflows/publish-verdict.yml@main
     with:
       verdict-artifact: l2-verdict-${{ github.event.pull_request.number }}
+      execution-artifact: l2-execution-${{ github.event.pull_request.number }}
+      expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
       mandatory-gates: ${{ inputs.mandatory-gates }}

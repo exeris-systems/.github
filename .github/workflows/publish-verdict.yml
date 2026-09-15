@@ -55,13 +55,31 @@ on:
         type: string
         default: "true"
         description: "`false` when a deterministic path filter decided there was nothing to review"
+      execution-artifact:
+        type: string
+        default: ""
+        description: "Artifact holding the runner's execution log, where the runner exposed one"
+      expect-agent:
+        type: string
+        default: ""
+        description: >-
+          The role this publication is for. It keys the comment marker when there is no verdict to
+          read a role from, which is the path a reader most needs a comment on.
+      bot-login:
+        type: string
+        default: "exeris-bot[bot]"
+        description: >-
+          The publishing identity, in one place: the arbiter reads markers from it and the apply step
+          edits its comments. Two copies that disagree read one set of comments and write another.
       verdict-authors:
         type: string
         default: ""
         description: >-
-          Logins whose comments may carry the fenced fallback verdict. Empty means any Bot account,
-          which is the floor rather than the target: narrow it to the runner's own login once a real
-          run has shown what that login is. A human account is never trusted, named or not.
+          Logins whose comments may carry the fenced fallback verdict of §B.10. EMPTY MEANS THE
+          FALLBACK IS OFF. "Any Bot" was the first reading and it is not a filter: the runner posts
+          as `github-actions[bot]`, an identity every workflow in the repository can write under,
+          including one the reviewed pull request adds — which would let a pull request green its own
+          required check. Name the runner's login here once a real run has shown what it is.
       skip-reason:
         type: string
         default: ""
@@ -121,6 +139,13 @@ jobs:
       # Read with the job's own token, which holds `pull-requests: read` and nothing more. This is
       # the fallback source of §B.10, and it is also where the arbiter reads what another routine
       # has already published.
+      - name: The runner's execution log, if it exposed one
+        if: ${{ inputs.execution-artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.execution-artifact }}
+          path: execution
+        continue-on-error: true
       - name: The reviews already on this pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,9 +158,9 @@ jobs:
           # `source` travels with the id because the two endpoints have separate id spaces — a review
           # id PATCHed against issues/comments edits an unrelated comment or 404s.
           { gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              --jq '.[] | {id, source: "issue-comment", author: .user.login, author_type: .user.type, body}'
+              --jq '.[] | {id, source: "issue-comment", author: .user.login, author_type: .user.type, created_at, body}'
             gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-              --jq '.[] | {id, source: "review", author: .user.login, author_type: .user.type, body}'
+              --jq '.[] | {id, source: "review", author: .user.login, author_type: .user.type, created_at: .submitted_at, body}'
           } | jq -s '.' > comments.json
       - name: Is there an identity to publish under?
         id: identity
@@ -157,6 +182,26 @@ jobs:
       # Every caller-controlled value reaches the shell through `env`, never through `${{ }}` inside
       # the script: a label named `"; rm -rf /` is a thing a person can create, and a run block that
       # interpolates one is how it executes.
+      # §B.6a. It runs BEFORE the plan and its finding is handed to the planner rather than failing
+      # a step of its own: a second red beside the gate is a red the pull request's author cannot
+      # tell from BLOCKED, and §B.8 does not list it. It lands in the comment beside the review.
+      - name: The reviewed repository's bundle pin against this one's
+        id: pin
+        run: |
+          set -euo pipefail
+          problem=""
+          if [ -f caller/.agents/manifest.yaml ]; then
+            if ! out=$(python .guardrails/scripts/caller_bundle_check.py \
+                         --root .guardrails --caller caller/.agents/manifest.yaml 2>&1); then
+              problem=$(printf '%s' "$out" | grep -oE 'pins exeris-agents.*' | head -1)
+              [ -n "$problem" ] || problem="caller_bundle_check.py reported a mismatch"
+            fi
+          fi
+          { echo "problem<<EOF"; echo "$problem"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+      - name: The labels already on this pull request
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: printf '%s' "$LABELS" | jq -r '.[]' > current-labels.txt
       - name: Plan the publication
         env:
           OUTCOME: ${{ inputs.produce-outcome }}
@@ -167,7 +212,9 @@ jobs:
           MANDATORY: ${{ inputs.mandatory-gates }}
           SKIP_REASON: ${{ inputs.skip-reason }}
           VERDICT_AUTHORS: ${{ inputs.verdict-authors }}
-          CURRENT_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          EXPECT_AGENT: ${{ inputs.expect-agent }}
+          BOT_LOGIN: ${{ inputs.bot-login }}
+          PIN_PROBLEM: ${{ steps.pin.outputs.problem }}
           ROUTINE_SHA: ${{ steps.contract.outputs.sha }}
         run: |
           set -euo pipefail
@@ -176,8 +223,14 @@ jobs:
           # The runner's execution log, when the action exposed one. Its name is the action's, not
           # ours. ADR-087 Engineering Protocol 4 asks whether the action exposes it at all — the
           # footer answers that on a real run rather than by prediction.
-          log=$(find produced -maxdepth 1 -name '*.json' ! -name 'verdict.json' 2>/dev/null | head -1)
-          if [ -n "$log" ]; then extra+=(--execution-log "$log"); fi
+          # `find` on a missing directory exits non-zero, and under `pipefail` that killed this step
+          # before the planner ran — on exactly the path where the artefact is absent, which is the
+          # path §B.10's fallback exists for.
+          if [ -d execution ]; then
+            log=$(find execution -maxdepth 2 -type f | head -1 || true)
+            if [ -n "$log" ]; then extra+=(--execution-log "$log"); fi
+          fi
+          if [ -n "$PIN_PROBLEM" ]; then extra+=(--pin-problem "$PIN_PROBLEM"); fi
           python .guardrails/scripts/publish_verdict.py plan \
             --schema .guardrails/.agents/schemas/verdict.schema.json \
             --labels-map "$LABELS_MAP" \
@@ -192,7 +245,9 @@ jobs:
             --routine "$ROUTINE" \
             --routine-sha "$ROUTINE_SHA" \
             --verdict-authors "$VERDICT_AUTHORS" \
-            --current-labels "$CURRENT_LABELS"
+            --expect-agent "$EXPECT_AGENT" \
+            --bot-login "$BOT_LOGIN" \
+            --current-labels-file current-labels.txt
       # The only step that writes, and it writes as `exeris-bot` — the organisation's byline, never
       # a claim that the bot reviewed anything (§A.3).
       - name: Publish the review and apply the labels
@@ -201,6 +256,7 @@ jobs:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          BOT_LOGIN: ${{ inputs.bot-login }}
         run: |
           set -euo pipefail
           # `jq -r` on an empty string writes a newline, so `[ -s ]` is true for nothing at all —
@@ -213,7 +269,7 @@ jobs:
             agent=$(jq -r '.agent // ""' plan.json)
             # Only this bot's own issue comments are candidates to edit: a marker quoted inside a
             # review would otherwise hand a review id to the issue-comment endpoint.
-            existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " --arg bot "exeris-bot[bot]" \
+            existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " --arg bot "$BOT_LOGIN" \
               'map(select(.source == "issue-comment" and .author == $bot
                           and .body != null and (.body | contains($m))))
                | last | .id // empty' comments.json)
@@ -232,15 +288,6 @@ jobs:
             [ -n "$label" ] && gh api -X DELETE \
               "repos/$REPO/issues/$PR/labels/$(jq -rn --arg l "$label" '$l|@uri')" --silent
           done
-      # §B.6a: the verdict was written against the reviewed repository's pin and validated against a
-      # composition over this repository's. A different MAJOR — or a caller ahead within one — means
-      # those are not the same contract. It runs after the review is posted so that the finding
-      # arrives beside the review rather than instead of it.
-      - name: The reviewed repository's bundle pin against this one's
-        if: ${{ !cancelled() && hashFiles('caller/.agents/manifest.yaml') != '' }}
-        run: |
-          python .guardrails/scripts/caller_bundle_check.py \
-            --root .guardrails --caller caller/.agents/manifest.yaml
       - name: The required check
         if: ${{ !cancelled() }}
         run: python .guardrails/scripts/publish_verdict.py gate --plan plan.json

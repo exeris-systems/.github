@@ -14,8 +14,28 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  # For the docs-review job below: `issues: read` so the routine can see the debt issues of
+  # issue-conventions.md rule 6, `id-token: write` for the runner action's own token exchange.
+  issues: read
+  id-token: write
 
 jobs:
+  # The L2 review this repository makes mandatory for every other one, run on this repository. Its
+  # absence was the plainest contradiction in the file: the header two paragraphs up says "A gate its
+  # owner does not run is a gate nobody has tested", and this was the gate.
+  #
+  # `continue-on-error` until the publish half is on `main`. `docs-review.yml` reaches
+  # `publish-verdict.yml` at `@main`, so on a pull request that ADDS that file the publish job cannot
+  # resolve it. The produce half runs regardless, which is what answers ADR-087 Engineering Protocol
+  # 4 — whether the runner writes a file at all, and what identity it posts under — by measurement
+  # instead of by prediction. Drop the flag in the pull request after this one.
+  docs-review:
+    continue-on-error: true
+    uses: ./.github/workflows/docs-review.yml
+    secrets:
+      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
+      exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
   docs:
     uses: ./.github/workflows/docs-lint.yml
     with:
