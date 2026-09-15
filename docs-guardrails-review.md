@@ -12,6 +12,8 @@ last-verified: 2026-09-15
 ## Trigger
 Every pull request in any Exeris repository, as **Step 1b of `pr-review.md`** — after the cross-repo impact check, before the repo-specific review. Runs on the substance the L1 gates cannot judge. Do not repeat what CI already reported; read the CI step summary first and reference it.
 
+**One exception, and it is not a policy: a pull request that modifies any file under `.github/workflows/` is never reviewed by this routine.** The runner action refuses to start on one — *"the workflow file must exist and have identical content to the version on the repository's default branch"* — which is its own supply-chain guard and nothing a caller can configure away. It fails quietly: the job still reports success, so the absence of a review looks exactly like a clean one, and the only tell is a model step that lasted four seconds. A change to CI therefore reaches `main` carrying its L1 gates and nothing from this layer, and the repository where that matters most is `exeris-systems/.github`, most of whose pull requests are workflow changes. Until something closes it, a workflow change is reviewed by a human or not at all.
+
 ## Inputs
 - The PR body (template per `pr-conventions.md`) and the squash-commit subject.
 - The diff, restricted to: `docs/**`, `*.md`, `CLAUDE.md`, `.github/**`, `CHANGELOG.md`, `MIGRATION*.md`, `adr-index.md`, Java files whose diff touches `/** … */` blocks.
