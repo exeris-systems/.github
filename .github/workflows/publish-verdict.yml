@@ -10,12 +10,20 @@
 # finding — §E.23. Everything it decides is decided by `publish_verdict.py plan`, which touches no
 # network and is exercised case by case by `publish_verdict_suite.py` in this repository's own CI.
 #
-# WHICH SCHEMA VALIDATES. `.github`'s composed schema narrows `agent` to `exeris-org-docs-reviewer`,
-# so a verdict from `kernel-pr-review.md` — `agent: exeris-evaluator` — does not validate against it
-# and must not be asked to. A producer running its own routine passes its own composed schema in
-# `schema`; the default is the organisation's. ADR-087 §B.6a fixes where the BASE comes from and does
-# not say whose COMPOSITION validates, because it was written with one producer in mind. This input
-# is that extension, and the amendment naming it is owed in `exeris-docs`.
+# WHICH SCHEMA VALIDATES is fixed here and is NOT an input. `.github`'s composed schema narrows
+# `agent` to `exeris-org-docs-reviewer`, so a verdict from `kernel-pr-review.md` — `agent:
+# exeris-evaluator` — will not validate against it, and a repository's own routine therefore cannot
+# publish through this workflow yet. Taking the schema from the reviewed checkout would fix that and
+# would also let a pull request weaken the contract it is judged by, which is the invariant this
+# whole file rests on. §B.6a says where the BASE comes from and is silent on whose COMPOSITION
+# validates, because it was written with one producer in mind; the input arrives with the amendment
+# that answers it, together with the three callers that need it, and not before.
+#
+# NESTED PIN. `docs-review.yml` reaches this file at `@main` — a relative path resolves in the
+# calling repository, which for a reusable workflow is somebody else's. A caller that pins
+# `docs-review.yml` by SHA therefore does not pin this half. That is a real hole in the pinning
+# story, written down rather than left to be discovered: a change here reaches every repository at
+# once, exactly as a change to any other file in this repository does.
 name: publish-verdict
 on:
   workflow_call:
@@ -24,12 +32,6 @@ on:
         type: string
         default: ""
         description: "Artifact holding verdict.json, and the runner's execution log where it exposed one"
-      schema:
-        type: string
-        default: ".guardrails/.agents/schemas/verdict.schema.json"
-        description: >-
-          The composed schema the verdict must satisfy. The organisation's by default; a producer
-          running its own routine passes its own, e.g. `caller/.agents/schemas/verdict.schema.json`.
       labels-map:
         type: string
         default: ".guardrails/labels-from-verdict.json"
@@ -53,13 +55,28 @@ on:
         type: string
         default: "true"
         description: "`false` when a deterministic path filter decided there was nothing to review"
+      verdict-authors:
+        type: string
+        default: ""
+        description: >-
+          Logins whose comments may carry the fenced fallback verdict. Empty means any Bot account,
+          which is the floor rather than the target: narrow it to the runner's own login once a real
+          run has shown what that login is. A human account is never trusted, named or not.
       skip-reason:
         type: string
         default: ""
         description: "Which skip it was, when the producing job was skipped rather than run"
     secrets:
-      exeris_bot_app_id: { required: true }
-      exeris_bot_private_key: { required: true }
+      # OPTIONAL, because ADR-087 Engineering Protocol 1 says items 2-3 "land first … and run under
+      # the provider's identity until the Apps exist" — nothing before the Apps needs a token. A
+      # required secret here would also break, at parse time, every caller that passes secrets by
+      # name rather than inheriting: `exeris-sdk` and `exeris-tooling` both do, and both track
+      # `@main`.
+      #
+      # Without them the review is not published and no label moves, and the required check still
+      # decides. Publication degrades; the gate does not.
+      exeris_bot_app_id: { required: false }
+      exeris_bot_private_key: { required: false }
 permissions:
   contents: read
   pull-requests: read
@@ -73,6 +90,13 @@ jobs:
   # never reports, and a pull request waiting on one can never merge.
   verdict:
     runs-on: ubuntu-latest
+    # The caller's own `concurrency` cancels superseded RUNS, and `if: always()` deliberately lets a
+    # cancelled run reach this job — so without a group here two pushes in quick succession edit one
+    # comment and one label set at the same time. Queued rather than cancelled: the later write is
+    # the one that should stand, and cancelling the earlier one mid-write is how half a plan lands.
+    concurrency:
+      group: publish-verdict-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     steps:
       - name: Fetch the contract (exeris-systems/.github, default branch)
         uses: actions/checkout@v4
@@ -103,11 +127,29 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          { gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[]'
-            gh api "repos/$REPO/pulls/$PR/reviews"  --paginate --jq '.[]'; } \
-            | jq -s '.' > comments.json
+          set -euo pipefail
+          # The author is part of the contract, not decoration: §B.10's fallback is "the fenced block
+          # from the review THE RUNNER POSTED", and a pull request is a surface anyone can write to.
+          # `source` travels with the id because the two endpoints have separate id spaces — a review
+          # id PATCHed against issues/comments edits an unrelated comment or 404s.
+          { gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              --jq '.[] | {id, source: "issue-comment", author: .user.login, author_type: .user.type, body}'
+            gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+              --jq '.[] | {id, source: "review", author: .user.login, author_type: .user.type, body}'
+          } | jq -s '.' > comments.json
+      - name: Is there an identity to publish under?
+        id: identity
+        env:
+          APP_ID: ${{ secrets.exeris_bot_app_id }}
+        run: |
+          if [ -n "$APP_ID" ]; then echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::publish_verdict: no exeris_bot_app_id was passed, so this review is not published and no label moves. The required check still decides. Pass exeris_bot_app_id and exeris_bot_private_key from the caller to turn publication on."
+          fi
       - name: Mint the exeris-bot token
         id: bot
+        if: ${{ steps.identity.outputs.have == 'true' }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.exeris_bot_app_id }}
@@ -121,55 +163,60 @@ jobs:
           RELEVANT: ${{ inputs.produce-relevant }}
           RUNNER: ${{ inputs.runner }}
           ROUTINE: ${{ inputs.routine }}
-          SCHEMA: ${{ inputs.schema }}
           LABELS_MAP: ${{ inputs.labels-map }}
           MANDATORY: ${{ inputs.mandatory-gates }}
           SKIP_REASON: ${{ inputs.skip-reason }}
+          VERDICT_AUTHORS: ${{ inputs.verdict-authors }}
           CURRENT_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           ROUTINE_SHA: ${{ steps.contract.outputs.sha }}
         run: |
           set -euo pipefail
-          outcome="$OUTCOME"
           extra=()
-          if [ "$outcome" = "skipped" ]; then
-            [ -n "$SKIP_REASON" ] && extra=(--skip-reason "$SKIP_REASON")
-          elif [ "$RELEVANT" != "true" ]; then
-            outcome="skipped"
-          fi
+          if [ -n "$SKIP_REASON" ]; then extra=(--skip-reason "$SKIP_REASON"); fi
           # The runner's execution log, when the action exposed one. Its name is the action's, not
           # ours. ADR-087 Engineering Protocol 4 asks whether the action exposes it at all — the
           # footer answers that on a real run rather than by prediction.
           log=$(find produced -maxdepth 1 -name '*.json' ! -name 'verdict.json' 2>/dev/null | head -1)
           if [ -n "$log" ]; then extra+=(--execution-log "$log"); fi
           python .guardrails/scripts/publish_verdict.py plan \
-            --schema "$SCHEMA" \
+            --schema .guardrails/.agents/schemas/verdict.schema.json \
             --labels-map "$LABELS_MAP" \
             --out plan.json \
             --verdict produced/verdict.json \
             --comments comments.json \
-            --produce-outcome "$outcome" \
+            --produce-outcome "$OUTCOME" \
+            --produce-relevant "$RELEVANT" \
             ${extra[@]+"${extra[@]}"} \
             --mandatory "$MANDATORY" \
             --runner "$RUNNER" \
             --routine "$ROUTINE" \
             --routine-sha "$ROUTINE_SHA" \
+            --verdict-authors "$VERDICT_AUTHORS" \
             --current-labels "$CURRENT_LABELS"
       # The only step that writes, and it writes as `exeris-bot` — the organisation's byline, never
       # a claim that the bot reviewed anything (§A.3).
       - name: Publish the review and apply the labels
+        if: ${{ steps.identity.outputs.have == 'true' }}
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          jq -r '.comment' plan.json > comment.md
-          if [ -s comment.md ]; then
+          # `jq -r` on an empty string writes a newline, so `[ -s ]` is true for nothing at all —
+          # which posted a blank comment, markerless, once per push, on every path without a verdict.
+          # Ask the plan, not the file.
+          if [ "$(jq -r '.comment | length' plan.json)" -gt 0 ]; then
+            jq -r '.comment' plan.json > comment.md
             # One comment per ROUTINE, edited in place. Keyed by role because §B.11 has two routines
             # on one pull request, and a single marker would have each overwrite the other's review.
             agent=$(jq -r '.agent // ""' plan.json)
-            existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " \
-              'map(select(.body != null and (.body | contains($m)))) | last | .id // empty' comments.json)
+            # Only this bot's own issue comments are candidates to edit: a marker quoted inside a
+            # review would otherwise hand a review id to the issue-comment endpoint.
+            existing=$(jq -r --arg m "<!-- exeris-bot: l2-verdict agent=$agent " --arg bot "exeris-bot[bot]" \
+              'map(select(.source == "issue-comment" and .author == $bot
+                          and .body != null and (.body | contains($m))))
+               | last | .id // empty' comments.json)
             if [ -n "$existing" ]; then
               gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@comment.md --silent
             else

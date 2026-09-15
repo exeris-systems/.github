@@ -42,18 +42,28 @@ jobs:
   # The L2 review of ADR-085 §J.33, published under the organisation's identity by ADR-087 §B.
   # Without this job the routine runs only in Cowork sessions and never on a pull request.
   #
-  # Two jobs come with it: `produce` runs the model, `publish` posts the review, applies the labels
-  # of labels-from-verdict.json and IS THE REQUIRED CHECK — red when the verdict is absent, invalid,
-  # BLOCKED, or rests on a mandatory gate that did not run. Make `docs-review / publish` a required
-  # check in the branch protection rule; the produce job is not one, because a review that crashed
-  # has to reach the step that notices.
+  # Two jobs come with it: `produce` runs the model, and the publish half posts the review, applies
+  # the labels of labels-from-verdict.json and IS THE REQUIRED CHECK — red when the verdict is
+  # absent, invalid, BLOCKED, or rests on a mandatory gate that did not run. The produce job is not
+  # the required one, because a review that crashed has to reach the step that notices.
   #
-  # `secrets: inherit` passes CLAUDE_CODE_OAUTH_TOKEN and the two EXERIS_BOT_* organisation secrets
-  # through. The permission block above does not grow for this: every write goes through the App's
-  # installation token, so neither job's own GITHUB_TOKEN holds one (ADR-087 §B.5).
+  # THE CHECK NAME HAS THREE SEGMENTS, because the publish half is its own reusable workflow:
+  # `docs-review / publish / verdict`. CONFIRM IT AGAINST A REAL RUN before adding it to a branch
+  # protection rule — a required check whose name does not exist never reports, and a pull request
+  # waiting on one can never merge.
+  #
+  # Secrets are named rather than inherited, matching exeris-kernel and exeris-sdk, which both
+  # refused `secrets: inherit` under SonarCloud S7631. The two EXERIS_BOT_* lines are optional: drop
+  # them and the review still runs and still gates, it is simply not published under the
+  # organisation's identity and no label moves. The permission block above does not grow either way
+  # — every write goes through the App's installation token, so neither job's own GITHUB_TOKEN holds
+  # one (ADR-087 §B.5).
   docs-review:
     uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
-    secrets: inherit
+    secrets:
+      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
+      exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
     # with:
     #   # Which runner produces the verdict. One value is supported today; it is recorded, never
     #   # selected — ADR-087 §B.12.

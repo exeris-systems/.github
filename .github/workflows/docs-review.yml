@@ -52,12 +52,17 @@ on:
           Empty means the routine's own list. Name more here in a repository whose caller runs more.
     secrets:
       claude_code_oauth_token: { required: true }
-      # Named to match the organisation secrets case-insensitively, which is what makes
-      # `secrets: inherit` in the caller populate them. Both are required: the publish step cannot
-      # write without a token, and a required check that can never be green is worse than a
-      # workflow that refuses to start.
-      exeris_bot_app_id: { required: true }
-      exeris_bot_private_key: { required: true }
+      # OPTIONAL, and that is a compatibility statement as much as a design one. `exeris-sdk` and
+      # `exeris-tooling` track this workflow at `@main` and pass secrets BY NAME, not by inheriting;
+      # a new required secret would stop their whole guardrails file parsing on the merge commit,
+      # which is the failure `caller_permissions_check.py` exists because of. It is also what
+      # ADR-087 Engineering Protocol 1 asks for: items 2-3 land "and run under the provider's
+      # identity until the Apps exist".
+      #
+      # Without them the review is not published and no label moves; the required check still
+      # decides. Publication degrades, the gate does not.
+      exeris_bot_app_id: { required: false }
+      exeris_bot_private_key: { required: false }
 permissions:
   contents: read
   pull-requests: read
@@ -149,11 +154,9 @@ jobs:
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
       skip-reason: "the pull request is a draft or a dependency bump, which this review does not read"
-      # The organisation's own composed schema: this job publishes the organisation's routine, whose
-      # role is the only one that schema admits.
-      schema: .guardrails/.agents/schemas/verdict.schema.json
-    # Named rather than inherited, so that a missing organisation secret fails here with the name in
-    # the message instead of minting an empty token two workflows down.
+    # Named rather than inherited: `exeris-kernel` and `exeris-sdk` both refused `secrets: inherit`
+    # under SonarCloud S7631, and the caller example follows what they do rather than what would be
+    # shorter. An absent secret arrives as an empty string and the publish half says so.
     secrets:
       exeris_bot_app_id: ${{ secrets.exeris_bot_app_id }}
       exeris_bot_private_key: ${{ secrets.exeris_bot_private_key }}
