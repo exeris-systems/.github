@@ -1,6 +1,32 @@
-# exeris-systems/.github — shared guardrails
+# exeris-systems/.github — the organisation's enforcement
 
-Organisation-level defaults and the reusable CI gates that enforce ADR-085. Every Exeris repository gets the community files here by default (GitHub applies `CONTRIBUTING.md` and `PULL_REQUEST_TEMPLATE.md` org-wide) and opts into the gates with a 10-line workflow caller.
+This repository holds **the enforcement, never the rule**. The rules live one repository away, in
+[`exeris-docs/standards/`](https://github.com/exeris-systems/exeris-docs/blob/main/standards/README.md);
+what is here is what makes them fire. A check with no standard behind it is a rule invented in CI,
+where nobody reviewed it and nobody can find it.
+
+It does three things.
+
+**Community defaults, org-wide.** GitHub applies this repository's `CONTRIBUTING.md`,
+`PULL_REQUEST_TEMPLATE.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` and `SUPPORT.md` to every repository
+that has none of its own. No adoption step; they are simply in force.
+
+**Reusable L1 gates**, which a repository opts into with one 10-line caller
+(`caller-example/guardrails.yml`): documentation lint, commit lint, pull-request body, Javadoc and
+TSDoc. These are mechanical and they run in the adopting repository's CI.
+
+**The L2 review and its publication** (ADR-087). `docs-guardrails-review.md` is the organisation's
+review routine — one copy, checked out and handed to a model verbatim, so changing it changes every
+repository at once. What the review produces is a `verdict`: a JSON object this repository defines a
+schema for, composed over the `exeris-agents` bundle vendored under `.agents/`. `docs-review.yml`
+produces it and `publish-verdict.yml` publishes it under the `exeris-bot` identity — posting the
+review, applying the labels of `labels-from-verdict.json`, and being the required check that is red
+when the verdict is absent, invalid, `BLOCKED`, or resting on a gate that did not run.
+
+**Every change here changes CI for every repository.** The workflows are called `@main`, so a merge
+to `main` is a deployment and there is no staging. The gates in this repository's own
+`.github/workflows/guardrails.yml` run on this repository, including the L2 review: a gate its owner
+does not run is a gate nobody has tested.
 
 ## Layout
 
@@ -12,6 +38,13 @@ Organisation-level defaults and the reusable CI gates that enforce ADR-085. Ever
     pr-body-check.yml    reusable — template headings + classification grammar + trailers
     javadoc-gate.yml     reusable — Javadoc gate: whole-module on `modules`, changed-files on `diff-modules`
     tsdoc-gate.yml       reusable — TS doc comments + API-surface goldens (tsdoc-conventions.md)
+    docs-review.yml      reusable — the L2 review: a `produce` job runs the routine, a `publish`
+                         job (opt-in, `publish: true`) posts and gates. ADR-087 §B.5
+    publish-verdict.yml  reusable — the publishing half on its own, so more than one producer can
+                         reach it. Posts as `exeris-bot`, labels, and is the required check
+    guardrails.yml       this repository's OWN caller — it runs its gates, and the L2 review, on itself
+    labels-sync.yml      applies labels.yml across the organisation
+    issue-hygiene.yml    ages `needs-reproducer` / `needs-evidence`
   PULL_REQUEST_TEMPLATE.md
   CONTRIBUTING.md      standards links, DCO, and the maintainers list CODE_OF_CONDUCT/SECURITY refer to
 CODE_OF_CONDUCT.md     Contributor Covenant 3.0 + reporting channel, enforcing party, AI-assisted-contribution line
@@ -22,8 +55,19 @@ scripts/
   frontmatter_check.py   docs-style-guide.md rules 2,3,5,6,7  (modes: ramp | strict)
   registry_check.py      adr-conventions.md rules 1–4         (consumer mode / registry mode)
   pr_body_check.py       pr-conventions.md rules 2–4
-  (the agent-layer tooling is NOT here — see "The agent layer moved out" below. docs-lint.yml
-   checks exeris-agents out into .agents-tools/ and runs it from there)
+  caller_permissions_check.py  a caller's permission block is the union of every workflow it calls,
+                         nested calls included, and each `with:` key is an input that workflow
+                         declares. GitHub rejects the whole file otherwise — in the adopting
+                         repository, on the first push, with no logs
+  publish_verdict.py     the publish step's decision half: it plans and never writes. Reads the
+                         verdict, validates it, and writes the labels, the comment and the
+                         conclusion the workflow then applies and gates on
+  publish_verdict_suite.py  one case per red path ADR-087 §B.8 names, run in this repository's CI
+  bundle_pin_check.py    the vendored bundle is the ref docs-lint.yml resolves
+  label_map_check.py     labels-from-verdict.json names only tags in the schema and labels in labels.yml
+  caller_bundle_check.py the reviewed repository's bundle pin against this one's (§B.6a)
+  (the agent-layer tooling is NOT here — the bundle owns it. docs-lint.yml checks exeris-agents out
+   into .agents-tools/ and runs it from there; `.agents/` below is this repository's vendored copy)
 commitlint.config.js     commit-conventions.md rules 1–4 (custom rules: exeris-header-length, exeris-mmr-sections, exeris-trailers)
 .markdownlint.yaml
 vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/styles/Exeris (Terminology, RetractedFigures, DriftPatterns, Numbers, Absolutes)
@@ -37,6 +81,16 @@ ts/api-extractor.base.json         port target for a library's api-extractor.jso
 ts/scripts/mcp-tool-surface.mjs    tools/list golden for an MCP server — the TS analogue of japicmp
 java/javadoc-plugin-block.xml      port target for gated modules' pom.xml
 caller-example/guardrails.yml      copy into each repo's .github/workflows/
+docs-guardrails-review.md          the [L2] review routine — one copy, read by every repository
+pr-review.patch.md                 the router patch that places the routine inside pr-review.md
+labels.yml                         the organisation label taxonomy (issue-conventions.md rule 3)
+labels-from-verdict.json           which verdict field applies which label from labels.yml (§B.7)
+.agents/
+  manifest.yaml                    the exeris-agents pin: bundle, version, ref, sha256
+  vendor/exeris-agents-<version>/  the verified vendored copy the schema composes over
+  schemas/verdict.schema.json      the organisation's composed verdict — its role, its scope classes,
+                                   its `tag` on a finding, and the four objects it closes
+docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implements
 ```
 
 ## Installing in a repo
@@ -67,9 +121,26 @@ caller-example/guardrails.yml      copy into each repo's .github/workflows/
    The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules.
 
    The rest is per package and opt-in: copy `ts/tsdoc.json` beside the package's `tsconfig.json`; a library that publishes adds `typedoc` (and `@microsoft/api-extractor`), ports `ts/typedoc.base.json` and `ts/api-extractor.base.json`, and sets `typedoc: true` with `api-report: api-extractor`; an MCP server sets `api-report: mcp-tool-surface`. Both stay off until the package commits the config and the golden they read — **the first golden lands in that build's own pull request, reviewed on its own**, because a golden reviewed alongside a feature is a golden nobody reads.
-5. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
-6. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
-7. Community-health defaults (`CODE_OF_CONDUCT.md`, `SECURITY.md`, `SUPPORT.md`) reach every repository without one of its own, from this repository's root. They name two mailboxes and a private reporting channel, so before they are published: `conduct@exeris.eu` and `security@exeris.eu` must deliver, and organisation-level private vulnerability reporting must be on (*Settings → Code security*). A code of conduct whose reporting address bounces is worse than none. Delete a repo's own `SUPPORT.md` or `CODE_OF_CONDUCT.md` only where it says nothing the default does not; `exeris-kernel/SECURITY.md` says more and stays.
+5. The L2 review comes with the caller's `docs-review` job and needs nothing else to run: it
+   produces a review and posts it, as it did before the split. **Publication is opt-in.** Adding
+   `publish: true` turns on the second job, which posts the verdict under the organisation's
+   identity, applies the labels of `labels-from-verdict.json`, and becomes a check that is red when
+   the verdict is absent, invalid, `BLOCKED`, or rests on a mandatory gate that did not run.
+
+   Leave it off until `exeris-systems/.github` has answered ADR-087 Engineering Protocol 4 on its
+   own pull requests — whether the runner writes a verdict file, and what identity it posts under.
+   When you do turn it on, the check to protect is `docs-review / publish / verdict`, and **confirm
+   that name against a real run first**: a required check whose name does not exist never reports,
+   and a pull request waiting on one can never merge.
+
+   Two organisation secrets carry the publication, `EXERIS_BOT_APP_ID` and
+   `EXERIS_BOT_PRIVATE_KEY`. They are optional — without them the review still runs and the check
+   still decides, it is simply not published under the organisation's byline. No permission is added
+   either way: every write goes through the App's installation token, so neither job's own
+   `GITHUB_TOKEN` holds one.
+6. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
+7. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
+8. Community-health defaults (`CODE_OF_CONDUCT.md`, `SECURITY.md`, `SUPPORT.md`) reach every repository without one of its own, from this repository's root. They name two mailboxes and a private reporting channel, so before they are published: `conduct@exeris.eu` and `security@exeris.eu` must deliver, and organisation-level private vulnerability reporting must be on (*Settings → Code security*). A code of conduct whose reporting address bounces is worse than none. Delete a repo's own `SUPPORT.md` or `CODE_OF_CONDUCT.md` only where it says nothing the default does not; `exeris-kernel/SECURITY.md` says more and stays.
 
 ## Modes and the ramp
 
@@ -104,6 +175,10 @@ Vale and lychee still do not read it: both carry their own path lists, and a gen
 pip install pyyaml && pip install vale        # or brew install vale
 python scripts/frontmatter_check.py --root docs --mode strict
 python scripts/registry_check.py --index ../exeris-docs/adr-index.md
+python scripts/caller_permissions_check.py           # the caller blocks and every `with:` key
+python scripts/bundle_pin_check.py                   # the vendored bundle is the ref docs-lint uses
+python scripts/label_map_check.py                    # the label map names only what exists
+python scripts/publish_verdict_suite.py --root .     # the publish step's rules, no network, no token
 # agent layer: from the bundle, not from here
 git clone https://github.com/exeris-systems/exeris-agents ../exeris-agents
 python ../exeris-agents/tools/agents_file_check.py --root .
@@ -119,26 +194,3 @@ Vale inline toggles are the sanctioned way to quote a retracted figure on purpos
 … earlier revisions asserted ">160 GB on a 4 GB payload"; no campaign supports it …
 <!-- vale Exeris.RetractedFigures = YES -->
 ```
-
-## What was verified on 2026-09-06 (TypeScript)
-
-- `ts/eslint.tsdoc.mjs` spread into `exeris-ai-bridge`'s own type-aware config: 146 errors / 14 warnings (139 `require-jsdoc` on the gated `src/tools/**` — narrow the gated globs at kickoff; 6 `tsdoc/syntax`; 1 `check-tag-names`). On `exeris-codegen-ts` with a minimal typescript-eslint base: 248 errors / 113 warnings (113 `tsdoc/syntax`, 90 `check-tag-names` = 57 `{@code}` + 33 `@author`, 45 gated `require-jsdoc`; warnings 88 `require-jsdoc`, 15 `no-restricted-syntax` = 11 HTML markup + 4 history, 10 `multiline-blocks`). The history regex is the anchored list of ADR-085's 2026-09-05 amendment at warning level (the unanchored one produced 3 false positives on ai-bridge); `jsdoc/no-restricted-syntax` reports one context per comment, so the history contexts are listed first; `@author`/`@version` are errors through `tagNamePreference`.
-- `ts/tsdoc.json`: `extends: ["typedoc/tsdoc.json"]` is required (`@since`, `@category` are typedoc's, not TSDoc core); the schema URL must be `tsdoc.schema.json`; `supportForTags` must not be used (it turns every unlisted core tag, `{@link}` included, into `tsdoc-unsupported-tag`).
-- typedoc validation (`notDocumented`, `treatValidationWarningsAsErrors`): ai-bridge 36 warnings → exit 4; codegen-ts library modules 293 + 5 `notExported` → exit 4.
-- api-extractor on `exeris-sdk-ui-kit`: report produced in one run; `ae-missing-release-tag` on both exports; CI mode exits 1 on a report diff after adding an export.
-- `ts/scripts/mcp-tool-surface.mjs` on ai-bridge: 25 tools accepted; re-run "unchanged" exit 0; hand-edited golden → `- removed tool … (MAJOR)`, `~ changed tool …`, exit 2.
-
-## What was verified on 2026-09-04
-
-- `frontmatter_check.py` strict on `exeris-kernel/docs`: 89 files, 89 errors (all "missing frontmatter" — the expected baseline); on `exeris-docs/standards`: 14 files, 0 errors.
-- `registry_check.py` on `exeris-docs` with siblings: 92 rows, 7 errors — six registry links to kernel ADRs that exist only on `development/0.12.0` (071, 073, 074, 077, 080, 083) and one relative link into the private `exeris-telemetry-spec` (ADR-018 stubs row). Consumer mode on `exeris-kernel`: 34 files, 0 errors; on `exeris-sdk`: 1 error (space-named `ADR-003 Entity-First Development Strategy.md`).
-- **The agent layer moved out on 2026-09-08**, to [`exeris-systems/exeris-agents`](https://github.com/exeris-systems/exeris-agents). `agents_file_check.py` — and `claude_md_check.py` before it — lived here because everything shared did. The agent layer turned out to be the one part of the shared enforcement with content a repository *vendors*, and vendoring needs a version to pin; this repository has none, since every caller consumes it at `@main`, which is exactly the moving target `agents-md-schema.md` rule 8 forbids. The bundle carries its own SemVer, and `docs-lint.yml` checks it out at `agents-ref` (default `main`, overridable per repository)
-- **A caller's pinned `uses:` did not pin the scripts that workflow calls.** The guardrails checkout took the default branch whatever sha the caller named, so a repository on an older `docs-lint.yml` ran it against today's `scripts/`. Harmless while scripts only get added; a hard failure the moment one is removed, which is what #23 did to `agents_file_check.py` — exeris-kernel's `docs / docs-lint` went to exit code 2 within minutes of that merge and stayed there. Fixed with `ref: ${{ github.job_workflow_sha }}`, the commit the reusable workflow file itself came from, so Dependabot bumping a caller's sha moves both halves together
-- **`docs-lint.yml`'s two agent steps did not run at all between 2026-09-08 and 2026-09-09.** The move above rewrote them to `inputs.agent-check` and `.agents-tools/`, and added neither the input nor the checkout: an undeclared input evaluates falsy, so both steps were skipped for every caller, silently, and the agent-file check that had run here since 2026-09-05 ran nowhere. Fixed by declaring `agent-check` and `agents-ref` and checking the bundle out; `.agents-tools` joins `TOOLING_DIRS`, because a bundle checked out into the workspace is another repository's documentation and every lint finding against it is one no consumer can act on
-- `agents_render.py` arrived on 2026-09-08 with schema v2, and it exists because the alternative had already failed: `exeris-docs` had no renderer and refreshed its adapters by hand, while `exeris-kernel` had two shell scripts of its own, so one schema had two implementations and a third repository had none. Adding a runtime is one mapping file under `agents/adapters/`, never a change to the renderer. Only `claude.yaml` ships today: a mapping written from memory would silently grant or withhold tools, so a vendor lands when its tool vocabulary has been read
-- The v2 checks are rules 10-13 — the `AGENT.md` profile layout and the ban on a lowercase `agent.md` (one runtime discovers that exact path, which is the canonical file on a case-insensitive filesystem), vendor-neutral frontmatter, hooks declared once with their dispatcher present, and output schemas that are real JSON Schema. Rule 14, that a covered change reran its evals, is not checkable from a checkout and stays `[L2]`
-- `pr_body_check.py`: passes a conforming body; catches placeholders, unparseable classification, empty Verification, malformed `Refs:`, and a touched ADR without `Refs:`.
-- `commitlint.config.js`: passes a conforming `fix` with Motivation/Modification/Result and the squash suffix; rejects a 117-char subject, a `fix` without the sections, `Refs: ADR-11`, and the type `destructive:`; passes `docs(adr): …` without a body and `report(entity-read-by-id): …` with a `Claim:` trailer.
-<!-- vale Exeris.RetractedFigures = NO -->
-- Vale on `exeris-kernel/docs/subsystems` (15 files): 0 errors, 352 warnings, 722 suggestions. On the public whitepapers at error level: **`exeris-kernel/docs/whitepaper.md` line 16 still asserts ">160GB" and line 136 still carries the retracted 459 MB / Axon saga table** — a live copy of retraction #23 on `main`. `b2b-technical-whitepaper.md` line 10 and `high-level-architecture.md` line 173 quote the figures inside withdrawal sentences (use the inline toggle).
-<!-- vale Exeris.RetractedFigures = YES -->
