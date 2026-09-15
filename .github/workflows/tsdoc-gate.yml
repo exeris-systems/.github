@@ -17,7 +17,7 @@ on:
     inputs:
       package-dir:   { type: string,  default: ".",  description: "Directory holding package.json" }
       lint-scope:    { type: string,  default: "package", description: "'package' = every source file; 'diff' = only the files this pull request changed (tsdoc-conventions.md rule 11, for Angular apps and internal tooling)" }
-      node-version:  { type: string,  default: "22" }
+      node-version:  { type: string,  default: "24" }
       typedoc:       { type: boolean, default: false, description: "Run typedoc validation (typedoc.json in package-dir)" }
       api-report:    { type: string,  default: "",   description: "'api-extractor' | 'mcp-tool-surface' | ''" }
       mcp-server:    { type: string,  default: "dist/server.js" }

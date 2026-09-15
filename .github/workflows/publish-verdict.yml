@@ -141,7 +141,7 @@ jobs:
         with: { path: caller, sparse-checkout: .agents, sparse-checkout-cone-mode: false }
         continue-on-error: true
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14" }
       - run: pip install --quiet pyyaml jsonschema referencing
       - name: The verdict the producing job left, if it left one
         if: ${{ inputs.verdict-artifact != '' }}

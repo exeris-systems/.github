@@ -43,7 +43,7 @@ jobs:
       - uses: actions/setup-java@v6
         with: { java-version: "${{ inputs.java-version }}", distribution: "${{ inputs.java-distribution }}", cache: maven }
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14" }
       # Not every repository ships a wrapper — exeris-kernel builds with the runner's `mvn`. Pick
       # whichever exists rather than assuming, so adopting this gate is a pom change and nothing else.
       - name: Resolve the Maven command

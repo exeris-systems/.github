@@ -105,7 +105,7 @@ jobs:
         # this job red for a file this repository does not own.
         run: rsync -a --exclude .git --exclude .guardrails --exclude .agents-tools ./ .guardrails/
       - uses: actions/setup-python@v7
-        with: { python-version: "3.12" }
+        with: { python-version: "3.14" }
       # jsonschema is the agent-file check's rule-13 half. Without it that check DOWNGRADES to a
       # JSON-syntax test and says so in a warning — a schema with a broken `$ref` or an
       # unsatisfiable `allOf` then passes, which is the shape of green this repository exists to
