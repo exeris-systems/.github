@@ -14,28 +14,20 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
-  # For the docs-review job below: `issues: read` so the routine can see the debt issues of
-  # issue-conventions.md rule 6, `id-token: write` for the runner action's own token exchange.
-  issues: read
-  id-token: write
 
 jobs:
-  # The L2 review this repository makes mandatory for every other one, run on this repository. Its
-  # absence was the plainest contradiction in the file: the header two paragraphs up says "A gate its
-  # owner does not run is a gate nobody has tested", and this was the gate.
+  # THIS REPOSITORY DOES NOT YET RUN THE REVIEW IT MAKES MANDATORY FOR EVERY OTHER ONE, and its own
+  # header two paragraphs up says why that is wrong: "A gate its owner does not run is a gate nobody
+  # has tested." The job belongs here and cannot be added in the same pull request that creates the
+  # workflow it calls — `docs-review.yml` reaches `publish-verdict.yml` at `@main`, which on a pull
+  # request ADDING that file resolves to nothing and takes the whole run down with it. A job that
+  # calls a reusable workflow may not carry `continue-on-error` either; the permitted keys are name,
+  # needs, if, permissions, uses, with, secrets, strategy and concurrency, which is measured rather
+  # than assumed — the attempt produced a run with zero jobs.
   #
-  # `continue-on-error` until the publish half is on `main`. `docs-review.yml` reaches
-  # `publish-verdict.yml` at `@main`, so on a pull request that ADDS that file the publish job cannot
-  # resolve it. The produce half runs regardless, which is what answers ADR-087 Engineering Protocol
-  # 4 — whether the runner writes a file at all, and what identity it posts under — by measurement
-  # instead of by prediction. Drop the flag in the pull request after this one.
-  docs-review:
-    continue-on-error: true
-    uses: ./.github/workflows/docs-review.yml
-    secrets:
-      claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
-      exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
+  # It goes in the pull request after this one, and that run is where ADR-087 Engineering Protocol 4
+  # gets its answers: whether the runner writes `verdict.json` at all, and what identity it posts
+  # under. Until it does, `verdict-authors` stays empty and the fenced fallback stays off.
   docs:
     uses: ./.github/workflows/docs-lint.yml
     with:
