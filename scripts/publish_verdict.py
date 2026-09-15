@@ -61,6 +61,18 @@ FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.S)
 # the stricter decides `hard-block`, and nothing else on a pull request records who blocked it.
 MARKER_RE = re.compile(r"<!-- exeris-bot: l2-verdict agent=([^\s]+) decision=([A-Z]+) -->")
 
+# Anything a model wrote is something the bot signs, because the bot copies a finding's words into
+# its own comment. A finding whose text carried a marker forged the arbiter's channel — the one
+# §B.11's "the stricter decides" stands on — from inside the review being judged, and the author
+# check could not see it because the author really was the bot.
+# Escaped rather than stripped. Cutting `<!--` out once is defeated by `<<!--!--`, whose remainder
+# is `<!--` again; escaping the angle brackets leaves no way to spell a delimiter at all. Markdown
+# renders the entities as the characters, so a reader still sees what the finding said.
+def plain(value) -> str:
+    """Model-authored text, unable to carry markup into a comment the bot signs."""
+    return (str(value if value is not None else "")
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
 
 def marker(agent: str, decision: str) -> str:
     return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
@@ -77,9 +89,11 @@ def standing_verdicts(comments_json: str, exclude_agent: str, bot_login: str) ->
     for c in comments(comments_json):
         if c.get("author") != bot_login:
             continue
-        for agent, decision in MARKER_RE.findall(c["body"]):
-            if agent != exclude_agent:
-                out[agent] = decision
+        # Position 0 only. `compose_comment` always opens with the marker, so a marker anywhere else
+        # in a comment the bot signed came from text the bot was handed, not from a decision it made.
+        m = MARKER_RE.match(c["body"])
+        if m and m.group(1) != exclude_agent:
+            out[m.group(1)] = m.group(2)
     return out
 
 
@@ -311,16 +325,16 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
            f"## L2 review — `{agent}` — **{decision}**", ""]
     label = verdict.get("decision_label")
     if label:
-        out += [str(label), ""]
+        out += [plain(label), ""]
     findings = verdict.get("findings") or []
     if findings:
         out += ["| Tag | Where | Finding | Fix |", "|:--|:--|:--|:--|"]
         for f in findings:
-            tag = f.get("tag") or ""
-            where = f.get("location") or ""
+            tag = plain(f.get("tag"))
+            where = plain(f.get("location"))
             blocking = " **(blocking)**" if f.get("blocking") else ""
-            out.append(f"| {tag}{blocking} | `{where}` | {f.get('what','')} — {f.get('why','')} "
-                       f"| {f.get('fix','')} |")
+            out.append(f"| {tag}{blocking} | `{where}` | {plain(f.get('what'))} — "
+                       f"{plain(f.get('why'))} | {plain(f.get('fix'))} |")
         out.append("")
     else:
         out += ["No findings.", ""]
@@ -328,8 +342,8 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     if checks:
         out += ["### Gates the review read", ""]
         for c in checks:
-            out.append(f"- `{c.get('check')}`: **{c.get('result')}**"
-                       + (f" — {c['detail']}" if c.get("detail") else ""))
+            out.append(f"- `{plain(c.get('check'))}`: **{plain(c.get('result'))}**"
+                       + (f" — {plain(c['detail'])}" if c.get("detail") else ""))
         out.append("")
     # §B.9: never swallowed, and said in the place a reader looks rather than only in the exit code.
     if unrun:
@@ -387,7 +401,10 @@ def cmd_plan(args) -> int:
         # A refused verdict still gets a marker, so the comment is edited in place on the next push
         # instead of a fresh refusal joining the last one. Its decision reads INVALID: it is not a
         # decision the arbiter may act on, and nothing in the label map names that word.
-        refused_agent = str(verdict.get("agent", "unknown"))
+        # The role comes from the caller, not from a verdict that just failed validation: the field
+        # was never checked against anything, and it is about to key a marker.
+        refused_agent = args.expect_agent or "unknown"
+        plan["agent"] = refused_agent
         plan["comment"] = (marker(refused_agent, "INVALID")
                            + "\n## L2 review verdict refused\n\nA verdict was produced and it does not "
                            "conform to `.agents/schemas/verdict.schema.json`:\n\n"
