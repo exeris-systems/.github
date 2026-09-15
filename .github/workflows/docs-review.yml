@@ -44,6 +44,17 @@ on:
           (ADR-087 §B.12): a human sets it in the caller, the publish step records what ran and
           selects nothing. One value is supported today; the input exists so that adding a second
           is a caller edit rather than a workflow rewrite.
+      publish:
+        type: boolean
+        default: false
+        description: >-
+          Whether the verdict is published and gated. OFF by default, and deliberately: until a real
+          run has shown whether the runner writes `verdict.json` and what identity it posts under
+          (ADR-087 Engineering Protocol 4), the publish job has one possible source of a verdict and
+          nobody knows whether it produces one. Switching it on for every caller at merge would put
+          an unexplained red or green on pull requests in repositories that did not ask for it.
+          `exeris-systems/.github` turns it on for itself first; a caller turns it on when the
+          answers exist.
       mandatory-gates:
         type: string
         default: ""
@@ -157,10 +168,13 @@ jobs:
 
   publish:
     needs: produce
+    # `inputs.publish` is the staging of ADR-087 Engineering Protocol 1, not a feature flag: items
+    # 2-3 land before the Apps and before the experiment, and a caller adopts the gate when there is
+    # something known to adopt.
     # `always()` is what makes the gate fail-closed: a produce job that crashed, timed out or was
     # cancelled must still reach a publish job that finds no verdict and goes red. Without it the
     # required check would be skipped, and a skipped required check is green.
-    if: ${{ always() }}
+    if: ${{ always() && inputs.publish }}
     # The publishing half is its own reusable workflow because §B.11 requires more than one producer
     # to reach it: a repository's own `claude-code-review.yml` calls it with the same inputs and its
     # own `schema`, and both reviews then publish under one identity and one label map.
@@ -171,10 +185,26 @@ jobs:
       expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
+      publish:
+        type: boolean
+        default: false
+        description: >-
+          Whether the verdict is published and gated. OFF by default, and deliberately: until a real
+          run has shown whether the runner writes `verdict.json` and what identity it posts under
+          (ADR-087 Engineering Protocol 4), the publish job has one possible source of a verdict and
+          nobody knows whether it produces one. Switching it on for every caller at merge would put
+          an unexplained red or green on pull requests in repositories that did not ask for it.
+          `exeris-systems/.github` turns it on for itself first; a caller turns it on when the
+          answers exist.
       mandatory-gates: ${{ inputs.mandatory-gates }}
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
-      skip-reason: "the pull request is a draft or a dependency bump, which this review does not read"
+      # Three conditions skip the producing job and the reason named two of them, so a fork was
+      # recorded as a draft. The plan is supposed to say which skip it was.
+      skip-reason: >-
+        ${{ github.event.pull_request.head.repo.fork
+            && 'the pull request comes from a fork, which receives no secrets, so the runner has no credential to review with'
+            || 'the pull request is a draft or a dependency bump, which this review does not read' }}
     # Named rather than inherited: `exeris-kernel` and `exeris-sdk` both refused `secrets: inherit`
     # under SonarCloud S7631, and the caller example follows what they do rather than what would be
     # shorter. An absent secret arrives as an empty string and the publish half says so.

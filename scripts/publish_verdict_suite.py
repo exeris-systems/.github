@@ -514,6 +514,15 @@ def main() -> int:
         assert p["agent"] == "exeris-org-docs-reviewer", p
         assert "agent=exeris-org-docs-reviewer decision=INVALID" in p["comment"], p["comment"][:120]
 
+    @case("the footer names the harness and its version, or says which one is missing")
+    def _(tmp):
+        full = run(root, tmp, verdict_doc=verdict(),
+                   execution_log={"model": "claude-opus-5",
+                                  "harness": {"client": "claude-code-action", "version": "1.4.2"}})
+        assert "harness: `claude-code-action` `1.4.2`" in full["comment"], full["comment"][-400:]
+        bare = run(root, tmp, verdict_doc=verdict(), execution_log={"model": "claude-opus-5"})
+        assert "harness: the execution log names no client" in bare["comment"], bare["comment"][-400:]
+
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):
         # Two copies of one rule, and the header of `docs-review.yml` claims "there is exactly one

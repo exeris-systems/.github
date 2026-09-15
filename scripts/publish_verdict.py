@@ -306,11 +306,20 @@ def provenance(args) -> list[str]:
                 doc = json.load(fh)
         except (json.JSONDecodeError, OSError):
             doc = None
-        model = None
+        model = harness = version = None
         if isinstance(doc, dict):
             model = doc.get("model") or doc.get("model_id") or (doc.get("usage") or {}).get("model")
-        lines.append(f"model: `{model}`" if model else
+            h = doc.get("harness") if isinstance(doc.get("harness"), dict) else {}
+            harness = h.get("client") or doc.get("client")
+            version = h.get("version") or doc.get("version")
+        lines.append(f"model: `{plain(model)}`" if model else
                      "model: the execution log carries no model id")
+        # §A.3 names provider, model id, harness AND version, and "provenance survives a swap" is
+        # the reason: a footer that cannot say which client ran, at what version, cannot tell one
+        # runner from another after the swap it exists to survive. Absent is said, never implied.
+        lines.append(f"harness: `{plain(harness)}` `{plain(version)}`" if harness and version else
+                     f"harness: the execution log names "
+                     f"{'no version' if harness else 'no client'}")
     else:
         lines.append("model: the runner exposed no execution log (ADR-087 Engineering Protocol 4)")
     return lines

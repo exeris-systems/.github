@@ -123,6 +123,7 @@ jobs:
         id: contract
         run: echo "sha=$(git -C .guardrails rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Check the reviewed repository's agent tree out
+        id: caller
         uses: actions/checkout@v4
         with: { path: caller, sparse-checkout: .agents, sparse-checkout-cone-mode: false }
         continue-on-error: true
@@ -187,14 +188,28 @@ jobs:
       # tell from BLOCKED, and §B.8 does not list it. It lands in the comment beside the review.
       - name: The reviewed repository's bundle pin against this one's
         id: pin
+        env:
+          CALLER_CHECKOUT: ${{ steps.caller.outcome }}
         run: |
           set -euo pipefail
           problem=""
-          if [ -f caller/.agents/manifest.yaml ]; then
+          # A checkout that failed and a repository that carries no `.agents/` tree look identical
+          # from the file system, and they are opposite facts: the second means there is nothing to
+          # compare, the first means the comparison did not happen. Reading them as one silently
+          # skipped §B.6a and published green — in a workflow whose whole argument is that a skipped
+          # check is a green one.
+          if [ "$CALLER_CHECKOUT" != "success" ]; then
+            problem="the reviewed repository's agent tree could not be checked out (${CALLER_CHECKOUT}), so its bundle pin was never compared with this repository's"
+          elif [ -f caller/.agents/manifest.yaml ]; then
             if ! out=$(python .guardrails/scripts/caller_bundle_check.py \
                          --root .guardrails --caller caller/.agents/manifest.yaml 2>&1); then
-              problem=$(printf '%s' "$out" | grep -oE 'pins exeris-agents.*' | head -1)
-              [ -n "$problem" ] || problem="caller_bundle_check.py reported a mismatch"
+              # `sed -n` exits 0 with no match; `grep` exits 1, and under `pipefail` that killed this
+              # step before the line below could run — the fallback was unreachable code. The phrase
+              # it matched was wrong as well: three of the four things this script reports (invalid
+              # YAML, no pin, an unparseable version) never contain it.
+              problem=$(printf '%s' "$out" | sed -n 's/^::error[^:]*:://p' | head -1)
+              [ -n "$problem" ] || problem=$(printf '%s' "$out" | tail -1)
+              [ -n "$problem" ] || problem="caller_bundle_check.py refused the caller's pin"
             fi
           fi
           { echo "problem<<EOF"; echo "$problem"; echo "EOF"; } >> "$GITHUB_OUTPUT"
