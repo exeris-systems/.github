@@ -66,21 +66,18 @@ def marker(agent: str, decision: str) -> str:
     return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
 
 
-def standing_verdicts(comments_json: str, exclude_agent: str) -> dict[str, str]:
+def standing_verdicts(comments_json: str, exclude_agent: str, bot_login: str) -> dict[str, str]:
     """What every OTHER routine's published comment currently says, by role.
 
-    Read from the markers the bot itself wrote, not from the verdicts: a verdict produced by another
-    workflow in another job is not in this job's checkout, and its published comment is.
+    Read from the markers the bot itself wrote — and only those. The marker is plain text in a public
+    comment, so anyone can type one; a forged `decision=BLOCKED` would pin a label nothing removes,
+    and a forged `PASS` is worse. Author first, pattern second.
     """
-    try:
-        payload = json.loads(comments_json)
-    except json.JSONDecodeError:
-        return {}
     out: dict[str, str] = {}
-    for item in payload if isinstance(payload, list) else [payload]:
-        if not isinstance(item, dict) or not isinstance(item.get("body"), str):
+    for c in comments(comments_json):
+        if c.get("author") != bot_login:
             continue
-        for agent, decision in MARKER_RE.findall(item["body"]):
+        for agent, decision in MARKER_RE.findall(c["body"]):
             if agent != exclude_agent:
                 out[agent] = decision
     return out
@@ -96,24 +93,37 @@ def emit(text: str) -> None:
         print(text)
 
 
-def fenced_verdicts(comments_json: str) -> list[dict]:
-    """Every fenced `json` block in a comment dump that looks like a verdict, oldest comment first.
-
-    A review is prose with a block at the end of it, and prose can contain other blocks — a schema
-    fragment a finding quotes, say. Requiring `agent` and `decision` is what separates the verdict
-    from an illustration, and it is the same pair the schema requires.
-    """
+def comments(comments_json: str) -> list[dict]:
+    """The comment dump, as entries carrying who wrote them."""
     try:
         payload = json.loads(comments_json)
     except json.JSONDecodeError:
         return []
-    bodies = []
-    for item in payload if isinstance(payload, list) else [payload]:
-        if isinstance(item, dict) and isinstance(item.get("body"), str):
-            bodies.append(item["body"])
+    return [c for c in (payload if isinstance(payload, list) else [payload])
+            if isinstance(c, dict) and isinstance(c.get("body"), str)]
+
+
+def fenced_verdicts(comments_json: str, trusted: set[str]) -> list[dict]:
+    """Fenced `json` verdicts from comments a machine wrote, oldest first.
+
+    ADR-087 §B.10's fallback is "the fenced block from the review THE RUNNER POSTED", and the author
+    is the whole of that sentence. A pull request is a surface anyone with an account can write to:
+    without this filter a comment saying `{"decision": "PASS"}` turns the required check green, which
+    is the gate refusing nothing at all. The schema constrains the shape and can say nothing about
+    who wrote it.
+
+    Trust is narrow on purpose. A comment must be authored by a Bot — a human account never posts a
+    verdict, not even a maintainer's — and where `--verdict-authors` names logins, by one of those.
+    A review is prose with a block at the end of it, and prose can contain other blocks; requiring
+    `agent` and `decision` separates the verdict from an illustration.
+    """
     found = []
-    for body in bodies:
-        for block in FENCE.findall(body):
+    for c in comments(comments_json):
+        if c.get("author_type") != "Bot":
+            continue
+        if trusted and c.get("author") not in trusted:
+            continue
+        for block in FENCE.findall(c["body"]):
             try:
                 doc = json.loads(block)
             except json.JSONDecodeError:
@@ -143,8 +153,9 @@ def load_verdict(args, validates) -> tuple[dict | None, str, str]:
             return None, "file", f"`{args.verdict}` is not a JSON object"
         return doc, "file", ""
     if args.comments and os.path.exists(args.comments):
+        trusted = {s for s in (args.verdict_authors or "").split(",") if s}
         with open(args.comments, encoding="utf-8") as fh:
-            candidates = fenced_verdicts(fh.read())
+            candidates = fenced_verdicts(fh.read(), trusted)
         for doc in reversed(candidates):
             if not validates(doc):
                 continue
@@ -152,8 +163,8 @@ def load_verdict(args, validates) -> tuple[dict | None, str, str]:
         if candidates:
             # Report against the newest, which is the one a reader will look at.
             return candidates[-1], "fenced block", ""
-        return None, "none", ("no `verdict.json` and no fenced `json` verdict in any comment on this "
-                              "pull request")
+        return None, "none", ("no `verdict.json`, and no comment written by a machine on this pull "
+                              "request carries a fenced `json` verdict")
     return None, "none", "no `verdict.json` was produced and no comments were read"
 
 
@@ -301,16 +312,31 @@ def cmd_plan(args) -> int:
     plan: dict = {"labels_add": [], "labels_remove": [], "comment": "", "conclusion": "red",
                   "reason": "", "verdict_source": "none", "standing": {}, "agent": ""}
 
+    # §B.8's one green without a verdict, and the only one. It is decided here rather than in the
+    # workflow's shell because it is the rule most likely to be got wrong and it was: an early crash
+    # leaves `produce-relevant` EMPTY, and "not true" read as "filtered out" turned every crash into
+    # a green skip with a log line claiming a filter had run. Absence of a signal is not a `false`.
     if args.produce_outcome == "skipped":
         plan.update(conclusion="green", verdict_source="none",
-                    reason=args.skip_reason or SKIP_DEFAULT)
+                    reason=args.skip_reason or "the producing job did not run")
+        return finish(plan, args)
+    if args.produce_outcome == "success" and args.produce_relevant == "false":
+        plan.update(conclusion="green", verdict_source="none", reason=SKIP_DEFAULT)
         return finish(plan, args)
 
     verdict, source, why = load_verdict(args, lambda d: not schema_errors(d, args.schema))
     plan["verdict_source"] = source
     if verdict is None:
-        plan["reason"] = (f"no verdict to publish: {why}. The produce job reported "
+        plan["reason"] = (f"no verdict to publish: {why}. The producing job reported "
                           f"`{args.produce_outcome or 'unknown'}`.")
+        # The absent verdict is the case §B.9's reasoning matters most for, and it was the one case
+        # that posted nothing: a required check went red with the explanation only in a job log.
+        plan["comment"] = (marker(args.runner or "unknown", "NONE")
+                           + "\n## L2 review — no verdict\n\n"
+                           + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
+                           + f"{why}.\n\nThe required check is red because nothing was reviewed, "
+                             "not because a review found something. Re-run the job, or look at its "
+                             "log to see why it produced nothing.\n")
         return finish(plan, args)
 
     plan["agent"] = str(verdict.get("agent", ""))
@@ -335,10 +361,14 @@ def cmd_plan(args) -> int:
     standing = {}
     if args.comments and os.path.exists(args.comments):
         with open(args.comments, encoding="utf-8") as fh:
-            standing = standing_verdicts(fh.read(), str(verdict.get("agent", "")))
+            standing = standing_verdicts(fh.read(), str(verdict.get("agent", "")),
+                                         args.bot_login)
     add, remove = plan_labels(verdict, mapping, current, standing)
     plan["standing"] = standing
-    mandatory = [s for s in (args.mandatory or MANDATORY_DEFAULT).split(",") if s]
+    # Extends the routine's list, never replaces it. A caller naming its own gate meant to add
+    # one; silently dropping the three the routine makes mandatory is the opposite of what a
+    # fail-closed gate should do with an ambiguous input.
+    mandatory = sorted({s for s in (MANDATORY_DEFAULT + "," + (args.mandatory or "")).split(",") if s})
     unrun = unrun_mandatory(verdict, mandatory)
 
     plan["labels_add"] = add
@@ -359,6 +389,8 @@ def cmd_plan(args) -> int:
 def finish(plan: dict, args) -> int:
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(plan, fh, indent=2)
+    print(f"publish_verdict: source={plan['verdict_source']} conclusion={plan['conclusion']} "
+          f"add={plan['labels_add']} remove={plan['labels_remove']} — {plan['reason']}")
     emit(f"## publish_verdict\n\n"
          f"- source: **{plan['verdict_source']}**\n"
          f"- conclusion: **{plan['conclusion']}** — {plan['reason']}\n"
@@ -368,8 +400,13 @@ def finish(plan: dict, args) -> int:
 
 
 def cmd_gate(args) -> int:
-    with open(args.plan, encoding="utf-8") as fh:
-        plan = json.load(fh)
+    try:
+        with open(args.plan, encoding="utf-8") as fh:
+            plan = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"::error::publish_verdict: no plan to gate on ({type(exc).__name__}). The planning "
+              f"step did not finish, so nothing about this review is known — red.")
+        return 1
     green = plan.get("conclusion") == "green"
     marker = "::notice::" if green else "::error::"
     print(f"{marker}publish_verdict: {plan.get('conclusion')} — {plan.get('reason')}")
@@ -394,6 +431,11 @@ def main() -> int:
     p.add_argument("--routine-sha", default="")
     p.add_argument("--execution-log", default="")
     p.add_argument("--current-labels", default="")
+    p.add_argument("--produce-relevant", default="true")
+    p.add_argument("--verdict-authors", default="",
+                   help="logins whose comments may carry a verdict; any Bot when empty")
+    p.add_argument("--bot-login", default="exeris-bot[bot]",
+                   help="the only author whose published markers the arbiter reads")
     p.set_defaults(func=cmd_plan)
 
     g = sub.add_parser("gate")
