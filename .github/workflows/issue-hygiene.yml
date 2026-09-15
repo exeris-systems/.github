@@ -22,7 +22,7 @@ jobs:
   issue-hygiene:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@v11
         with:
           only-issue-labels: ""
           any-of-issue-labels: "needs-reproducer,needs-evidence"

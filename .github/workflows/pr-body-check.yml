@@ -10,13 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, path: .guardrails }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Did the PR touch docs/adr/**?
         id: adr
-        uses: tj-actions/changed-files@v45
+        uses: tj-actions/changed-files@v47
         with:
           # Two layouts: repos with code keep ADRs under <repo>/docs/adr/, and exeris-docs, having
           # none, keeps them at the root (ADR-085 §A.1). The first pattern alone never matched the

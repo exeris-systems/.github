@@ -30,16 +30,16 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: "${{ inputs.package-dir }}" } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # `diff` needs the merge base; `package` never looks at history.
           fetch-depth: ${{ inputs.lint-scope == 'diff' && 0 || 1 }}
       # Beside the package, not at the repository root: the fragment is imported by a relative path
       # from `eslint.config.*`, and a package that does not sit at the root would otherwise have to
       # write a different path in CI than it writes locally.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, path: "${{ inputs.package-dir }}/.guardrails" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "${{ inputs.node-version }}"
           cache: npm
