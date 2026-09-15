@@ -39,12 +39,28 @@ jobs:
     uses: exeris-systems/.github/.github/workflows/commit-lint.yml@main
   pr-body:
     uses: exeris-systems/.github/.github/workflows/pr-body-check.yml@main
-  # The L2 review of ADR-085 §J.33. Without this job the routine runs only in Cowork sessions and
-  # never on a pull request. `secrets: inherit` passes CLAUDE_CODE_OAUTH_TOKEN through; the job
-  # skips itself when no Markdown or Java changed.
+  # The L2 review of ADR-085 §J.33, published under the organisation's identity by ADR-087 §B.
+  # Without this job the routine runs only in Cowork sessions and never on a pull request.
+  #
+  # Two jobs come with it: `produce` runs the model, `publish` posts the review, applies the labels
+  # of labels-from-verdict.json and IS THE REQUIRED CHECK — red when the verdict is absent, invalid,
+  # BLOCKED, or rests on a mandatory gate that did not run. Make `docs-review / publish` a required
+  # check in the branch protection rule; the produce job is not one, because a review that crashed
+  # has to reach the step that notices.
+  #
+  # `secrets: inherit` passes CLAUDE_CODE_OAUTH_TOKEN and the two EXERIS_BOT_* organisation secrets
+  # through. The permission block above does not grow for this: every write goes through the App's
+  # installation token, so neither job's own GITHUB_TOKEN holds one (ADR-087 §B.5).
   docs-review:
     uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
     secrets: inherit
+    # with:
+    #   # Which runner produces the verdict. One value is supported today; it is recorded, never
+    #   # selected — ADR-087 §B.12.
+    #   runner: claude-code-action
+    #   # L1 gates whose `not-run` makes the required check red, beyond the routine's own three
+    #   # (docs-lint, commit-lint, pr-body-check). Name a repo's own mandatory gates here.
+    #   mandatory-gates: "docs-lint,commit-lint,pr-body-check,javadoc-gate"
   # javadoc:                    # JVM repos with a gated module only
   #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
   #   with:

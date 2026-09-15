@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-10
+last-verified: 2026-09-15
 ---
 
 # exeris-systems/.github: the shared enforcement for the documentation standards
@@ -61,6 +61,8 @@ defect in the gate. Both are worth fixing; suppressing the check is neither. `co
 | `docs-guardrails-review.md`, `pr-review.patch.md` | The `[L2]` review routine and its router patch |
 | `.agents/` | The pinned, digest-verified copy of `exeris-agents` and the verdict schema composed over it |
 | `labels-from-verdict.json` | Which verdict field applies which label from `labels.yml` |
+| `scripts/publish_verdict.py` | The publish step of ADR-087 §B: it plans, and never writes |
+| `scripts/publish_verdict_suite.py` | One case per red path §B.8 names — the publish step's own gate |
 
 ## When to stop and ask
 
