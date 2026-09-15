@@ -1,0 +1,18 @@
+{
+  "$comment": "Verdict-to-label map for the L2 review publication step (ADR-087 §B.7). It sits beside labels.yml because it is the same kind of thing: taxonomy data a script applies, not a rule a workflow restates. Every key below is a value of `decision` at the root of a verdict or of `tag` on one of its findings, as .agents/schemas/verdict.schema.json bounds them, and every label is defined in labels.yml — all of them are files in this repository, so .github/workflows/guardrails.yml asserts it. A label this file does not name is never added and never removed: a repository's own `area:` labels, and anything a human put on the pull request, survive a publication run untouched.",
+  "decision": {
+    "BLOCKED": "hard-block"
+  },
+  "tag": {
+    "$comment": "Keyed off a FINDING's tag, not a verdict-wide one: the publication step reads every finding, so a review reporting a `[CROSS-REPO]` and a `[DOC DEBT]` applies both labels from one verdict. `PHASE` -> `phase-gated` is the fifth mapping and is deferred with its tag: the label exists in labels.yml, the tag is outside the schema's enum until `pr-review.md` is in git, and a mapping off a value a verdict cannot carry is a label nothing ever applies.",
+    "CROSS-REPO": "cross-repo",
+    "DOC DEBT": "doc-debt",
+    "TCK DEBT": "tck-debt"
+  },
+  "remove-on": {
+    "$comment": "A PASS after a BLOCKED on the same pull request takes the block off. The labels show the review's current answer, not the worst one it ever gave.",
+    "PASS": [
+      "hard-block"
+    ]
+  }
+}

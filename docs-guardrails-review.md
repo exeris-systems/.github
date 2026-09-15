@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-05
+last-verified: 2026-09-10
 ---
 
 # Docs & Hygiene Review — Exeris Systems (L2 step, ADR-085 §J.33)
@@ -75,7 +75,17 @@ DOCS & HYGIENE — <repo> — <PR title>
 [STYLE]      …
 
 CI already reported: <one line per L1 gate result — do not restate>
-SUMMARY: <verdict — PASS | PASS with DOC DEBT | BLOCK>
+SUMMARY: <verdict — PASS | CONDITIONAL | BLOCKED>
 ```
 
 `[DOC DEBT]` is a sibling of `[TCK DEBT]`: it never blocks a dev PR on its own, always names a concrete backlog item, and is counted and aged by the monthly `docs-guardrails-audit.md`. A PR is never approved with a `[HARD BLOCK]` finding.
+
+## Verdict
+
+The review also emits one JSON object valid against the composed verdict schema this repository ships, [`.agents/schemas/verdict.schema.json`](.agents/schemas/verdict.schema.json). `docs-review.yml` checks this repository out into `.guardrails/`, so at run time inside a caller that file is `.guardrails/.agents/schemas/verdict.schema.json`; only when `.github` reviews itself is it the path the link names. Read it from the checkout of *this* repository either way — a caller's own `.agents/schemas/verdict.schema.json` is that repository's schema, narrowed to that repository's roles, and is a different contract that does not know this routine's role or its `tag`.
+
+Write the object to `verdict.json` in the root of the checkout under review, and repeat it as a fenced `json` block at the end of the posted review. The file is what the publication step reads and the block is the stated fallback where the runner cannot write files (ADR-087 §B.10). Until that step exists — the produce and publish split of ADR-087 Engineering Protocol 2 — no step consumes either, and the block is what a human reads.
+
+`SUMMARY` above is `decision`, and the three words are the same three words, so nothing maps. `PASS with DOC DEBT` was never a third state: a `[DOC DEBT]` finding does not block on its own, so that run is `PASS` with a finding tagged `DOC DEBT`, and the label the publication step applies carries the rest. `CONDITIONAL` is for findings that have to be addressed before the merge and do not, on their own, refuse it.
+
+The bracketed severity in front of each line above is that finding's `tag`, one per finding: a run reporting a `[HARD BLOCK]` and a `[DOC DEBT]` writes two findings carrying two tags, not one severity for the verdict. `agent` is `exeris-org-docs-reviewer`, the role that runs this routine rather than this file. `checks_run` names every L1 gate this routine was to read, the ones that had not reported included. A finding in the prose and not in `findings`, or the reverse, is two reviews rather than one.
