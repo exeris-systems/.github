@@ -42,9 +42,27 @@ jobs:
   # producing half as proposed and the deciding half as released. That limit is named in
   # `publish-verdict.yml`'s own header and is not closed here.
   docs-review:
+    # WAITS ON THE L1 GATES, and that is an ordering decision rather than a dependency. A review is
+    # the layer that judges what the gates cannot, so running it on a pull request whose commit
+    # message does not lint spends eight minutes of a model to say something a script already said.
+    # And a gate that has finished is a gate whose result can be HANDED to the reviewer, which is the
+    # whole of `l1-results`: the first real run reported all three as `not-run` because its harness
+    # denies network calls, and the required check was red for a reason that had nothing to do with
+    # the pull request.
+    #
+    # `always()` so the publish half still reports when a gate failed: the produce job skips itself
+    # on the results below, and the publish half turns that into a red naming the failing gates.
+    # Without it the whole review would vanish from the checks, and a check that does not report is
+    # the failure mode this file exists to prevent.
+    needs: [docs, commits, pr-body]
+    if: ${{ always() }}
     uses: ./.github/workflows/docs-review.yml
     with:
       publish: true
+      l1-results: >-
+        {"docs-lint": "${{ needs.docs.result }}",
+         "commit-lint": "${{ needs.commits.result }}",
+         "pr-body-check": "${{ needs.pr-body.result }}"}
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}

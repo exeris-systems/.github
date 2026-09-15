@@ -55,6 +55,16 @@ on:
           an unexplained red or green on pull requests in repositories that did not ask for it.
           `exeris-systems/.github` turns it on for itself first; a caller turns it on when the
           answers exist.
+      l1-results:
+        type: string
+        default: ""
+        description: >-
+          What the caller's L1 gates concluded, as `{"docs-lint": "success", …}`, built from the
+          caller's own `needs`. Two uses, and both were learned the hard way. The model is HANDED
+          them instead of being asked to read a step summary it cannot reach — the first real run
+          reported all three mandatory gates as `not-run` for that reason and the required check was
+          red for ever. And the publish step decides on them rather than on the review's reading of
+          them, because the workflow that ran a gate knows what it concluded.
       mandatory-gates:
         type: string
         default: ""
@@ -105,12 +115,21 @@ jobs:
     # replaced a comment carrying real findings with "no verdict". The publication destroyed itself
     # in three seconds. A label change alters no diff, so there is nothing to review either way.
     #
+    # THE L1 CONDITION IS THE ORDERING, not a dependency. A review judges what the gates cannot, so
+    # running it on a pull request whose commit message does not lint spends eight minutes of a model
+    # to repeat what a script already said. The caller waits on its gates and hands their results in;
+    # this skips the model when any of them is not green, and the publish half reports that skip as
+    # RED with the failing gates named — a job result cannot tell "the gates failed" from "there was
+    # nothing to review", and those mean opposite things.
+    #
     # The actor condition is the same guard from the other side: any bot-initiated run would be
     # refused by the runner and end as a failed produce, which is a red required check for a reason
     # that has nothing to do with the pull request.
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.fork == false &&
+      !contains(inputs.l1-results, '"failure"') &&
+      !contains(inputs.l1-results, '"cancelled"') &&
       github.event.action != 'labeled' &&
       github.event.action != 'unlabeled' &&
       !endsWith(github.actor, '[bot]') &&
@@ -144,11 +163,16 @@ jobs:
             `.guardrails/docs-guardrails-review.md`. Read that file first and follow it exactly:
             its steps, its severity tags, and its output format.
 
-            Two things it assumes and you must honour. Read the CI step summaries for docs-lint,
-            commit-lint, pr-body-check and javadoc-gate first, and do not restate what a gate already
-            reported — review the substance those gates cannot judge. And report nothing you have not
-            checked against the repository: the routine asks whether documentation matches the code,
-            which means opening the code.
+            The L1 gates have already run and their results are below. Do not try to fetch them —
+            this runner's harness denies network calls, and a review that reports them as `not-run`
+            because it could not read a page is a review defeated by its own sandbox. Put these
+            verbatim into `checks_run`, and do not restate in prose what a gate already reported:
+            review the substance those gates cannot judge.
+
+            L1 GATE RESULTS: ${{ inputs.l1-results }}
+
+            Report nothing you have not checked against the repository: the routine asks whether
+            documentation matches the code, which means opening the code.
 
             Close as the routine's `## Verdict` section requires: write the verdict object to
             `verdict.json` in the root of this checkout, and repeat the same object as a fenced
@@ -205,7 +229,18 @@ jobs:
       expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
+      l1-results:
+        type: string
+        default: ""
+        description: >-
+          What the caller's L1 gates concluded, as `{"docs-lint": "success", …}`, built from the
+          caller's own `needs`. Two uses, and both were learned the hard way. The model is HANDED
+          them instead of being asked to read a step summary it cannot reach — the first real run
+          reported all three mandatory gates as `not-run` for that reason and the required check was
+          red for ever. And the publish step decides on them rather than on the review's reading of
+          them, because the workflow that ran a gate knows what it concluded.
       mandatory-gates: ${{ inputs.mandatory-gates }}
+      l1-results: ${{ inputs.l1-results }}
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
       # Three conditions skip the producing job and the reason named two of them, so a fork was

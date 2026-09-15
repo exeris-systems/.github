@@ -84,6 +84,13 @@ on:
         description: >-
           The publishing identity, in one place: the arbiter reads markers from it and the apply step
           edits its comments. Two copies that disagree read one set of comments and write another.
+      l1-results:
+        type: string
+        default: ""
+        description: >-
+          What CI concluded about the L1 gates, as `{"docs-lint": "success", …}`. The workflow that
+          ran a gate is the authority on whether it ran; a reviewer reading a step summary is not,
+          and on a runner whose harness denies network calls it cannot read one at all.
       verdict-authors:
         type: string
         default: ""
@@ -252,6 +259,7 @@ jobs:
           MANDATORY: ${{ inputs.mandatory-gates }}
           SKIP_REASON: ${{ inputs.skip-reason }}
           VERDICT_AUTHORS: ${{ inputs.verdict-authors }}
+          L1_RESULTS: ${{ inputs.l1-results }}
           EXPECT_AGENT: ${{ inputs.expect-agent }}
           BOT_LOGIN: ${{ inputs.bot-login }}
           PIN_PROBLEM: ${{ steps.pin.outputs.problem }}
@@ -285,6 +293,7 @@ jobs:
             --routine "$ROUTINE" \
             --routine-sha "$ROUTINE_SHA" \
             --verdict-authors "$VERDICT_AUTHORS" \
+            --l1-results "$L1_RESULTS" \
             --expect-agent "$EXPECT_AGENT" \
             --bot-login "$BOT_LOGIN" \
             --current-labels-file current-labels.txt
