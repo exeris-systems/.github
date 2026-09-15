@@ -112,16 +112,22 @@ def fenced_verdicts(comments_json: str, trusted: set[str]) -> list[dict]:
     is the gate refusing nothing at all. The schema constrains the shape and can say nothing about
     who wrote it.
 
-    Trust is narrow on purpose. A comment must be authored by a Bot — a human account never posts a
-    verdict, not even a maintainer's — and where `--verdict-authors` names logins, by one of those.
+    Trust is a named list and an empty list trusts nobody. "Any Bot account" was the first reading
+    and it is not a filter: `claude-code-action` posts as `github-actions[bot]`, an identity every
+    workflow in the repository can write under, INCLUDING a workflow the reviewed pull request adds.
+    That would let a pull request green its own required check, against the one invariant this whole
+    path rests on — that a pull request is judged by a contract it does not control. Until a real run
+    has shown what login the runner posts under, the fallback is off, and the file is the contract
+    §B.10 always said it was.
+
     A review is prose with a block at the end of it, and prose can contain other blocks; requiring
     `agent` and `decision` separates the verdict from an illustration.
     """
     found = []
-    for c in comments(comments_json):
-        if c.get("author_type") != "Bot":
-            continue
-        if trusted and c.get("author") not in trusted:
+    if not trusted:
+        return found
+    for c in sorted(comments(comments_json), key=lambda c: str(c.get("created_at", ""))):
+        if c.get("author_type") != "Bot" or c.get("author") not in trusted:
             continue
         for block in FENCE.findall(c["body"]):
             try:
@@ -154,6 +160,9 @@ def load_verdict(args, validates) -> tuple[dict | None, str, str]:
         return doc, "file", ""
     if args.comments and os.path.exists(args.comments):
         trusted = {s for s in (args.verdict_authors or "").split(",") if s}
+        if not trusted:
+            return None, "none", ("no `verdict.json`, and the fenced fallback is off because no "
+                                  "trusted author is named (`verdict-authors`)")
         with open(args.comments, encoding="utf-8") as fh:
             candidates = fenced_verdicts(fh.read(), trusted)
         for doc in reversed(candidates):
@@ -163,13 +172,25 @@ def load_verdict(args, validates) -> tuple[dict | None, str, str]:
         if candidates:
             # Report against the newest, which is the one a reader will look at.
             return candidates[-1], "fenced block", ""
-        return None, "none", ("no `verdict.json`, and no comment written by a machine on this pull "
-                              "request carries a fenced `json` verdict")
+        return None, "none", ("no `verdict.json`, and no comment by a trusted author carries a "
+                              "fenced `json` verdict")
     return None, "none", "no `verdict.json` was produced and no comments were read"
 
 
+_VALIDATOR_CACHE: dict[str, object] = {}
+
+
 def schema_errors(verdict: dict, schema_path: str) -> list[str]:
-    """Validation messages, most specific first, or an empty list."""
+    """Validation messages, most specific first, or an empty list.
+
+    The validator is built once per schema. It is called once per fenced candidate and again for the
+    verdict itself, and rebuilding it walked the whole `.agents/` tree each time — O(candidates ×
+    files) of I/O inside the step that gates a merge.
+    """
+    cached = _VALIDATOR_CACHE.get(schema_path)
+    if cached is not None:
+        return _errors(cached, verdict)
+
     from jsonschema import Draft202012Validator
     from referencing import Registry, Resource
     from referencing.jsonschema import DRAFT202012
@@ -193,6 +214,11 @@ def schema_errors(verdict: dict, schema_path: str) -> list[str]:
     # retrieved from. Validating through a `$ref` to that URI is what gives them a base.
     uri = "file://" + os.path.abspath(schema_path).replace(os.sep, "/")
     validator = Draft202012Validator({"$ref": uri}, registry=registry)
+    _VALIDATOR_CACHE[schema_path] = validator
+    return _errors(validator, verdict)
+
+
+def _errors(validator, verdict: dict) -> list[str]:
     out = []
     for err in sorted(validator.iter_errors(verdict), key=lambda e: list(e.absolute_path)):
         where = "/".join(str(p) for p in err.absolute_path) or "<root>"
@@ -232,12 +258,19 @@ def plan_labels(verdict: dict, mapping: dict, current: set[str],
 
 
 def unrun_mandatory(verdict: dict, mandatory: list[str]) -> list[str]:
-    """Mandatory gates the verdict reports as `not-run` — §B.8's second red."""
-    names = []
+    """Mandatory gates this verdict does not stand on — §B.8's second red.
+
+    Two ways to not stand on one, and only the first was implemented. A gate reported `not-run` says
+    so. A gate the verdict never mentions says the same thing more quietly: the schema requires
+    `checks_run` to be non-empty and requires no particular entry in it, so a review naming one gate
+    it liked satisfied every check here and went green claiming every mandatory gate had reported.
+    Absence and `not-run` are the same epistemic state and get the same answer.
+    """
+    reported = {}
     for entry in verdict.get("checks_run") or []:
-        if entry.get("result") == "not-run" and entry.get("check") in mandatory:
-            names.append(entry["check"])
-    return sorted(set(names))
+        if entry.get("check") in mandatory:
+            reported[entry["check"]] = entry.get("result")
+    return sorted(g for g in mandatory if reported.get(g, "not-run") == "not-run")
 
 
 def provenance(args) -> list[str]:
@@ -269,7 +302,8 @@ def provenance(args) -> list[str]:
     return lines
 
 
-def compose_comment(verdict: dict, args, unrun: list[str], source: str) -> str:
+def compose_comment(verdict: dict, args, unrun: list[str], source: str,
+                    pin_problem: str = "") -> str:
     """The published review: the verdict's own words, every `not-run` verbatim, then provenance."""
     decision = verdict.get("decision", "?")
     agent = str(verdict.get("agent", "unknown"))
@@ -302,6 +336,11 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str) -> str:
         out += [f"> A mandatory gate did not run: {', '.join('`' + n + '`' for n in unrun)}. "
                 f"This verdict rests on a check nobody performed, so the required check is red "
                 f"whatever the decision says.", ""]
+    if pin_problem:
+        out += [f"> The pull request's own bundle pin does not match the one this verdict was "
+                f"validated against: {pin_problem} A verdict written to one shape and checked "
+                f"against another is not a verdict about this pull request, so the required check "
+                f"is red whatever the decision says (ADR-087 §B.6a).", ""]
     out += ["---", "", f"Published by `exeris-bot`; it is the publisher, never the reviewer. "
                        f"Verdict read from the {source}.", ""]
     out += [f"- {line}" for line in provenance(args)]
@@ -327,11 +366,12 @@ def cmd_plan(args) -> int:
     verdict, source, why = load_verdict(args, lambda d: not schema_errors(d, args.schema))
     plan["verdict_source"] = source
     if verdict is None:
+        plan["agent"] = args.expect_agent or "unknown"
         plan["reason"] = (f"no verdict to publish: {why}. The producing job reported "
                           f"`{args.produce_outcome or 'unknown'}`.")
         # The absent verdict is the case §B.9's reasoning matters most for, and it was the one case
         # that posted nothing: a required check went red with the explanation only in a job log.
-        plan["comment"] = (marker(args.runner or "unknown", "NONE")
+        plan["comment"] = (marker(plan["agent"], "NONE")
                            + "\n## L2 review — no verdict\n\n"
                            + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
                            + f"{why}.\n\nThe required check is red because nothing was reviewed, "
@@ -357,7 +397,13 @@ def cmd_plan(args) -> int:
 
     with open(args.labels_map, encoding="utf-8") as fh:
         mapping = json.load(fh)
-    current = {s for s in (args.current_labels or "").split(",") if s}
+    # From a file, one per line. A label name may contain a comma — `area: kernel, core` is a legal
+    # label — and the comma-joined string turned one into two labels that exist nowhere. The apply
+    # step already takes this care with spaces; this is the same care one step earlier.
+    current: set[str] = set()
+    if args.current_labels_file and os.path.exists(args.current_labels_file):
+        with open(args.current_labels_file, encoding="utf-8") as fh:
+            current = {line.rstrip("\n") for line in fh if line.strip()}
     standing = {}
     if args.comments and os.path.exists(args.comments):
         with open(args.comments, encoding="utf-8") as fh:
@@ -373,9 +419,14 @@ def cmd_plan(args) -> int:
 
     plan["labels_add"] = add
     plan["labels_remove"] = remove
-    plan["comment"] = compose_comment(verdict, args, unrun, source)
+    plan["comment"] = compose_comment(verdict, args, unrun, source, args.pin_problem)
     decision = verdict.get("decision")
-    if decision == "BLOCKED":
+    if args.pin_problem:
+        # §B.6a's mismatch is about this verdict — it was written against one base and validated
+        # against another — so it belongs in this verdict's comment and this verdict's conclusion.
+        # A second red step beside the gate would be a red the author cannot tell from BLOCKED.
+        plan["reason"] = f"the reviewed repository's bundle pin is not this one's: {args.pin_problem}"
+    elif decision == "BLOCKED":
         plan["reason"] = "the verdict is BLOCKED"
     elif unrun:
         plan["reason"] = ("the verdict rests on a mandatory gate that did not run: "
@@ -430,10 +481,15 @@ def main() -> int:
     p.add_argument("--routine", default="")
     p.add_argument("--routine-sha", default="")
     p.add_argument("--execution-log", default="")
-    p.add_argument("--current-labels", default="")
+    p.add_argument("--current-labels-file", default="",
+                   help="labels already on the pull request, one per line")
     p.add_argument("--produce-relevant", default="true")
     p.add_argument("--verdict-authors", default="",
                    help="logins whose comments may carry a verdict; any Bot when empty")
+    p.add_argument("--expect-agent", default="",
+                   help="the role this publication is for; it keys the marker when no verdict exists")
+    p.add_argument("--pin-problem", default="",
+                   help="what caller_bundle_check.py said, when it said anything (ADR-087 §B.6a)")
     p.add_argument("--bot-login", default="exeris-bot[bot]",
                    help="the only author whose published markers the arbiter reads")
     p.set_defaults(func=cmd_plan)
