@@ -40,11 +40,11 @@ jobs:
   docs-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - name: Fetch shared guardrails (exeris-systems/.github)
         if: ${{ github.repository != 'exeris-systems/.github' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         # `job_workflow_sha` is the commit THIS reusable workflow file came from, so the scripts it
         # calls come from the same commit it does. Without it a caller's `uses: …@<sha>` pinned the
         # workflow and not the scripts, and the two could disagree — which is not theoretical:
@@ -87,7 +87,7 @@ jobs:
           printf 'ref=%s\nsource=input\n' "$FALLBACK" | tee -a "$GITHUB_OUTPUT"
       - name: Fetch the agent bundle (exeris-systems/exeris-agents)
         if: ${{ inputs.agent-check }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: exeris-systems/exeris-agents
           ref: "${{ steps.bundle-ref.outputs.ref }}"
@@ -104,8 +104,8 @@ jobs:
         # repository's nested-file limit. It crossed 4 KB in exeris-agents on 2026-09-09 and turned
         # this job red for a file this repository does not own.
         run: rsync -a --exclude .git --exclude .guardrails --exclude .agents-tools ./ .guardrails/
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
       # jsonschema is the agent-file check's rule-13 half. Without it that check DOWNGRADES to a
       # JSON-syntax test and says so in a warning — a schema with a broken `$ref` or an
       # unsatisfiable `allOf` then passes, which is the shape of green this repository exists to
@@ -160,7 +160,7 @@ jobs:
       - name: markdownlint (warning)
         if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         continue-on-error: true
-        uses: DavidAnson/markdownlint-cli2-action@v19
+        uses: DavidAnson/markdownlint-cli2-action@v24
         with:
           config: .guardrails/.markdownlint.yaml
           globs: ${{ steps.globs.outputs.md }}
@@ -175,7 +175,7 @@ jobs:
         # it has a result in the diff, under every reporter and regardless of fail_on_error. There is
         # no flag that makes this step advisory, so the step is marked advisory.
         continue-on-error: true
-        uses: errata-ai/vale-action@v2
+        uses: errata-ai/vale-action@v3
         with:
           version: 3.20.0
           # Vale walks this root and applies the per-glob sections in .vale.ini, which mirror the
@@ -191,7 +191,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Vale (errors — retracted figures fail the build)
         if: ${{ !cancelled() && steps.globs.outcome == 'success' && inputs.vale }}
-        uses: errata-ai/vale-action@v2
+        uses: errata-ai/vale-action@v3
         with:
           version: 3.20.0
           files: ${{ inputs.docs-root }}

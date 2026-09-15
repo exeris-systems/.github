@@ -20,10 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the taxonomy (exeris-systems/.github)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, path: .guardrails }
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
       - run: pip install pyyaml
       - name: Create missing labels, correct the ones we own
         env:

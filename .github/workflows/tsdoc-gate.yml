@@ -17,7 +17,7 @@ on:
     inputs:
       package-dir:   { type: string,  default: ".",  description: "Directory holding package.json" }
       lint-scope:    { type: string,  default: "package", description: "'package' = every source file; 'diff' = only the files this pull request changed (tsdoc-conventions.md rule 11, for Angular apps and internal tooling)" }
-      node-version:  { type: string,  default: "22" }
+      node-version:  { type: string,  default: "24" }
       typedoc:       { type: boolean, default: false, description: "Run typedoc validation (typedoc.json in package-dir)" }
       api-report:    { type: string,  default: "",   description: "'api-extractor' | 'mcp-tool-surface' | ''" }
       mcp-server:    { type: string,  default: "dist/server.js" }
@@ -30,16 +30,16 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: "${{ inputs.package-dir }}" } }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # `diff` needs the merge base; `package` never looks at history.
           fetch-depth: ${{ inputs.lint-scope == 'diff' && 0 || 1 }}
       # Beside the package, not at the repository root: the fragment is imported by a relative path
       # from `eslint.config.*`, and a package that does not sit at the root would otherwise have to
       # write a different path in CI than it writes locally.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, path: "${{ inputs.package-dir }}/.guardrails" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "${{ inputs.node-version }}"
           cache: npm

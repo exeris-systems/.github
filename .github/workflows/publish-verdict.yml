@@ -130,22 +130,22 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Fetch the contract (exeris-systems/.github, default branch)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, path: .guardrails }
       - name: The SHA the contract was read at
         id: contract
         run: echo "sha=$(git -C .guardrails rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Check the reviewed repository's agent tree out
         id: caller
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with: { path: caller, sparse-checkout: .agents, sparse-checkout-cone-mode: false }
         continue-on-error: true
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
       - run: pip install --quiet pyyaml jsonschema referencing
       - name: The verdict the producing job left, if it left one
         if: ${{ inputs.verdict-artifact != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.verdict-artifact }}
           path: produced
@@ -155,7 +155,7 @@ jobs:
       # has already published.
       - name: The runner's execution log, if it exposed one
         if: ${{ inputs.execution-artifact != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.execution-artifact }}
           path: execution
@@ -189,10 +189,16 @@ jobs:
       - name: Mint the exeris-bot token
         id: bot
         if: ${{ steps.identity.outputs.have == 'true' }}
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.exeris_bot_app_id }}
           private-key: ${{ secrets.exeris_bot_private_key }}
+          # The token is minted with the two scopes this step uses and nothing else. `exeris-bot`
+          # holds only these today (ADR-087 §A.1), so this changes nothing now — it is here so that
+          # widening the App later does not silently widen the step that runs beside model output.
+          # v1 could not express it; v3 can, which is half the reason for the bump.
+          permission-issues: write
+          permission-pull-requests: write
       # Every caller-controlled value reaches the shell through `env`, never through `${{ }}` inside
       # the script: a label named `"; rm -rf /` is a thing a person can create, and a run block that
       # interpolates one is how it executes.
