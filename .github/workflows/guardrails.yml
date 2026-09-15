@@ -63,3 +63,14 @@ jobs:
       - name: The label map names only tags and labels that exist
         if: ${{ !cancelled() }}
         run: python scripts/label_map_check.py
+      # The publish step of ADR-087 §B.5-B.10 decides whether a pull request in any repository may
+      # merge, and nothing in this repository's CI can run it end to end: it needs a model, a token
+      # and a pull request in a caller. What it can run is every rule the step applies, which is
+      # where the rules live — `publish_verdict.py` plans and never writes, so the plan is checkable
+      # with no network. Each red path §B.8 names has a case, and each case was confirmed to fail
+      # when the rule it covers is removed from the planner.
+      - name: The publish step's rules, one case per red path
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet jsonschema referencing
+          python scripts/publish_verdict_suite.py --root .
