@@ -30,7 +30,7 @@ does not run is a gate nobody has tested.
 
 ## Layout
 
-```
+```text
 .github/
   workflows/
     docs-lint.yml        reusable — frontmatter/filenames/registry/private-link checks (error), markdownlint + Vale (warning; retracted figures error), lychee
@@ -171,7 +171,7 @@ Vale and lychee still do not read it: both carry their own path lists, and a gen
 
 ## Running locally
 
-```
+```bash
 pip install pyyaml && pip install vale        # or brew install vale
 python scripts/frontmatter_check.py --root docs --mode strict
 python scripts/registry_check.py --index ../exeris-docs/adr-index.md
@@ -189,7 +189,7 @@ vale --config vale/.vale.ini docs/
 
 Vale inline toggles are the sanctioned way to quote a retracted figure on purpose (a withdrawal note, a retraction register):
 
-```
+```markdown
 <!-- vale Exeris.RetractedFigures = NO -->
 … earlier revisions asserted ">160 GB on a 4 GB payload"; no campaign supports it …
 <!-- vale Exeris.RetractedFigures = YES -->
