@@ -706,9 +706,26 @@ def cmd_plan(args) -> int:
     if args.skip_kind in SAYS_NOTHING_ABOUT_THE_DIFF:
         return standing_gate(plan, args)
     if args.produce_outcome == "skipped" and failed_l1:
+        # `cancelled` is not `failure`. A gate cancelled by `concurrency` reported nothing, and
+        # telling the author it "did not pass" sends them to fix three green checks — measured on
+        # exeris-docs#124, where a label applied seconds after opening killed the run and the comment
+        # blamed the gates it had killed.
+        cancelled = sorted(g for g in failed_l1 if ci.get(g) == "cancelled")
+        broke = [g for g in failed_l1 if g not in cancelled]
+        said = []
+        if broke:
+            said.append("did not pass: " + ", ".join(broke))
+        if cancelled:
+            said.append("were cancelled before they finished: " + ", ".join(cancelled))
         plan.update(conclusion="red", verdict_source="none",
-                    reason=("the review did not run because the gates it waits on did not pass: "
-                            + ", ".join(failed_l1)))
+                    reason="the review did not run because the gates it waits on " + "; ".join(said))
+        # The readiness trigger fires once and was being consumed even when it produced nothing: a
+        # run that WAS ready but lost its gates left the pull request with no review and no way back
+        # to one except a human re-applying the label. The request is re-applied here, so the next
+        # run with green gates performs the review the lost one was asked for. It is removed again
+        # only when a review has actually run, which is the branch that removes it.
+        if args.skip_kind == "ready" and args.review_label:
+            plan["labels_add"] = [args.review_label]
         plan["agent"] = args.expect_agent or "unknown"
         plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
         plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
@@ -899,6 +916,9 @@ def main() -> int:
                    help="why the producing job did not run. `fork` and `draft-or-bot` are about the pull request and are a green on their own; `not-ready`, `bot-event` and anything this file does not recognise hand the colour to the standing verdict")
     p.add_argument("--head-sha", default="",
                    help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
+    p.add_argument("--review-label", default="needs-l2-review",
+                   help="the label that asks for a review. Re-applied when a ready run lost its "
+                        "gates, so the request survives the run that carried it")
     p.add_argument("--override-label", default="l2-human-reviewed",
                    help="the label a person applies to record that they reviewed a change this "
                         "routine cannot read — one that touches a workflow file")

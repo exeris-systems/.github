@@ -170,12 +170,11 @@ jobs:
       github.event.pull_request.head.repo.fork == false &&
       !contains(inputs.l1-results, '"failure"') &&
       !contains(inputs.l1-results, '"cancelled"') &&
-      !endsWith(github.actor, '[bot]') &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      !endsWith(github.event.pull_request.user.login, '[bot]') &&
       (github.event.action == 'opened' ||
        github.event.action == 'reopened' ||
        github.event.action == 'ready_for_review' ||
-       (github.event.action == 'labeled' && github.event.label.name == inputs.review-label))
+       contains(github.event.pull_request.labels.*.name, inputs.review-label))
     outputs:
       relevant: ${{ steps.relevant.outputs.any_changed }}
       verdict-written: ${{ steps.wrote.outputs.yes }}
@@ -356,11 +355,11 @@ jobs:
         ${{ github.event.pull_request.head.repo.fork && 'fork'
             || (github.event.pull_request.draft
                 || endsWith(github.event.pull_request.user.login, '[bot]')) && 'draft-or-bot'
-            || endsWith(github.actor, '[bot]') && 'bot-event'
             || (github.event.action == 'opened' || github.event.action == 'reopened'
                 || github.event.action == 'ready_for_review'
-                || (github.event.action == 'labeled'
-                    && github.event.label.name == inputs.review-label)) && 'ready'
+                || contains(github.event.pull_request.labels.*.name,
+                            inputs.review-label)) && 'ready'
+            || endsWith(github.actor, '[bot]') && 'bot-event'
             || 'not-ready' }}
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
