@@ -10,6 +10,7 @@ This is the same shape as every other check in this bundle: a file here asserts 
 another file here, so the assertion is testable. Run by the organisation repository's own guardrails.
 """
 import os
+import subprocess
 import sys
 
 import yaml
@@ -134,6 +135,27 @@ def nested_path(uses: str) -> str | None:
     return None
 
 
+def as_released(uses: str, path: str) -> dict | None:
+    """The called workflow as the REF names it, not as this branch has it.
+
+    A `uses:` pinned to `@main` is resolved by GitHub against `main`, while every check here reads
+    the file beside it. So a pull request that adds an input to the called workflow and passes it in
+    the same change looks consistent locally and is rejected by GitHub — the input does not exist on
+    `main` yet. That is not a mistake anyone can see by reading one tree, and it cost a startup
+    failure with zero jobs before it was understood.
+    """
+    ref = uses.split("@")[-1] if "@" in uses else ""
+    if not ref or ref == "./" or uses.startswith("./"):
+        return None
+    out = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, text=True)
+    if out.returncode != 0:
+        return None
+    try:
+        return yaml.safe_load(out.stdout) or {}
+    except yaml.YAMLError:
+        return None
+
+
 def audit(path: str, wf: dict, bad: list) -> None:
     """One file's calls: the target exists, its `with:` is well formed, and the block is the union.
 
@@ -152,6 +174,17 @@ def audit(path: str, wf: dict, bad: list) -> None:
             bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
             continue
         check_with(path, job, spec, called, bad)
+        released = as_released((spec or {}).get("uses", ""), called)
+        if released is not None:
+            trigger = released.get("on") or released.get(True) or {}
+            # NOT `declared` — that is the module-level function used two lines down, and
+            # shadowing it here made this check crash on its own first run.
+            released_inputs = set(((trigger.get("workflow_call") or {}).get("inputs")) or {})
+            ref = (spec or {}).get("uses", "").split("@")[-1]
+            for key in sorted(set((spec.get("with") or {})) - released_inputs):
+                bad.append(f"{path}: job `{job}` passes `with: {key}`, which `{called}` does not "
+                           f"declare AT `{ref}` — GitHub resolves this call against `{ref}`, not "
+                           f"against this branch, so the input must land there first")
         for key, value in declared(called).items():
             if RANK.get(value, 0) > RANK.get(need.get(key, "none"), 0):
                 need[key] = value
