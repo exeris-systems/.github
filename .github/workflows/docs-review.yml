@@ -89,7 +89,7 @@ on:
         default: ""
         description: >-
           A shell command run in the checked-out repository BEFORE the model, e.g.
-          `.agents/scripts/drift-sweep.sh && .agents/scripts/taxonomy-check.sh`. Its combined
+          `.agents/scripts/drift-sweep.sh; .agents/scripts/taxonomy-check.sh`. Its combined
           output and exit code are handed to the reviewer as a file. CI runs it rather than the
           model because this runner's harness denies Bash — a prompt that asks the model to execute
           a repository's scripts gets a review that reports them as `not-run`, which is what the

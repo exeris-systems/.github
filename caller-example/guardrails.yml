@@ -111,7 +111,9 @@ jobs:
     #   # file. CI runs them because the runner's harness denies Bash — asking the model to execute
     #   # them gets a review that reports its own checks as `not-run`. A non-zero exit never fails
     #   # the job: a candidate locator that found candidates is evidence, not a verdict.
-    #   repo-checks: .agents/scripts/drift-sweep.sh && .agents/scripts/taxonomy-check.sh
+    #   # Separated by `;`, NOT by `&&`: a candidate locator exits non-zero when it FINDS
+    #   # something, so `&&` would stop the list at the first script that had anything to say.
+    #   repo-checks: .agents/scripts/drift-sweep.sh; .agents/scripts/taxonomy-check.sh
   # javadoc:                    # JVM repos with a gated module only
   #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
   #   with:
