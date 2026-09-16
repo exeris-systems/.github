@@ -572,6 +572,21 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     return "\n".join(out)
 
 
+def blocking_findings(verdict: dict) -> list[str]:
+    """The findings this verdict itself marked blocking, by where they are.
+
+    The gate read `decision` and nothing else, so a review that set `CONDITIONAL` and marked a
+    finding `blocking: true` produced a green check next to a comment rendering that finding as
+    **(blocking)**. Measured on exeris-docs#121: the routine said the forbidden-import list
+    contradicted the guard it cites, marked it blocking, and the pull request came out mergeable.
+    A decision and a finding disagreeing is not a tie to resolve in the decision's favour — the
+    stricter of the two is the one a reader acts on, which is §B.11's rule applied within one
+    verdict rather than between two.
+    """
+    return [str(f.get("location") or f.get("why") or "?")
+            for f in (verdict.get("findings") or []) if f.get("blocking") is True]
+
+
 def human_review(args) -> tuple[str, str] | None:
     """A standing human review that still covers this head, or None.
 
@@ -803,6 +818,13 @@ def cmd_plan(args) -> int:
                           f"change, and {by_hand[0]} reviewed it by hand against {by_hand[1][:7]}")
     elif decision == "BLOCKED":
         plan["reason"] = "the verdict is BLOCKED"
+    elif blocking_findings(verdict):
+        at = blocking_findings(verdict)
+        plan["reason"] = (f"the verdict is {decision}, but it marks "
+                          + (f"{len(at)} findings as blocking" if len(at) > 1
+                             else "a finding as blocking")
+                          + f" ({', '.join(at[:3])}) — a finding that blocks blocks, whatever the "
+                          f"decision beside it says")
     elif unrun:
         plan["reason"] = ("the verdict rests on a mandatory gate that did not run: "
                           + ", ".join(unrun))
