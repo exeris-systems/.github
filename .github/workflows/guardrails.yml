@@ -10,7 +10,18 @@ on:
     types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled]
 concurrency:
   group: guardrails-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # Not `true`. The publishing half removes the review label when it is done, and that removal is an
+  # `unlabeled` event that starts a second run — which under a plain `cancel-in-progress: true`
+  # cancels the run still finishing the publication that triggered it. Measured on #35: the
+  # publishing run's last job completed at 07:06:26 and the bot's run was created at 07:06:26. Every
+  # job came out `success` and the run-level conclusion was still `cancelled`; a review ten seconds
+  # slower would have had its `publish / verdict` job cancelled instead, and a cancelled required
+  # check blocks the pull request for a reason no human can act on.
+  #
+  # So a bot-triggered run never cancels — it queues and runs after, which also serialises the two
+  # runs that would otherwise write the same comment. Human pushes still collapse, which is what the
+  # setting is for: the cost of a burst is paid by the person making it.
+  cancel-in-progress: ${{ !endsWith(github.actor, '[bot]') }}
 permissions:
   contents: read
   pull-requests: read
