@@ -46,6 +46,10 @@ import sys
 # review and green is honest. A label change, a push with no review asked for, or a kind this file
 # does not recognise say nothing, so the standing verdict decides instead — the difference between
 # them was the fail-open measured on #40.
+# The decisions that may green a check on their own. `BLOCKED` is refused by name for the message it
+# earns; everything else — `NONE`, and anything a later schema adds — is refused by absence, because
+# the alternative is a list that has to be kept in step with an enum it does not own.
+PASSING_DECISIONS = frozenset({"PASS", "CONDITIONAL"})
 ABOUT_THE_PULL_REQUEST = frozenset({"fork", "draft-or-bot"})
 SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event"})
 
@@ -608,6 +612,18 @@ def standing_gate(plan: dict, args) -> int:
                           f"describe it")
     elif standing[0] == "BLOCKED":
         plan["reason"] = "the standing verdict is BLOCKED and nothing has been reviewed since"
+    elif standing[0] not in PASSING_DECISIONS:
+        # `NONE` above all. The publication writes that marker precisely when NO review ran — gates
+        # red, verdict unreadable, runner produced nothing — and a later run was reading it back as
+        # a verdict that passed, because this branch only ever refused `BLOCKED`. Measured on
+        # exeris-docs#123: one run published `decision=NONE` and was cancelled, the run that replaced
+        # it reported "the standing verdict is NONE and still covers ac4b63d" and went green on a
+        # pull request nothing had reviewed.
+        #
+        # Named forward rather than backward: a decision this file does not recognise is not a pass
+        # either. The enum can grow in the schema without this turning into a hole the day it does.
+        plan["reason"] = (f"the standing comment records `{standing[0]}`, which is not a verdict that "
+                          f"passes — it is what the publication writes when no review ran")
     else:
         plan.update(conclusion="green",
                     reason=f"the standing verdict is {standing[0]} and still covers {head}")
