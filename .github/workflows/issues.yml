@@ -11,6 +11,20 @@
 # which the pull-request gates deliberately do not have.
 name: issues
 on:
+  # The taxonomy syncs when it CHANGES, not only once a week. A label defined in `labels.yml` and
+  # not yet created is a label nothing can apply — and the review that tells a reader to apply
+  # `l2-human-reviewed` was written before this trigger existed, so its advice was not actionable
+  # for as long as nobody remembered to dispatch this file by hand. A definition that needs a human
+  # to remember it is a definition that drifts.
+  #
+  # Also on this file itself, so a repository adopting the caller gets its first sync from the same
+  # merge rather than from whoever notices. Other repositories read `labels.yml` from this one at
+  # `@main`, which a push here cannot reach; for them the weekly run below is what carries a change.
+  push:
+    branches: [main]
+    paths:
+      - labels.yml
+      - .github/workflows/issues.yml
   schedule:
     - cron: "17 4 * * 1"     # Monday, early. Label drift and stale evidence are not urgent.
   workflow_dispatch:
@@ -28,4 +42,8 @@ jobs:
     with:
       dry-run: ${{ inputs.dry-run == true }}
   hygiene:
+    # Not on a taxonomy push. This job closes issues that have gone quiet, and a label
+    # definition changing is no reason to age one out — the weekly run is when that
+    # judgement belongs.
+    if: ${{ github.event_name != 'push' }}
     uses: ./.github/workflows/issue-hygiene.yml
