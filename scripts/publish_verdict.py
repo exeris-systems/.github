@@ -93,6 +93,42 @@ def plain(value) -> str:
             .replace("|", "\\|"))
 
 
+def truthy(value: str) -> bool:
+    """A workflow-expression boolean as it arrives here: the string `true`, and nothing else.
+
+    Not `bool(value)`. Every one of these crosses a `with:` block as text, so the string `"false"`
+    is truthy to Python and the empty string an absent signal rather than a `false` — the mistake
+    that once turned a crashed producing job into a green path-filter skip.
+    """
+    return str(value).strip().lower() == "true"
+
+
+OVERRIDE_RE = re.compile(
+    r"<!-- exeris-bot: l2-override by=([^\s]+) sha=([0-9a-f]{7,40}) -->")
+
+
+def override_marker(by: str, sha: str) -> str:
+    """The machine-readable header of a human's review of a change the routine refuses to read."""
+    return f"<!-- exeris-bot: l2-override by={by} sha={sha} -->"
+
+
+def standing_override(comments_json: str, bot_login: str) -> tuple[str, str] | None:
+    """The last human review recorded on this pull request, as `(login, sha)`.
+
+    Read only from comments the BOT wrote, for the reason `standing_verdicts` gives: the marker is
+    plain text in a public comment, and this one greens a required check. A person types the label;
+    the bot is what turns the label into a record, and the record is what is trusted afterwards.
+    """
+    found = None
+    for c in comments(comments_json):
+        if c.get("author") != bot_login:
+            continue
+        m = OVERRIDE_RE.match(c["body"])
+        if m:
+            found = (m.group(1), m.group(2))
+    return found
+
+
 def marker(agent: str, decision: str, sha: str = "") -> str:
     """The comment's machine-readable header, carrying the commit the verdict covers.
 
@@ -519,6 +555,29 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     return "\n".join(out)
 
 
+def human_review(args) -> tuple[str, str] | None:
+    """A standing human review that still covers this head, or None.
+
+    Scoped to a pull request that changes `.github/workflows/`, which is the one case the routine
+    cannot read at all: `claude-code-action` refuses to start when a workflow file differs from the
+    default branch's copy, so its BLOCKED there is a refusal rather than a judgement. Anywhere else
+    the review decides and this is not a way around it — the label is taken off and ignored.
+
+    It ages exactly as a verdict does. The record carries the commit the person looked at, so the
+    next push leaves it behind and the check goes red again rather than trading on an old reading.
+    """
+    if not truthy(args.workflow_touching):
+        return None
+    if not (args.comments and os.path.exists(args.comments)):
+        return None
+    with open(args.comments, encoding="utf-8") as fh:
+        standing = standing_override(fh.read(), args.bot_login)
+    head = (args.head_sha or "")[:7]
+    if standing and head and standing[1][:7] == head:
+        return standing
+    return None
+
+
 def standing_gate(plan: dict, args) -> int:
     """No verdict came out of this run, so the STANDING one decides the colour.
 
@@ -535,7 +594,12 @@ def standing_gate(plan: dict, args) -> int:
         with open(args.comments, encoding="utf-8") as fh:
             standing = standing_for(fh.read(), plan["agent"], args.bot_login)
     head = (args.head_sha or "")[:7]
-    if standing is None:
+    by_hand = human_review(args)
+    if by_hand:
+        plan.update(conclusion="green",
+                    reason=(f"{by_hand[0]} reviewed this workflow change by hand, recorded against "
+                            f"{by_hand[1][:7]}"))
+    elif standing is None:
         plan["reason"] = ("no review has run on this pull request yet — apply the review label "
                           "when it is ready to look at")
     elif standing[1] and head and standing[1][:7] != head:
@@ -554,6 +618,37 @@ def cmd_plan(args) -> int:
     plan: dict = {"labels_add": [], "labels_remove": [], "comment": "", "conclusion": "red",
                   "reason": "", "verdict_source": "none", "standing": {}, "agent": "",
                   "marker_search": ""}
+
+    # A person closing the hole the routine names in its own Trigger section. `claude-code-action`
+    # refuses to start on a pull request that changes a workflow file, so the routine never reviews
+    # one, and in this repository that is nine of the last ten pull requests. Making the check
+    # required without this would mean an administrator's override on almost every merge, and an
+    # override used routinely has stopped being one.
+    #
+    # The bot records who looked and at which commit; the label is only the request, and it comes
+    # straight back off, exactly as `needs-l2-review` does. What the check reads afterwards is the
+    # record, not the label — a label anyone can re-apply after a push, while the record carries the
+    # commit it was made against and is left behind by the next one.
+    if args.override_by:
+        if truthy(args.workflow_touching):
+            head = (args.head_sha or "")[:7]
+            plan["marker_search"] = "<!-- exeris-bot: l2-override"
+            plan["comment"] = (override_marker(plain(args.override_by), args.head_sha or "")
+                               + "\n## L2 review — by hand\n\n"
+                               + f"`{plain(args.override_by)}` reviewed this change themselves and "
+                               + f"recorded it against `{head}`.\n\nThis routine cannot read a pull "
+                               + "request that changes a workflow file: the runner refuses to start "
+                               + "when one differs from the default branch's copy. The record covers "
+                               + f"`{head}` and nothing after it — a push leaves it behind and the "
+                               + "check goes red again.\n")
+            plan.update(conclusion="green",
+                        reason=(f"{args.override_by} reviewed this workflow change by hand and it "
+                                f"is recorded against {head}"))
+            return finish(plan, args)
+        # Off a pull request the routine CAN read, the label decides nothing. Falling through rather
+        # than going red on it: someone labelling the wrong pull request should not turn a passing
+        # review into a failure, and the review that did run is still the answer.
+        plan["reason"] = "the human-review label does not apply here; the review itself decides"
 
     # A producing job skipped because a gate it depends on failed is not a skip with nothing to
     # review — it is a review that never happened on a pull request that is already broken. Green
@@ -672,6 +767,11 @@ def cmd_plan(args) -> int:
         # against another — so it belongs in this verdict's comment and this verdict's conclusion.
         # A second red step beside the gate would be a red the author cannot tell from BLOCKED.
         plan["reason"] = f"the reviewed repository's bundle pin is not this one's: {args.pin_problem}"
+    elif decision == "BLOCKED" and human_review(args):
+        by_hand = human_review(args)
+        plan["conclusion"] = "green"
+        plan["reason"] = (f"the verdict is BLOCKED because this routine cannot read a workflow "
+                          f"change, and {by_hand[0]} reviewed it by hand against {by_hand[1][:7]}")
     elif decision == "BLOCKED":
         plan["reason"] = "the verdict is BLOCKED"
     elif unrun:
@@ -684,6 +784,12 @@ def cmd_plan(args) -> int:
 
 
 def finish(plan: dict, args) -> int:
+    # In `finish` rather than in the branch that records the override, because the verdict path
+    # assigns `labels_remove` wholesale from the label map and would drop it. The label is a request;
+    # once this run has read it, it has been answered whatever the answer was.
+    if getattr(args, "override_by", "") and getattr(args, "override_label", ""):
+        if args.override_label not in plan["labels_remove"]:
+            plan["labels_remove"] = plan["labels_remove"] + [args.override_label]
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(plan, fh, indent=2)
     print(f"publish_verdict: source={plan['verdict_source']} conclusion={plan['conclusion']} "
@@ -742,6 +848,14 @@ def main() -> int:
                    help="why the producing job did not run. `fork` and `draft-or-bot` are about the pull request and are a green on their own; `not-ready`, `bot-event` and anything this file does not recognise hand the colour to the standing verdict")
     p.add_argument("--head-sha", default="",
                    help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
+    p.add_argument("--override-label", default="l2-human-reviewed",
+                   help="the label a person applies to record that they reviewed a change this "
+                        "routine cannot read — one that touches a workflow file")
+    p.add_argument("--override-by", default="",
+                   help="the login that applied the override label IN THIS EVENT, empty otherwise")
+    p.add_argument("--workflow-touching", default="false",
+                   help="whether this pull request changes a file under .github/workflows/, which "
+                        "is the only place the override applies")
     p.add_argument("--bot-login", default="exeris-bot[bot]",
                    help="the only author whose published markers the arbiter reads")
     p.set_defaults(func=cmd_plan)

@@ -109,6 +109,14 @@ on:
         type: string
         default: "needs-l2-review"
         description: "The label a human applies to ask for a review; the publication removes it afterwards"
+      override-label:
+        type: string
+        default: "l2-human-reviewed"
+        description: >-
+          The label a person applies to record that THEY reviewed a change this routine cannot read
+          — one that touches a workflow file, where `claude-code-action` refuses to start and the
+          review's BLOCKED is a refusal rather than a judgement. It applies nowhere else: on a pull
+          request the routine can read, the label comes off and decides nothing.
       verdict-authors:
         type: string
         default: ""
@@ -267,6 +275,26 @@ jobs:
         env:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: printf '%s' "$LABELS" | jq -r '.[]' > current-labels.txt
+      # The scope question, asked of the API rather than of the producing job: that job is skipped on
+      # exactly the events where a human review matters, so its path filter cannot answer it. A
+      # failure here fails the step and the gate with it, which is the right way round — answering
+      # `false` because a query broke would hand the override to pull requests it does not cover.
+      - name: Does this pull request change a workflow file?
+        id: workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          # `grep -q` inside `if` rather than a bare `grep`: a non-match exits 1, and under `errexit`
+          # that ends the step instead of answering the question. This file has paid for that once.
+          if printf '%s\n' "$files" | grep -q '^\.github/workflows/'; then
+            echo "touching=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touching=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Plan the publication
         env:
           OUTCOME: ${{ inputs.produce-outcome }}
@@ -283,6 +311,19 @@ jobs:
           EXPECT_AGENT: ${{ inputs.expect-agent }}
           BOT_LOGIN: ${{ inputs.bot-login }}
           REVIEW_LABEL: ${{ inputs.review-label }}
+          OVERRIDE_LABEL: ${{ inputs.override-label }}
+          # Read from THIS event, here rather than through an input. This job runs inside the same
+          # workflow run as the trigger, so the event context is its own — and taking it from a
+          # `with:` key would have made the whole feature wait for a second pull request, because a
+          # caller pinned to `@main` may only pass inputs that already exist there.
+          #
+          # `github.actor` is who applied the label. It is checked against `[bot]` because a label a
+          # bot could apply would be a gate able to green itself.
+          OVERRIDE_BY: >-
+            ${{ (github.event.action == 'labeled'
+                 && github.event.label.name == inputs.override-label
+                 && !endsWith(github.actor, '[bot]')) && github.actor || '' }}
+          WORKFLOW_TOUCHING: ${{ steps.workflows.outputs.touching }}
           PIN_PROBLEM: ${{ steps.pin.outputs.problem }}
           ROUTINE_SHA: ${{ steps.contract.outputs.sha }}
         run: |
@@ -319,6 +360,9 @@ jobs:
             --head-sha "$HEAD_SHA" \
             --expect-agent "$EXPECT_AGENT" \
             --bot-login "$BOT_LOGIN" \
+            --override-label "$OVERRIDE_LABEL" \
+            --override-by "$OVERRIDE_BY" \
+            --workflow-touching "$WORKFLOW_TOUCHING" \
             --current-labels-file current-labels.txt
       # The only step that writes, and it writes as `exeris-bot` — the organisation's byline, never
       # a claim that the bot reviewed anything (§A.3).

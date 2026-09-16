@@ -89,6 +89,10 @@ def marker_line(decision: str, agent: str = "exeris-org-docs-reviewer", sha: str
     return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision}{at} -->"
 
 
+def override_line(by: str = "arkstack", sha: str = "") -> str:
+    return f"<!-- exeris-bot: l2-override by={by} sha={sha} -->"
+
+
 def by_person(body: str, cid: int = 3) -> dict:
     """Anyone with an account, which on a public pull request is anyone at all."""
     return {"id": cid, "source": "issue-comment", "author": "mallory",
@@ -98,7 +102,7 @@ def by_person(body: str, cid: int = 3) -> dict:
 def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="success",
         relevant="true", current="", mandatory="", execution_log=None,
         authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
-        l1="", skip_kind="", head_sha="") -> dict:
+        l1="", skip_kind="", head_sha="", override_by="", workflow_touching="") -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
     args = [sys.executable, PLANNER, "plan",
             "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
@@ -134,6 +138,10 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
         args += ["--skip-kind", skip_kind]
     if head_sha:
         args += ["--head-sha", head_sha]
+    if override_by:
+        args += ["--override-by", override_by]
+    if workflow_touching:
+        args += ["--workflow-touching", workflow_touching]
     labels = os.path.join(tmp, "labels.txt")
     with open(labels, "w", encoding="utf-8") as fh:
         fh.write("".join(f"{s}\n" for s in current.split("|") if s))
@@ -725,6 +733,76 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="some-kind-added-later")
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    # The hole the routine names in its own Trigger section: `claude-code-action` refuses to start
+    # on a pull request that changes a workflow file, so the routine never reviews one and its
+    # BLOCKED there is a refusal, not a judgement. Nine of the last ten pull requests in this
+    # repository were workflow changes, so a required check without a human path is a required
+    # administrator override.
+    @case("a person reviewing a workflow change by hand is recorded against the commit")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="e" * 40, override_by="arkstack", workflow_touching="true")
+        assert p["conclusion"] == "green", p
+        assert "arkstack" in p["reason"], p
+        assert p["comment"].startswith(f"<!-- exeris-bot: l2-override by=arkstack sha={'e' * 40} -->"), p
+        assert "l2-human-reviewed" in p["labels_remove"], p
+        assert gate(tmp, p) == 0
+
+    @case("the record, not the label, is what greens the runs that follow")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="e" * 40, workflow_touching="true",
+                comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert "arkstack" in p["reason"], p
+        assert gate(tmp, p) == 0
+
+    @case("a human review is left behind by the next push, exactly as a verdict is")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="f" * 40, workflow_touching="true",
+                comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    @case("a human review greens the BLOCKED the routine returns on a workflow change")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(decision="BLOCKED",
+                                    findings=[finding(tag="HARD BLOCK", blocking=True)]), head_sha="e" * 40, l1=GREEN_L1,
+                workflow_touching="true", comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert "arkstack" in p["reason"], p
+        assert gate(tmp, p) == 0
+
+    # Scope. Off a workflow change the routine CAN read the pull request, so the label is not a way
+    # around a review that ran and blocked it.
+    @case("a human review does not green a BLOCKED verdict on an ordinary pull request")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(decision="BLOCKED",
+                                    findings=[finding(tag="HARD BLOCK", blocking=True)]), head_sha="e" * 40, l1=GREEN_L1,
+                comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    @case("labelling an ordinary pull request takes the label off and changes no colour")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(decision="BLOCKED",
+                                    findings=[finding(tag="HARD BLOCK", blocking=True)]), head_sha="e" * 40, l1=GREEN_L1,
+                override_by="arkstack")
+        assert p["conclusion"] == "red", p
+        assert "l2-human-reviewed" in p["labels_remove"], p
+        assert gate(tmp, p) == 1
+
+    # The marker is plain text in a public comment and it greens a required check, so the author
+    # check comes first here as it does for a verdict.
+    @case("an override marker anyone could type is not a human review")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="e" * 40, workflow_touching="true",
+                comments=by_person(override_line("mallory", "e" * 40)))
         assert p["conclusion"] == "red", p
         assert gate(tmp, p) == 1
 
