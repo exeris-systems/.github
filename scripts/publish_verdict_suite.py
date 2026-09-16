@@ -315,6 +315,7 @@ def main() -> int:
                 "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
                 "--labels-map", os.path.join(root, "labels-from-verdict.json"),
                 "--out", os.path.join(tmp, "plan.json"), "--produce-outcome", "skipped",
+                "--skip-kind", "draft-or-bot",
                 "--skip-reason", "the pull request is a draft or a dependency bump"]
         # Same redirect every other case gets through `run`: without it this planner appends to the
         # real step summary and the suite's own report arrives with a stray plan on top of it.
@@ -677,9 +678,55 @@ def main() -> int:
 
     @case("a skip with every gate green is still the ordinary green skip")
     def _(tmp):
-        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1)
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="draft-or-bot")
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
+
+    # The fail-open measured on #40. The publication applied `hard-block` from a BLOCKED verdict,
+    # the label event started a run whose ACTOR was the bot, and that run reported green on a head
+    # carrying a BLOCKED verdict. Being the last run for the check name, its green was the one the
+    # pull request showed, and the pull request read as mergeable.
+    @case("a run the bot's own label change started cannot green a BLOCKED verdict")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-event", head_sha="a" * 40,
+                comments=by_bot(marker_line("BLOCKED", "exeris-org-docs-reviewer", "a" * 40)))
+        assert p["conclusion"] == "red", p
+        assert "BLOCKED" in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    @case("a bot-started run is green when the standing verdict passes and covers the head")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-event", head_sha="b" * 40,
+                comments=by_bot(marker_line("PASS", "exeris-org-docs-reviewer", "b" * 40)))
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
+    @case("a bot-started run is red when the standing verdict is older than the head")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-event", head_sha="c" * 40,
+                comments=by_bot(marker_line("PASS", "exeris-org-docs-reviewer", "d" * 40)))
+        assert p["conclusion"] == "red", p
+        assert "has moved since the review" in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    # Absence of a signal is not a green, which this file has had to learn twice: once for an empty
+    # `produce-relevant` read as "filtered out", and now for a skip whose kind nobody set.
+    @case("a skip whose kind is missing falls back to the verdict rather than to green")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="")
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    @case("a skip whose kind this file does not know falls back the same way")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="some-kind-added-later")
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
 
     @case("a non-blocking suggestion reaches the reader instead of being dropped")
     def _(tmp):

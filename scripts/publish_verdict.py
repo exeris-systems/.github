@@ -41,6 +41,14 @@ import sys
 # The gates the routine reads before it reviews, and the ones a verdict may not rest on as `not-run`.
 # `docs-guardrails-review.md` names them; this default mirrors that sentence and `--mandatory`
 # overrides it for a repository whose caller runs more.
+# Why a producing job did not run, split by whether the reason is a statement ABOUT THE PULL
+# REQUEST or merely about this event. A draft, a bot's own pull request and a fork have nothing to
+# review and green is honest. A label change, a push with no review asked for, or a kind this file
+# does not recognise say nothing, so the standing verdict decides instead — the difference between
+# them was the fail-open measured on #40.
+ABOUT_THE_PULL_REQUEST = frozenset({"fork", "draft-or-bot"})
+SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event"})
+
 MANDATORY_DEFAULT = "docs-lint,commit-lint,pr-body-check"
 
 # The one green that is not a verdict (§B.8). It is worded so the log says which skip it was:
@@ -511,6 +519,37 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     return "\n".join(out)
 
 
+def standing_gate(plan: dict, args) -> int:
+    """No verdict came out of this run, so the STANDING one decides the colour.
+
+    The reason a run produced nothing is not itself an answer about the pull request. Only two
+    reasons are: it is a draft or a bot's own pull request, and it is a fork this workflow cannot
+    review. Every other reason — no review was asked for, the event was a label change, a skip kind
+    nobody has seen before — leaves the question open, and the answer is the last verdict: it is
+    green only if one exists, still covers this head, and did not block.
+    """
+    plan["agent"] = args.expect_agent or "unknown"
+    plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
+    standing = None
+    if args.comments and os.path.exists(args.comments):
+        with open(args.comments, encoding="utf-8") as fh:
+            standing = standing_for(fh.read(), plan["agent"], args.bot_login)
+    head = (args.head_sha or "")[:7]
+    if standing is None:
+        plan["reason"] = ("no review has run on this pull request yet — apply the review label "
+                          "when it is ready to look at")
+    elif standing[1] and head and standing[1][:7] != head:
+        plan["reason"] = (f"the standing verdict covers {standing[1][:7]} and this pull request "
+                          f"is at {head} — it has moved since the review, so the review does not "
+                          f"describe it")
+    elif standing[0] == "BLOCKED":
+        plan["reason"] = "the standing verdict is BLOCKED and nothing has been reviewed since"
+    else:
+        plan.update(conclusion="green",
+                    reason=f"the standing verdict is {standing[0]} and still covers {head}")
+    return finish(plan, args)
+
+
 def cmd_plan(args) -> int:
     plan: dict = {"labels_add": [], "labels_remove": [], "comment": "", "conclusion": "red",
                   "reason": "", "verdict_source": "none", "standing": {}, "agent": "",
@@ -525,27 +564,8 @@ def cmd_plan(args) -> int:
     # whether the last one still describes this tree — ADR-087 §B.8's fourth red. A verdict is about
     # the commit it read; once the head moves past it, publishing its green would be publishing a
     # review of code that is gone.
-    if args.skip_kind == "not-ready":
-        plan["agent"] = args.expect_agent or "unknown"
-        plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
-        standing = None
-        if args.comments and os.path.exists(args.comments):
-            with open(args.comments, encoding="utf-8") as fh:
-                standing = standing_for(fh.read(), plan["agent"], args.bot_login)
-        head = (args.head_sha or "")[:7]
-        if standing is None:
-            plan["reason"] = ("no review has run on this pull request yet — apply the review label "
-                              "when it is ready to look at")
-        elif standing[1] and head and standing[1][:7] != head:
-            plan["reason"] = (f"the standing verdict covers {standing[1][:7]} and this pull request "
-                              f"is at {head} — it has moved since the review, so the review does not "
-                              f"describe it")
-        elif standing[0] == "BLOCKED":
-            plan["reason"] = "the standing verdict is BLOCKED and nothing has been reviewed since"
-        else:
-            plan.update(conclusion="green",
-                        reason=f"the standing verdict is {standing[0]} and still covers {head}")
-        return finish(plan, args)
+    if args.skip_kind in SAYS_NOTHING_ABOUT_THE_DIFF:
+        return standing_gate(plan, args)
     if args.produce_outcome == "skipped" and failed_l1:
         plan.update(conclusion="red", verdict_source="none",
                     reason=("the review did not run because the gates it waits on did not pass: "
@@ -561,6 +581,14 @@ def cmd_plan(args) -> int:
     # workflow's shell because it is the rule most likely to be got wrong and it was: an early crash
     # leaves `produce-relevant` EMPTY, and "not true" read as "filtered out" turned every crash into
     # a green skip with a log line claiming a filter had run. Absence of a signal is not a `false`.
+    # A skip whose kind is not one of the two above says nothing about whether this pull request has
+    # been reviewed, so it cannot be a green on its own — it falls back to the standing verdict, like
+    # `not-ready` does. Measured: on #40 the publication applied `hard-block` from a BLOCKED verdict,
+    # the label event started a run whose ACTOR was the bot, that run reported green, and because it
+    # was the last run for the check name the pull request read as CLEAN with a BLOCKED verdict
+    # standing on it. An unrecognised skip kind lands here too, and fails closed rather than open.
+    if args.produce_outcome == "skipped" and args.skip_kind not in ABOUT_THE_PULL_REQUEST:
+        return standing_gate(plan, args)
     if args.produce_outcome == "skipped":
         plan.update(conclusion="green", verdict_source="none",
                     reason=args.skip_reason or "the producing job did not run")
@@ -711,7 +739,7 @@ def main() -> int:
     p.add_argument("--pin-problem", default="",
                    help="what caller_bundle_check.py said, when it said anything (ADR-087 §B.6a)")
     p.add_argument("--skip-kind", default="",
-                   help="why the producing job did not run: not-ready | draft-or-bot | fork | path-filter")
+                   help="why the producing job did not run. `fork` and `draft-or-bot` are about the pull request and are a green on their own; `not-ready`, `bot-event` and anything this file does not recognise hand the colour to the standing verdict")
     p.add_argument("--head-sha", default="",
                    help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
     p.add_argument("--bot-login", default="exeris-bot[bot]",

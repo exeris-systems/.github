@@ -267,9 +267,19 @@ jobs:
       # sentinel rather than the empty string on purpose: GitHub treats `''` as FALSE, so
       # `(readiness) && ''` falls through to the next `||` and every ready run would report as
       # `not-ready`. Found by reading the expression back, before it ran.
+      #
+      # `draft-or-bot` asks about the PULL REQUEST — is it a draft, was it opened by a bot — and it
+      # used to ask `github.actor`, which is who triggered THIS EVENT. The two differ exactly when
+      # the publication applies a label: the bot's label change starts a run whose actor is the bot
+      # on a pull request a person opened, that run was classified `draft-or-bot`, and a
+      # `draft-or-bot` skip is a green. Measured on #40, where a BLOCKED verdict and a `hard-block`
+      # label sat on a pull request GitHub reported as CLEAN. The actor now yields `bot-event`,
+      # which decides nothing itself and hands the colour to the standing verdict.
       skip-kind: >-
         ${{ github.event.pull_request.head.repo.fork && 'fork'
-            || (github.event.pull_request.draft || endsWith(github.actor, '[bot]')) && 'draft-or-bot'
+            || (github.event.pull_request.draft
+                || endsWith(github.event.pull_request.user.login, '[bot]')) && 'draft-or-bot'
+            || endsWith(github.actor, '[bot]') && 'bot-event'
             || (github.event.action == 'opened' || github.event.action == 'reopened'
                 || github.event.action == 'ready_for_review'
                 || (github.event.action == 'labeled'
