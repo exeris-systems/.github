@@ -377,9 +377,17 @@ def plan_labels(verdict: dict, mapping: dict, current: set[str],
     """Labels to add and to remove, from the decision and from every finding's tag (§B.7).
 
     Keyed off a finding's tag rather than a verdict-wide severity, because one review reports a
-    `[CROSS-REPO]` and a `[DOC DEBT]` and both labels belong on the pull request. A label the map
-    does not name is never touched: a repository's own `area:` labels and anything a human applied
-    survive a publication run.
+    `[CROSS-REPO]` and a `[DOC DEBT]` and both labels belong on the pull request.
+
+    A label the map names is applied when a verdict asks for it; whether it comes back off when a
+    verdict stops asking is `retire-when-absent`, a decision the map makes per label. A debt is
+    retired — a `[DOC DEBT]` finding used to leave `doc-debt` standing after a later review found
+    nothing, the pull request asserting a debt its own current review denies (exeris-docs#123). A
+    label stating what the change IS is not: `cross-repo` survives a verdict that raises no
+    cross-repo finding, because such a review has not made the change single-repo.
+
+    A label the map does not name is still never touched: a repository's own `area:` labels, and
+    anything a human applied that this file knows nothing about, survive a publication run.
     """
     decision = verdict.get("decision")
     want: set[str] = set()
@@ -391,9 +399,14 @@ def plan_labels(verdict: dict, mapping: dict, current: set[str],
         label = tag_map.get(finding.get("tag"))
         if label:
             want.add(label)
+    # Which labels come back off is the map's decision per label, not a rule over all of them. A debt
+    # is retired by a verdict that no longer finds it; a label stating what the change IS is not —
+    # `cross-repo` stays, because a review raising no cross-repo finding has not made the change
+    # single-repo. `remove-on` is unioned in: it can name a label the two maps do not.
+    retire = set(mapping.get("retire-when-absent", {}).get("labels") or [])
     # A label this verdict asks for is never also removed, and a label the pull request does not
     # carry is never removed either: the apply step would be deleting something that is not there.
-    remove = set(mapping.get("remove-on", {}).get(decision) or []) - want
+    remove = (retire | set(mapping.get("remove-on", {}).get(decision) or [])) - want
     # §B.11's arbiter. A `PASS` from one routine does not take the block off a pull request another
     # routine is still blocking — the stricter decides. Without this the two reviews race, and the
     # one that finishes last wins regardless of what it found.
