@@ -768,6 +768,33 @@ def main() -> int:
         assert "did not pass" in p["reason"], p
         assert gate(tmp, p) == 1
 
+    # The readiness trigger fired once and was consumed without producing anything: on
+    # exeris-docs#124 a label applied seconds after opening cancelled the run, so the one ready event
+    # was spent and nothing retried it. The request is re-made, so the next run with green gates
+    # performs the review that was asked for.
+    @case("a ready run that lost its gates asks for the review again")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
+                    "pr-body-check": "cancelled"})
+        assert p["conclusion"] == "red", p
+        assert p["labels_add"] == ["needs-l2-review"], p
+        assert gate(tmp, p) == 1
+
+    @case("a gate that was cancelled is not reported as one that failed")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                l1={**GREEN_L1, "docs-lint": "cancelled"})
+        assert "cancelled before they finished: docs-lint" in p["reason"], p
+        assert "did not pass" not in p["reason"], p
+
+    @case("a run nobody asked a review of does not ask for one on its way out")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="not-ready",
+                l1={**GREEN_L1, "docs-lint": "failure"})
+        assert p["conclusion"] == "red", p
+        assert p["labels_add"] == [], p
+
     @case("a skip with every gate green is still the ordinary green skip")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,

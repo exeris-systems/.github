@@ -360,6 +360,7 @@ jobs:
             --head-sha "$HEAD_SHA" \
             --expect-agent "$EXPECT_AGENT" \
             --bot-login "$BOT_LOGIN" \
+            --review-label "$REVIEW_LABEL" \
             --override-label "$OVERRIDE_LABEL" \
             --override-by "$OVERRIDE_BY" \
             --workflow-touching "$WORKFLOW_TOUCHING" \
