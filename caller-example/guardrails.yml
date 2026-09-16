@@ -7,7 +7,11 @@ on:
     types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled]
 concurrency:
   group: guardrails-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # Not `true`: when the review publishes it removes the review label, and that removal is an
+  # `unlabeled` event whose run would cancel the run still publishing. Bot-triggered runs queue
+  # instead of cancelling; human pushes still collapse. Measured on exeris-systems/.github#35, where
+  # the cancel arrived in the same second the publishing job finished.
+  cancel-in-progress: ${{ !endsWith(github.actor, '[bot]') }}
 # A called workflow can only narrow the caller's permissions, never raise them, so this block must
 # be the UNION of what every job below declares. It is not a wish list and it is not a minimum:
 # omitting a permission one called workflow declares does not run that job with less, it makes the

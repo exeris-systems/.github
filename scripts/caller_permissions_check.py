@@ -126,6 +126,43 @@ def check_duplicate_keys(path: str, text: str, bad: list) -> None:
                    f"and PyYAML does not, so no other check here can see it")
 
 
+def publishes(wf: dict) -> bool:
+    """Whether this caller turns the publishing half on — the half that removes the review label."""
+    for spec in (wf.get("jobs") or {}).values():
+        spec = spec or {}
+        if (spec.get("with") or {}).get("publish") is True:
+            return True
+        if "publish-verdict.yml" in str(spec.get("uses", "")):
+            return True
+    return False
+
+
+def check_cancellation(path: str, wf: dict, bad: list) -> None:
+    """A run the bot's own label removal starts must not cancel the run that removed the label.
+
+    The publishing job removes the review label as one of its last steps. That removal is an
+    `unlabeled` event, it starts a second run, and an unconditional `cancel-in-progress: true`
+    points that run at the one still publishing. Measured on #35: the publishing run's last job
+    completed at 07:06:26 and the cancelling run was created at 07:06:26 — every job came out
+    `success` and the run was still recorded as `cancelled`. A slower review loses the
+    `publish / verdict` job to the cancel, and a cancelled required check blocks a pull request for
+    a reason no human can act on.
+
+    Gating on the actor keeps the collapse where it earns its keep, on human pushes, and makes a
+    bot-triggered run queue instead. Only a caller that both publishes and listens to label events
+    can hit this; a caller with publication off removes no label and is left alone.
+    """
+    trigger = (wf.get("on") or wf.get(True) or {}).get("pull_request") or {}
+    listens = sorted(set(trigger.get("types") or []) & {"labeled", "unlabeled"})
+    if not listens or not publishes(wf):
+        return
+    if (wf.get("concurrency") or {}).get("cancel-in-progress") is True:
+        bad.append(f"{path}: publishes and is triggered by {', '.join('`%s`' % t for t in listens)}, "
+                   f"but sets `cancel-in-progress: true` — the run started by the bot removing the "
+                   f"review label cancels the run that was still publishing it. Gate it on the "
+                   f"actor: `cancel-in-progress: ${{{{ !endsWith(github.actor, '[bot]') }}}}`")
+
+
 def nested_path(uses: str) -> str | None:
     """Where a `uses:` reference lands in THIS repository, or None when it points elsewhere."""
     if uses.startswith("./"):
@@ -206,6 +243,7 @@ def main() -> int:
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
             check_duplicate_keys(path, text, bad)
+            check_cancellation(path, yaml.safe_load(text) or {}, bad)
             audit(path, yaml.safe_load(text) or {}, bad)
 
     for line in bad:
