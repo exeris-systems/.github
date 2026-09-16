@@ -234,6 +234,48 @@ def main() -> int:
         assert p["labels_remove"] == ["hard-block"], p
         assert p["labels_remove"] == ["hard-block"], p
 
+    # Reported on exeris-docs#123: a `[DOC DEBT]` finding applied `doc-debt`, the re-review returned
+    # PASS with no findings, and the label stayed — the pull request asserting a debt its own current
+    # review denies. Only `hard-block` was ever removed, because only it had a `remove-on` entry.
+    @case("a tag label comes off when this verdict no longer carries the tag")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(), current="doc-debt|type: documentation")
+        assert p["labels_remove"] == ["doc-debt"], p
+        assert p["labels_add"] == [], p
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
+    @case("a tag label this verdict does ask for is not removed")
+    def _(tmp):
+        v = verdict(findings=[finding(tag="DOC DEBT")])
+        p = run(root, tmp, verdict_doc=v, current="doc-debt")
+        assert p["labels_remove"] == [], p
+        assert p["labels_add"] == [], p
+
+    # Retirement is a decision per label, and `cross-repo` is the one that is not retired: it states
+    # what the change IS, and a review raising no cross-repo finding has not made the change
+    # single-repo. A debt is the opposite — a later review finding nothing has retired it.
+    @case("debts are retired by a verdict that no longer finds them")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(),
+                current="doc-debt|cross-repo|tck-debt|hard-block|area: kernel")
+        assert p["labels_remove"] == ["doc-debt", "hard-block", "tck-debt"], p
+
+    @case("cross-repo is not a debt, so a verdict that does not raise it leaves it alone")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(), current="cross-repo")
+        assert p["labels_remove"] == [], p
+        assert p["labels_add"] == [], p
+
+    # The arbiter of §B.11 still holds: another routine's standing BLOCKED keeps the block on, and
+    # the wider removal must not walk over it.
+    @case("a PASS does not lift a block another routine is still holding")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(), current="hard-block|doc-debt",
+                comments=by_bot(marker_line("BLOCKED", "exeris-evaluator")))
+        assert "hard-block" not in p["labels_remove"], p
+        assert p["labels_remove"] == ["doc-debt"], p
+
     @case("a mandatory gate reported not-run is published and not green")
     def _(tmp):
         v = verdict()

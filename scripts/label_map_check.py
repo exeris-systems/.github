@@ -39,6 +39,23 @@ SECTIONS = {
     "tag": (("findings",), "tag"),
     "remove-on": ((), "decision"),
 }
+# Sections that are a flat list of labels rather than a mapping off a verdict field. `{section: key}`
+# names where the list sits. They are checked differently and for a different mistake: a label listed
+# for retirement that no section ever applies is retiring something that never arrives.
+FLAT_SECTIONS = {"retire-when-absent": "labels"}
+
+
+def applied_labels(mapping: dict) -> set[str]:
+    """Every label some section of the map can put on a pull request."""
+    out: set[str] = set()
+    for section, values in mapping.items():
+        if section.startswith("$") or section in FLAT_SECTIONS or section == "remove-on":
+            continue
+        for key, applied in (values or {}).items():
+            if key.startswith("$"):
+                continue
+            out.update([applied] if isinstance(applied, str) else applied or [])
+    return out
 
 
 def spelled(at: tuple[str, ...], field: str) -> str:
@@ -146,6 +163,18 @@ def main() -> int:
 
     for section, values in mapping.items():
         if section.startswith("$"):
+            continue
+        if section in FLAT_SECTIONS:
+            listed = (values or {}).get(FLAT_SECTIONS[section]) or []
+            for name in listed:
+                if name not in labels:
+                    rep.error(rel, f"'{section}' lists label '{name}', which {LABELS} does not "
+                                   f"define — the sync would leave it outside the taxonomy it owns",
+                              rule="label-map")
+                elif name not in applied_labels(mapping):
+                    rep.error(rel, f"'{section}' lists label '{name}', which no section of {rel} "
+                                   f"ever applies — a label nothing puts on is a label nothing needs "
+                                   f"taken off", rule="label-map")
             continue
         named = SECTIONS.get(section)
         if named is None:

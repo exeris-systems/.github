@@ -1,5 +1,5 @@
 {
-  "$comment": "Verdict-to-label map for the L2 review publication step (ADR-087 §B.7). It sits beside labels.yml because it is the same kind of thing: taxonomy data a script applies, not a rule a workflow restates. Every key below is a value of `decision` at the root of a verdict or of `tag` on one of its findings, as .agents/schemas/verdict.schema.json bounds them, and every label is defined in labels.yml — all of them are files in this repository, so .github/workflows/guardrails.yml asserts it. A label this file does not name is never added and never removed: a repository's own `area:` labels, and anything a human put on the pull request, survive a publication run untouched.",
+  "$comment": "Verdict-to-label map for the L2 review publication step (ADR-087 §B.7). It sits beside labels.yml because it is the same kind of thing: taxonomy data a script applies, not a rule a workflow restates. Every key below is a value of `decision` at the root of a verdict or of `tag` on one of its findings, as .agents/schemas/verdict.schema.json bounds them, and every label is defined in labels.yml — all of them are files in this repository, so .github/workflows/guardrails.yml asserts it. A label this file names is applied when a verdict asks for it. Whether it comes back off when a verdict stops asking is `retire-when-absent` below, and it is a decision per label rather than a rule over all of them: a debt is retired, a fact about the change is not. A label this file does not name is never added and never removed: a repository's own `area:` labels, and anything a human put on the pull request, survive a publication run untouched.",
   "decision": {
     "BLOCKED": "hard-block"
   },
@@ -9,8 +9,16 @@
     "DOC DEBT": "doc-debt",
     "TCK DEBT": "tck-debt"
   },
+  "retire-when-absent": {
+    "$comment": "Labels the publication takes back off when the current verdict no longer asks for them. A debt belongs here: a `[DOC DEBT]` finding applies `doc-debt`, and a later review that finds nothing has retired it — leaving the label makes the pull request assert a debt its own current review denies, which is what happened on exeris-docs#123. A label that states what the change IS does not belong here, and `cross-repo` is the case: a review raising no cross-repo finding has not made the change single-repo, so the label stands until a human says otherwise. Adding a tag above is therefore two decisions, not one.",
+    "labels": [
+      "hard-block",
+      "doc-debt",
+      "tck-debt"
+    ]
+  },
   "remove-on": {
-    "$comment": "A verdict short of BLOCKED takes the block off. `PASS` and `CONDITIONAL` both say the same thing about `hard-block`: this run found nothing that refuses the merge outright. Leaving it on a CONDITIONAL left the label saying the worst answer the review ever gave, which is what the comment above says it must not do.",
+    "$comment": "A verdict short of BLOCKED takes the block off. `PASS` and `CONDITIONAL` both say the same thing about `hard-block`: this run found nothing that refuses the merge outright. Leaving it on a CONDITIONAL left the label saying the worst answer the review ever gave, which is what the comment above says it must not do. `hard-block` is also listed in `retire-when-absent`, so this block is not load-bearing for it today; it stays because it can name a label the maps above do not, and because deleting it would delete the statement that a PASS is what lifts a block.",
     "PASS": [
       "hard-block"
     ],
