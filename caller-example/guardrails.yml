@@ -100,6 +100,18 @@ jobs:
     #   # L1 gates whose `not-run` makes the required check red, beyond the routine's own three
     #   # (docs-lint, commit-lint, pr-body-check). Name a repo's own mandatory gates here.
     #   mandatory-gates: "docs-lint,commit-lint,pr-body-check,javadoc-gate"
+    #   # THIS REPOSITORY'S OWN REVIEW RULES, if it has any. The point of these two is that having
+    #   # rules of your own is no longer a reason to keep a review workflow of your own — which is
+    #   # how every repository ended up with a second verdict format, no required check and no
+    #   # provenance. The shared routine's `## Repository extension` section owns the limits: an
+    #   # extension adds checks and raises severities, it never lowers one, skips a step, or changes
+    #   # the output format.
+    #   repo-routine: .agents/workflows/docs-pr-review.md
+    #   # Scripts CI runs for the reviewer before the model starts, their output handed over as a
+    #   # file. CI runs them because the runner's harness denies Bash — asking the model to execute
+    #   # them gets a review that reports its own checks as `not-run`. A non-zero exit never fails
+    #   # the job: a candidate locator that found candidates is evidence, not a verdict.
+    #   repo-checks: .agents/scripts/drift-sweep.sh && .agents/scripts/taxonomy-check.sh
   # javadoc:                    # JVM repos with a gated module only
   #   uses: exeris-systems/.github/.github/workflows/javadoc-gate.yml@main
   #   with:

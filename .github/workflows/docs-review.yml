@@ -73,6 +73,29 @@ on:
           click instead of writing, an event the caller already receives, and no new permission
           surface — `issue_comment` would raise who may spend a paid model run by commenting on a
           public repository. The publication removes it once the review has run.
+      repo-routine:
+        type: string
+        default: ""
+        description: >-
+          A file in the CALLING repository holding that repository's own review rules, e.g.
+          `.agents/workflows/docs-pr-review.md`. The routine's `## Repository extension` section
+          owns what an extension may do: add checks, raise a severity, forbid what this routine
+          permits — never lower a severity, skip a step, or change the output format or the verdict
+          schema. Empty means the shared routine and nothing else. This exists because the
+          alternative was what every repository actually did: keep a review workflow of its own,
+          and with it a second verdict format, no required check and no provenance.
+      repo-checks:
+        type: string
+        default: ""
+        description: >-
+          A shell command run in the checked-out repository BEFORE the model, e.g.
+          `.agents/scripts/drift-sweep.sh && .agents/scripts/taxonomy-check.sh`. Its combined
+          output and exit code are handed to the reviewer as a file. CI runs it rather than the
+          model because this runner's harness denies Bash — a prompt that asks the model to execute
+          a repository's scripts gets a review that reports them as `not-run`, which is what the
+          per-repo review workflows this replaces were quietly doing. It never fails the job: most
+          repo-local scripts locate candidates rather than decide, so a non-zero exit is evidence
+          for the reviewer to judge.
       mandatory-gates:
         type: string
         default: ""
@@ -171,6 +194,28 @@ jobs:
             **/*.md
             **/*.java
             ${{ inputs.extra-paths }}
+      # The repository's own checks, run HERE rather than by the model, for the reason the input's
+      # description gives: the harness denies Bash. CI can run them, so CI runs them and hands the
+      # output over — the same shape as `l1-results`, where the workflow that ran a gate is the one
+      # that says what it concluded.
+      #
+      # It cannot fail the job. `set +e` and a trailing `echo` mean the step's own exit status is
+      # zero whatever the scripts returned; the code is written INTO the file so the reviewer sees
+      # it. A candidate locator exiting non-zero is not a verdict, and a step that went red here
+      # would skip the review that was supposed to judge the finding.
+      - name: This repository's own checks
+        if: ${{ inputs.repo-checks != '' && steps.relevant.outputs.any_changed == 'true' }}
+        env:
+          # Through the environment, not spliced into `run:`. The value comes from a caller's
+          # workflow file rather than from pull-request content, but a command assembled by string
+          # substitution is the shape of the injection bug regardless of who wrote it today.
+          REPO_CHECKS: ${{ inputs.repo-checks }}
+        run: |
+          set +e
+          bash -c "$REPO_CHECKS" >repo-checks.out 2>&1
+          code=$?
+          printf '\n--- repo-checks exit code: %s ---\n' "$code" >>repo-checks.out
+          echo "::notice::this repository's own checks exited $code; the reviewer reads repo-checks.out"
       - name: Docs and hygiene review
         id: review
         if: ${{ steps.relevant.outputs.any_changed == 'true' }}
@@ -190,6 +235,14 @@ jobs:
             review the substance those gates cannot judge.
 
             L1 GATE RESULTS: ${{ inputs.l1-results }}
+
+            This repository may extend the routine with rules of its own. The routine's
+            `## Repository extension` section says how far that goes and what it may not touch;
+            read that section before you read the extension. Where a value below is `(none)`,
+            there is nothing to apply and this routine stands alone.
+
+            REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && inputs.repo-routine || '(none)' }}
+            REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}
 
             Report nothing you have not checked against the repository: the routine asks whether
             documentation matches the code, which means opening the code.
