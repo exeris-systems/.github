@@ -221,6 +221,18 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # `exeris-bot` and nothing else. The action refuses a run whose actor is a bot — its own
+          # guard, and a reasonable one — and that guard collided with the recovery added in #47:
+          # when a ready run loses its gates the publication re-applies the review label, so the run
+          # that repairs it is initiated by `exeris-bot`. The action then refused to start and the
+          # produce job came out `failure` rather than skipped, which is worse than the state it was
+          # repairing. Measured on exeris-docs#126, run 35124701902: "Workflow initiated by non-human
+          # actor: exeris-bot (type: Bot)".
+          #
+          # Narrow on purpose: one login, not `*`. The bot applies the review label in exactly one
+          # place — the lost-request branch of `publish_verdict.py` — and the producing job still
+          # requires the pull request's AUTHOR to be human and the pull request to carry the label.
+          allowed_bots: "exeris-bot"
           # THE REVIEWER MAY NOT PUBLISH. ADR-087 §A.3 gives publication to `exeris-bot` and
           # nothing else: the bot signs the comment, carries the marker the gate reads, and writes
           # the provenance footer. Without this line the runner published its own review instead —
