@@ -84,8 +84,9 @@ def exec_log(*verdicts, model="claude-sonnet-5", version="2.1.272") -> list:
     ]
 
 
-def marker_line(decision: str, agent: str = "exeris-org-docs-reviewer") -> str:
-    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
+def marker_line(decision: str, agent: str = "exeris-org-docs-reviewer", sha: str = "") -> str:
+    at = f" sha={sha}" if sha else ""
+    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision}{at} -->"
 
 
 def by_person(body: str, cid: int = 3) -> dict:
@@ -97,7 +98,7 @@ def by_person(body: str, cid: int = 3) -> dict:
 def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="success",
         relevant="true", current="", mandatory="", execution_log=None,
         authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
-        l1="") -> dict:
+        l1="", skip_kind="", head_sha="") -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
     args = [sys.executable, PLANNER, "plan",
             "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
@@ -129,6 +130,10 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
         args += ["--pin-problem", pin_problem]
     if l1:
         args += ["--l1-results", l1 if isinstance(l1, str) else json.dumps(l1)]
+    if skip_kind:
+        args += ["--skip-kind", skip_kind]
+    if head_sha:
+        args += ["--head-sha", head_sha]
     labels = os.path.join(tmp, "labels.txt")
     with open(labels, "w", encoding="utf-8") as fh:
         fh.write("".join(f"{s}\n" for s in current.split("|") if s))
@@ -623,11 +628,14 @@ def main() -> int:
     @case("a run with no verdict cannot erase a published one")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="failure")
+        # A prefix rather than the whole marker, because a marker now carries the commit it
+        # reviewed and the search must still match one that does.
         assert p["marker_search"] == (
-            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=NONE -->"), p
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=NONE"), p
         # A comment carrying real findings does not match it; only another notice does.
         assert not marker_line("CONDITIONAL").startswith(p["marker_search"]), "would overwrite"
         assert marker_line("NONE").startswith(p["marker_search"])
+        assert marker_line("NONE", sha="abc1234").startswith(p["marker_search"])
 
     GREEN_L1 = {"docs-lint": "success", "commit-lint": "success", "pr-body-check": "success"}
 
@@ -698,6 +706,47 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict())
         for heading in ("Suggestions", "Before this merges", "Handed to another role"):
             assert heading not in p["comment"], (heading, p["comment"][:300])
+
+    HEAD = "abc1234def5678"
+    OLD = "0f0f0f0f0f0f"
+
+    def standing(decision, sha):
+        return [by_bot(marker_line(decision, sha=sha) + "\n## L2 review", 4)]
+
+    @case("nobody has asked for a review yet, so there is nothing standing and it is red")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="not-ready",
+                head_sha=HEAD, comments=[])
+        assert p["conclusion"] == "red", p
+        assert "no review has run" in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    @case("a standing PASS that covers this commit keeps the check green without re-reviewing")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="not-ready",
+                head_sha=HEAD, comments=standing("PASS", HEAD))
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
+    @case("a head past the reviewed commit is red, and names both")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="not-ready",
+                head_sha=HEAD, comments=standing("PASS", OLD))
+        assert p["conclusion"] == "red", p
+        assert OLD[:7] in p["reason"] and HEAD[:7] in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    @case("a standing BLOCKED stays red even on the commit it reviewed")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="not-ready",
+                head_sha=HEAD, comments=standing("BLOCKED", HEAD))
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    @case("a published verdict records the commit it reviewed")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(), head_sha=HEAD)
+        assert f"decision=PASS sha={HEAD}" in p["comment"], p["comment"][:140]
 
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):

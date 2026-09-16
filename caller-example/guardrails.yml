@@ -69,6 +69,12 @@ jobs:
   # their conclusions. Without the second, the reviewer tries to read a CI step summary, its harness
   # denies the network call, and every mandatory gate lands in the verdict as `not-run` — which the
   # publish step correctly turns red, for ever, on every pull request.
+  # THE REVIEW RUNS ON READINESS, not on every push: when the pull request is opened, reopened,
+  # marked ready for review, or labelled `needs-l2-review` by a human. A push afterwards does not
+  # start a new one — it leaves the standing verdict visibly covering an older commit, and the
+  # required check goes red saying so until a review is asked for again. That is deliberate: a
+  # verdict is about the tree it read, and a green check resting on a review of code that is gone is
+  # worse than a red one.
   docs-review:
     needs: [docs, commits, pr-body]
     if: ${{ always() }}

@@ -25,6 +25,11 @@
 - { name: "api-surface",         color: "5319e7", description: "Changes a committed API golden — api/*.api.md or api/tools.api.json (tsdoc-conventions.md rules 7-8)" }
 - { name: "generated",           color: "ededed", description: "Touches Category-B generated output — javadoc rule 10 / tsdoc rule 10" }
 - { name: "phase-gated",         color: "f9d0c4", description: "[PHASE] — blocked on a roadmap prerequisite" }
+# The L2 review runs on readiness rather than on every push (ADR-087, amended 2026-09-16). This is
+# the state a human sets when the work is ready to look at; the publication removes it once the
+# review has run, so its presence always means "asked for, not yet done". The bot never adds it,
+# which is what keeps the publication from triggering itself.
+- { name: "needs-l2-review",     color: "c5def5", description: "An L2 review is asked for — removed once it has run" }
 - { name: "release: breaking",   color: "b60205", description: "Goes under ### Breaking; needs ADR + MIGRATION.md section" }
 - { name: "release: noteworthy", color: "0e8a16", description: "Worth a line in the hand-written release notes" }
 - { name: "release: internal",   color: "ededed", description: "Excluded from auto-generated release notes" }
