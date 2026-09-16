@@ -1,0 +1,31 @@
+# This repository's own issue-side caller — the file `caller-example/issues.yml` hands to every other
+# repository, pointed at the workflows beside it.
+#
+# It was missing, and the consequence was concrete rather than tidy: `.github` defines `labels.yml`
+# and carried almost none of it. `hard-block`, `cross-repo`, `tck-debt`, `phase-gated` and
+# `needs-l2-review` did not exist here, so nobody could apply the label the readiness trigger waits
+# for — and the labels the publication does apply were created implicitly by the issues API in
+# whatever colour it chose, the taxonomy bypassed in the repository that owns it.
+#
+# Separate from guardrails.yml because it is not pull-request-triggered and needs `issues: write`,
+# which the pull-request gates deliberately do not have.
+name: issues
+on:
+  schedule:
+    - cron: "17 4 * * 1"     # Monday, early. Label drift and stale evidence are not urgent.
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Report label changes without making them"
+        type: boolean
+        default: false
+permissions:
+  issues: write
+
+jobs:
+  labels:
+    uses: ./.github/workflows/labels-sync.yml
+    with:
+      dry-run: ${{ inputs.dry-run == true }}
+  hygiene:
+    uses: ./.github/workflows/issue-hygiene.yml
