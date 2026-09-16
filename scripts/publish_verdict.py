@@ -59,7 +59,8 @@ FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.S)
 # It also carries the decision, which is what lets a later run of a different routine see what this
 # one concluded without re-reading a verdict it does not have. That is the whole arbiter: §B.11 says
 # the stricter decides `hard-block`, and nothing else on a pull request records who blocked it.
-MARKER_RE = re.compile(r"<!-- exeris-bot: l2-verdict agent=([^\s]+) decision=([A-Z]+) -->")
+MARKER_RE = re.compile(
+    r"<!-- exeris-bot: l2-verdict agent=([^\s]+) decision=([A-Z]+)(?: sha=([0-9a-f]{7,40}))? -->")
 
 # Anything a model wrote is something the bot signs, because the bot copies a finding's words into
 # its own comment. A finding whose text carried a marker forged the arbiter's channel — the one
@@ -84,8 +85,26 @@ def plain(value) -> str:
             .replace("|", "\\|"))
 
 
-def marker(agent: str, decision: str) -> str:
-    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision} -->"
+def marker(agent: str, decision: str, sha: str = "") -> str:
+    """The comment's machine-readable header, carrying the commit the verdict covers.
+
+    Without the commit a verdict outlives the tree it judged: the head moves and the published
+    comment, and the green check beside it, go on describing code that is no longer there.
+    """
+    at = f" sha={sha}" if sha else ""
+    return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision}{at} -->"
+
+
+def standing_for(comments_json: str, agent: str, bot_login: str) -> tuple[str, str] | None:
+    """This role's own last published verdict, as `(decision, sha)`, or None if it has none."""
+    found = None
+    for c in comments(comments_json):
+        if c.get("author") != bot_login:
+            continue
+        m = MARKER_RE.match(c["body"])
+        if m and m.group(1) == agent:
+            found = (m.group(2), m.group(3) or "")
+    return found
 
 
 def standing_verdicts(comments_json: str, exclude_agent: str, bot_login: str) -> dict[str, str]:
@@ -427,7 +446,7 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     """The published review: the verdict's own words, every `not-run` verbatim, then provenance."""
     decision = verdict.get("decision", "?")
     agent = str(verdict.get("agent", "unknown"))
-    out = [marker(agent, str(decision)),
+    out = [marker(agent, str(decision), args.head_sha),
            f"## L2 review — `{agent}` — **{decision}**", ""]
     label = verdict.get("decision_label")
     if label:
@@ -447,6 +466,28 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
         out.append("")
     else:
         out += ["No findings.", ""]
+    # Three fields the schema carries and the comment dropped. A review that writes a non-blocking
+    # nit, or names what must be re-checked before merge, or says another role has to look, had all
+    # of it discarded between the verdict and the page a human reads — so the reader saw "No
+    # findings" where the reviewer had written several paragraphs.
+    suggestions = [s for s in (verdict.get("suggestions") or []) if s]
+    if suggestions:
+        out += ["### Suggestions — none of these blocks the merge", ""]
+        out += [f"- {plain(s)}" for s in suggestions]
+        out.append("")
+    required = [r for r in (verdict.get("required_validation") or []) if r]
+    if required:
+        out += ["### Before this merges, re-check", ""]
+        out += [f"- {plain(r)}" for r in required]
+        out.append("")
+    handoffs = [h for h in (verdict.get("handoffs") or []) if isinstance(h, dict)]
+    if handoffs:
+        out += ["### Handed to another role", ""]
+        for h in handoffs:
+            block = " **(blocking)**" if h.get("blocking") else ""
+            out.append(f"- {plain(h.get('from'))} → {plain(h.get('to'))}{block}: "
+                       f"{plain(h.get('reason'))}")
+        out.append("")
     checks = verdict.get("checks_run") or []
     if checks:
         out += ["### Gates the review read", ""]
@@ -480,13 +521,38 @@ def cmd_plan(args) -> int:
     # there would be the skipped-required-check problem wearing a different hat.
     ci = ci_results(args.l1_results)
     failed_l1 = sorted(g for g, c in ci.items() if c and c != "success")
+    # The readiness trigger's own path. No review ran because none was asked for, so the question is
+    # whether the last one still describes this tree — ADR-087 §B.8's fourth red. A verdict is about
+    # the commit it read; once the head moves past it, publishing its green would be publishing a
+    # review of code that is gone.
+    if args.skip_kind == "not-ready":
+        plan["agent"] = args.expect_agent or "unknown"
+        plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
+        standing = None
+        if args.comments and os.path.exists(args.comments):
+            with open(args.comments, encoding="utf-8") as fh:
+                standing = standing_for(fh.read(), plan["agent"], args.bot_login)
+        head = (args.head_sha or "")[:7]
+        if standing is None:
+            plan["reason"] = ("no review has run on this pull request yet — apply the review label "
+                              "when it is ready to look at")
+        elif standing[1] and head and standing[1][:7] != head:
+            plan["reason"] = (f"the standing verdict covers {standing[1][:7]} and this pull request "
+                              f"is at {head} — it has moved since the review, so the review does not "
+                              f"describe it")
+        elif standing[0] == "BLOCKED":
+            plan["reason"] = "the standing verdict is BLOCKED and nothing has been reviewed since"
+        else:
+            plan.update(conclusion="green",
+                        reason=f"the standing verdict is {standing[0]} and still covers {head}")
+        return finish(plan, args)
     if args.produce_outcome == "skipped" and failed_l1:
         plan.update(conclusion="red", verdict_source="none",
                     reason=("the review did not run because the gates it waits on did not pass: "
                             + ", ".join(failed_l1)))
         plan["agent"] = args.expect_agent or "unknown"
-        plan["marker_search"] = marker(plan["agent"], "NONE")
-        plan["comment"] = (marker(plan["agent"], "NONE")
+        plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
+        plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
                            + "\n## L2 review — not run\n\nThe L1 gates this review waits on did "
                            + "not pass: " + ", ".join(f"`{g}`" for g in failed_l1)
                            + ".\n\nFix those first; the review runs once they are green.\n")
@@ -515,8 +581,8 @@ def cmd_plan(args) -> int:
         # later run that produced nothing — a crashed runner, a refused actor — otherwise overwrote
         # findings somebody has to act on, and the pull request lost them. Both can stand: the last
         # verdict, and a note that a later run reached none.
-        plan["marker_search"] = marker(plan["agent"], "NONE")
-        plan["comment"] = (marker(plan["agent"], "NONE")
+        plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
+        plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
                            + "\n## L2 review — no verdict\n\n"
                            + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
                            + f"{why}.\n\nThe required check is red because nothing was reviewed, "
@@ -538,7 +604,7 @@ def cmd_plan(args) -> int:
         # was never checked against anything, and it is about to key a marker.
         refused_agent = args.expect_agent or "unknown"
         plan["agent"] = refused_agent
-        plan["comment"] = (marker(refused_agent, "INVALID")
+        plan["comment"] = (marker(refused_agent, "INVALID", args.head_sha)
                            + "\n## L2 review verdict refused\n\nA verdict was produced and it does not "
                            "conform to `.agents/schemas/verdict.schema.json`:\n\n"
                            # The validator quotes the instance value it refused, so these
@@ -644,6 +710,10 @@ def main() -> int:
                    help="the role this publication is for; it keys the marker when no verdict exists")
     p.add_argument("--pin-problem", default="",
                    help="what caller_bundle_check.py said, when it said anything (ADR-087 §B.6a)")
+    p.add_argument("--skip-kind", default="",
+                   help="why the producing job did not run: not-ready | draft-or-bot | fork | path-filter")
+    p.add_argument("--head-sha", default="",
+                   help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
     p.add_argument("--bot-login", default="exeris-bot[bot]",
                    help="the only author whose published markers the arbiter reads")
     p.set_defaults(func=cmd_plan)

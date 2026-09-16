@@ -91,6 +91,24 @@ on:
           What CI concluded about the L1 gates, as `{"docs-lint": "success", …}`. The workflow that
           ran a gate is the authority on whether it ran; a reviewer reading a step summary is not,
           and on a runner whose harness denies network calls it cannot read one at all.
+      skip-kind:
+        type: string
+        default: ""
+        description: >-
+          Why the producing job did not run, as a value rather than as prose: `not-ready`,
+          `draft-or-bot`, `fork` or `path-filter`. The publish step answers differently for each,
+          and a job result cannot tell them apart.
+      head-sha:
+        type: string
+        default: ""
+        description: >-
+          The commit under review. Recorded in the published marker when a review runs, and compared
+          with the standing verdict's commit when one does not — a verdict is about the tree it read,
+          and a head past it means the review does not describe this pull request.
+      review-label:
+        type: string
+        default: "needs-l2-review"
+        description: "The label a human applies to ask for a review; the publication removes it afterwards"
       verdict-authors:
         type: string
         default: ""
@@ -260,8 +278,11 @@ jobs:
           SKIP_REASON: ${{ inputs.skip-reason }}
           VERDICT_AUTHORS: ${{ inputs.verdict-authors }}
           L1_RESULTS: ${{ inputs.l1-results }}
+          SKIP_KIND: ${{ inputs.skip-kind }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EXPECT_AGENT: ${{ inputs.expect-agent }}
           BOT_LOGIN: ${{ inputs.bot-login }}
+          REVIEW_LABEL: ${{ inputs.review-label }}
           PIN_PROBLEM: ${{ steps.pin.outputs.problem }}
           ROUTINE_SHA: ${{ steps.contract.outputs.sha }}
         run: |
@@ -294,6 +315,8 @@ jobs:
             --routine-sha "$ROUTINE_SHA" \
             --verdict-authors "$VERDICT_AUTHORS" \
             --l1-results "$L1_RESULTS" \
+            --skip-kind "$SKIP_KIND" \
+            --head-sha "$HEAD_SHA" \
             --expect-agent "$EXPECT_AGENT" \
             --bot-login "$BOT_LOGIN" \
             --current-labels-file current-labels.txt
@@ -306,6 +329,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           BOT_LOGIN: ${{ inputs.bot-login }}
+          REVIEW_LABEL: ${{ inputs.review-label }}
         run: |
           set -euo pipefail
           # `jq -r` on an empty string writes a newline, so `[ -s ]` is true for nothing at all —
@@ -335,6 +359,13 @@ jobs:
           jq -r '.labels_add[]' plan.json | while IFS= read -r label; do
             [ -n "$label" ] && gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=$label" --silent
           done
+          # The request label is a state, not a verdict: it means "asked for, not yet done", so it
+          # comes off as soon as a review has run — whatever the review concluded. It is removed here
+          # rather than through the label map because the map describes what a verdict means, and this
+          # says nothing about the code.
+          if [ "$(jq -r '.verdict_source' plan.json)" != "none" ]; then
+            gh api -X DELETE "repos/$REPO/issues/$PR/labels/$REVIEW_LABEL" --silent 2>/dev/null || true
+          fi
           jq -r '.labels_remove[]' plan.json | while IFS= read -r label; do
             [ -n "$label" ] && gh api -X DELETE \
               "repos/$REPO/issues/$PR/labels/$(jq -rn --arg l "$label" '$l|@uri')" --silent
