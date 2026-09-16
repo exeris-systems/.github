@@ -393,6 +393,19 @@ jobs:
               'map(select(.source == "issue-comment" and .author == $bot
                           and .body != null and (.body | startswith($m))))
                | last | .id // empty' comments.json)
+            # What the search was, what it had to choose from, and what it chose. Written because a
+            # publication once created a second comment where it should have updated the first
+            # (exeris-docs#126, run 35136663097) and the log could not say which of the two causes it
+            # was: the candidate missing from `comments.json`, or its body not starting with the
+            # marker. Both are visible here, and the first 72 characters of each candidate are enough
+            # to compare a prefix by eye.
+            bots=$(jq --arg bot "$BOT_LOGIN" \
+              '[.[] | select(.source == "issue-comment" and .author == $bot)] | length' comments.json)
+            echo "::notice::publish_verdict: marker_search=[$search]"
+            echo "::notice::publish_verdict: $bots comment(s) by $BOT_LOGIN here; matched=${existing:-NONE}"
+            jq -r --arg bot "$BOT_LOGIN" \
+              '.[] | select(.source == "issue-comment" and .author == $bot and .body != null)
+               | "publish_verdict: candidate \(.id): \(.body[0:72])"' comments.json || true
             if [ -n "$existing" ]; then
               gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@comment.md --silent
             else
