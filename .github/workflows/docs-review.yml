@@ -222,6 +222,27 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # THE REVIEWER MAY NOT PUBLISH. ADR-087 §A.3 gives publication to `exeris-bot` and
+          # nothing else: the bot signs the comment, carries the marker the gate reads, and writes
+          # the provenance footer. Without this line the runner published its own review instead —
+          # measured on exeris-docs#121, where it made 28 shell calls, none denied, and the last one
+          # returned the URL of a comment posted as `claude[bot]`. That comment carried no marker, no
+          # footer and no gate: a review nothing could act on, beside a required check that went red
+          # saying no verdict had arrived.
+          #
+          # Worse than the duplicate: what the shared review may do was being decided by the
+          # repository it ran in rather than by this file. The same workflow denied every `gh` call
+          # in `exeris-systems/.github` and allowed all of them here, so a repository could have
+          # granted its own reviewer the power to publish. A review whose powers vary by target is
+          # not a shared review.
+          #
+          # The list is what reading a pull request takes and nothing else. `verdict.json` is left
+          # out on purpose: the routine still asks for it, the Write is refused, and the fenced block
+          # in the model's own output is §B.10's stated fallback — which is also the only place the
+          # publish half can find a verdict, since a runner that posts writes its verdict into a tool
+          # call and reports "Review posted" as its text.
+          claude_args: |
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
           prompt: |
             Review pull request ${{ github.event.pull_request.number }} in
             ${{ github.repository }} against the documentation and hygiene review routine in
@@ -254,8 +275,11 @@ jobs:
             repository's own `.agents/`, which is a different contract. If you cannot write files,
             the fenced block alone is the stated fallback and the review is still complete.
 
-            Post one review comment. If every step passes, say so in one line rather than
-            summarising the routine back.
+            DO NOT POST ANYTHING. You have no tool that can, and that is deliberate: the review you
+            write IS your reply, and the publication step signs it as `exeris-bot`, attaches the
+            marker the required check reads, and adds the provenance footer. A review you post
+            yourself carries none of those and no check can act on it. If every step passes, say so
+            in one line rather than summarising the routine back.
       # TWO artefacts, not one with two paths. `upload-artifact@v4` roots an artefact at the least
       # common ancestor of the paths it is given: `verdict.json` sits in the workspace and the
       # runner's execution log in RUNNER_TEMP, so their LCA is `/home/runner/work` and the verdict
