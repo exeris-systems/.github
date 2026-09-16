@@ -65,6 +65,16 @@ on:
           reported all three mandatory gates as `not-run` for that reason and the required check was
           red for ever. And the publish step decides on them rather than on the review's reading of
           them, because the workflow that ran a gate knows what it concluded.
+      review-label:
+        type: string
+        default: "needs-l2-review"
+        # Declared here so the caller-facing contract lands with the rest of it; wired to the
+        # publishing half in the pull request after this one, for the reason in `produce` below.
+        description: >-
+          The label a human applies to ask for a review. A label rather than a comment mention: one
+          click instead of writing, an event the caller already receives, and no new permission
+          surface — `issue_comment` would raise who may spend a paid model run by commenting on a
+          public repository. The publication removes it once the review has run.
       mandatory-gates:
         type: string
         default: ""
@@ -125,6 +135,12 @@ jobs:
     # The actor condition is the same guard from the other side: any bot-initiated run would be
     # refused by the runner and end as a failed produce, which is a red required check for a reason
     # that has nothing to do with the pull request.
+    # STILL ON EVERY PUSH, and the next pull request changes that. The readiness trigger of ADR-087's
+    # 2026-09-16 amendment needs `skip-kind` and `review-label` on the publishing half, and this
+    # workflow reaches that half at `@main` — so an input has to BE on `main` before this file may
+    # pass it. One pull request cannot add an input and use it; the attempt is a startup failure with
+    # zero jobs, which is how this was found. The publishing half of the trigger lands here; the
+    # wiring follows once it is released.
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.fork == false &&
@@ -136,6 +152,7 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]'
     outputs:
       relevant: ${{ steps.relevant.outputs.any_changed }}
+      verdict-written: ${{ steps.wrote.outputs.yes }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
@@ -191,6 +208,15 @@ jobs:
       #
       # `if-no-files-found: ignore` is ADR-087 §B.10 made operational: a runner that cannot write
       # files produces no artefact, and the publish job says so rather than failing here.
+      # Whether the runner managed to write the file at all. Today's harness denies the `Write` call,
+      # so it never does — and the publish job was downloading an artefact that is never there,
+      # printing `Error: Artifact not found` in the middle of every green run. A log that cries wolf
+      # on a passing run teaches people to read it selectively, which is the habit that cost this
+      # project several hours in one evening. The path stays wired for a runner that can write one.
+      - name: Did the runner write a verdict?
+        id: wrote
+        if: ${{ !cancelled() && steps.relevant.outputs.any_changed == 'true' }}
+        run: echo "yes=${{ hashFiles('verdict.json') != '' }}" >> "$GITHUB_OUTPUT"
       - name: Keep the verdict for the publish job
         if: ${{ !cancelled() && steps.relevant.outputs.any_changed == 'true' }}
         uses: actions/upload-artifact@v7
@@ -224,7 +250,9 @@ jobs:
     # own `schema`, and both reviews then publish under one identity and one label map.
     uses: exeris-systems/.github/.github/workflows/publish-verdict.yml@main
     with:
-      verdict-artifact: l2-verdict-${{ github.event.pull_request.number }}
+      verdict-artifact: >-
+        ${{ needs.produce.outputs.verdict-written == 'true'
+            && format('l2-verdict-{0}', github.event.pull_request.number) || '' }}
       execution-artifact: l2-execution-${{ github.event.pull_request.number }}
       expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
