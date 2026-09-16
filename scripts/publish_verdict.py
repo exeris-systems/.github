@@ -53,6 +53,21 @@ PASSING_DECISIONS = frozenset({"PASS", "CONDITIONAL"})
 ABOUT_THE_PULL_REQUEST = frozenset({"fork", "draft-or-bot"})
 SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event"})
 
+# Why a skip of one of those two kinds is a green, keyed by the kind itself. The caller computes the
+# same sentence in a second YAML expression that asks the EVENT over again, and the two disagree: a
+# fork whose event was a label change was described as "the event was a label change", and a
+# `not-ready` run as "a draft or a dependency bump", neither of which was what happened. One of them
+# has to be the authority, and it is the kind — the kind is what the colour is decided from, so a
+# reason derived from anything else is a second opinion about a question already answered. The
+# caller's string stays the fallback for a kind this file does not know; it is no longer consulted
+# for one it does.
+SKIP_IS_GREEN_BECAUSE = {
+    "fork": ("the pull request comes from a fork, which receives no secrets, so the runner has no "
+             "credential to review with"),
+    "draft-or-bot": ("the pull request is a draft or was opened by a bot, and this review reads "
+                     "neither"),
+}
+
 MANDATORY_DEFAULT = "docs-lint,commit-lint,pr-body-check"
 
 # The one green that is not a verdict (§B.8). It is worded so the log says which skip it was:
@@ -610,6 +625,39 @@ def human_review(args) -> tuple[str, str] | None:
     return None
 
 
+def withdraw_notice(plan: dict, args) -> None:
+    """Take back a `not run` notice whose condition has passed.
+
+    The notice is a STATEMENT ABOUT THE PULL REQUEST, not a log line: it tells the author the review
+    is waiting on something and to go fix it. Every branch that publishes one edits it in place on
+    the next run — except the branches that conclude green without a verdict, which wrote nothing at
+    all, so the notice stood next to a green check still naming the thing it waited on. Measured on
+    exeris-ai-execution#1, where `docs-lint` was named as failing forty minutes after it passed and
+    the check beside it read green. §B.8 says green is stated, never inferred; its mirror is that a
+    statement which has stopped being true is withdrawn, not merely outvoted.
+
+    Only an existing `NONE` notice is rewritten, and only when one is actually there. Writing one
+    where none stood would leave `standing_gate` a `NONE` to refuse on the next label event, turning
+    a pull request that is legitimately green red — the fix would have grown the fault it removes.
+    A comment carrying a real verdict is never touched: the marker this searches for names `NONE`.
+    """
+    plan["agent"] = plan["agent"] or args.expect_agent or "unknown"
+    if not (args.comments and os.path.exists(args.comments)):
+        return
+    with open(args.comments, encoding="utf-8") as fh:
+        standing = standing_for(fh.read(), plan["agent"], args.bot_login)
+    if not standing or standing[0] != "NONE":
+        return
+    plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
+    plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
+                       + "\n## L2 review — the earlier notice is withdrawn\n\n"
+                       + "An earlier run left a notice here saying this review was waiting on "
+                       + f"something. It no longer is: {plan['reason']}.\n\n"
+                       + "This note is not a review and records no finding. It takes back a "
+                       + "statement that has stopped being true, so that nothing on this pull "
+                       + "request contradicts the check beside it.\n")
+
+
 def standing_gate(plan: dict, args) -> int:
     """No verdict came out of this run, so the STANDING one decides the colour.
 
@@ -631,6 +679,9 @@ def standing_gate(plan: dict, args) -> int:
         plan.update(conclusion="green",
                     reason=(f"{by_hand[0]} reviewed this workflow change by hand, recorded against "
                             f"{by_hand[1][:7]}"))
+        # The same withdrawal, for the same reason: a person reviewing by hand is what the notice
+        # was waiting for, and the notice does not know that on its own.
+        withdraw_notice(plan, args)
     elif standing is None:
         plan["reason"] = ("no review has run on this pull request yet — apply the review label "
                           "when it is ready to look at")
@@ -756,10 +807,13 @@ def cmd_plan(args) -> int:
         return standing_gate(plan, args)
     if args.produce_outcome == "skipped":
         plan.update(conclusion="green", verdict_source="none",
-                    reason=args.skip_reason or "the producing job did not run")
+                    reason=(SKIP_IS_GREEN_BECAUSE.get(args.skip_kind)
+                            or args.skip_reason or "the producing job did not run"))
+        withdraw_notice(plan, args)
         return finish(plan, args)
     if args.produce_outcome == "success" and args.produce_relevant == "false":
         plan.update(conclusion="green", verdict_source="none", reason=SKIP_DEFAULT)
+        withdraw_notice(plan, args)
         return finish(plan, args)
 
     verdict, source, why = load_verdict(args, lambda d: not schema_errors(d, args.schema))
