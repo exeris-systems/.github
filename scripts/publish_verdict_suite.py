@@ -712,6 +712,37 @@ def main() -> int:
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
+    # Measured on exeris-docs#123. One run found the L1 gates red, published `decision=NONE` — the
+    # marker the publication writes when NO review ran — and was cancelled; the run that replaced it
+    # read that marker back as a standing verdict and went green on a pull request nothing had
+    # reviewed. The publication's own record of its silence was being taken for a pass.
+    @case("a NONE marker is the publication's silence, not a verdict that passes")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="e" * 40,
+                comments=by_bot(marker_line("NONE", "exeris-org-docs-reviewer", "e" * 40)))
+        assert p["conclusion"] == "red", p
+        assert "NONE" in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    @case("a decision this file does not know does not pass either")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="e" * 40,
+                comments=by_bot(marker_line("MAYBE", "exeris-org-docs-reviewer", "e" * 40)))
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    # The other direction: CONDITIONAL is a verdict and it passes, so the correction above must not
+    # turn every standing comment red.
+    @case("a standing CONDITIONAL covering the head is still a green")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
+                head_sha="e" * 40,
+                comments=by_bot(marker_line("CONDITIONAL", "exeris-org-docs-reviewer", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
     @case("a bot-started run is red when the standing verdict is older than the head")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
