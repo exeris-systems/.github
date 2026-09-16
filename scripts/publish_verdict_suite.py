@@ -781,6 +781,24 @@ def main() -> int:
         assert p["labels_add"] == ["needs-l2-review"], p
         assert gate(tmp, p) == 1
 
+    # The reason was split and the published comment was not, so a reader was told three cancelled
+    # gates "did not pass" while the log beside them said cancelled. Measured on exeris-docs#126.
+    @case("the published notice says cancelled where the reason says cancelled")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
+                    "pr-body-check": "cancelled"})
+        assert "were cancelled before they finished" in p["comment"], p["comment"]
+        assert "did not pass" not in p["comment"], p["comment"]
+        assert "may already have them green" in p["comment"], p["comment"]
+
+    @case("the published notice still says did not pass where a gate really failed")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                l1={**GREEN_L1, "docs-lint": "failure"})
+        assert "did not pass: `docs-lint`" in p["comment"], p["comment"]
+        assert "Fix those first" in p["comment"], p["comment"]
+
     @case("a gate that was cancelled is not reported as one that failed")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",

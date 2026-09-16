@@ -712,11 +712,14 @@ def cmd_plan(args) -> int:
         # blamed the gates it had killed.
         cancelled = sorted(g for g in failed_l1 if ci.get(g) == "cancelled")
         broke = [g for g in failed_l1 if g not in cancelled]
-        said = []
+        said, said_md = [], []
         if broke:
             said.append("did not pass: " + ", ".join(broke))
+            said_md.append("did not pass: " + ", ".join(f"`{g}`" for g in broke))
         if cancelled:
             said.append("were cancelled before they finished: " + ", ".join(cancelled))
+            said_md.append("were cancelled before they finished: "
+                           + ", ".join(f"`{g}`" for g in cancelled))
         plan.update(conclusion="red", verdict_source="none",
                     reason="the review did not run because the gates it waits on " + "; ".join(said))
         # The readiness trigger fires once and was being consumed even when it produced nothing: a
@@ -728,10 +731,16 @@ def cmd_plan(args) -> int:
             plan["labels_add"] = [args.review_label]
         plan["agent"] = args.expect_agent or "unknown"
         plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
+        # The same words as the reason above. They were split there and left hardcoded here, so a
+        # reader of the comment was told three cancelled gates "did not pass" while the log beside it
+        # said they were cancelled — the fix reached one of the two places that say the same thing.
+        tail = ("A cancelled gate reported nothing rather than failing: the run carrying it was "
+                "replaced, and the one that replaced it may already have them green.\n"
+                if cancelled and not broke else
+                "Fix those first; the review runs once they are green.\n")
         plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                           + "\n## L2 review — not run\n\nThe L1 gates this review waits on did "
-                           + "not pass: " + ", ".join(f"`{g}`" for g in failed_l1)
-                           + ".\n\nFix those first; the review runs once they are green.\n")
+                           + "\n## L2 review — not run\n\nThe L1 gates this review waits on "
+                           + "; ".join(said_md) + ".\n\n" + tail)
         return finish(plan, args)
     # §B.8's one green without a verdict, and the only one. It is decided here rather than in the
     # workflow's shell because it is the rule most likely to be got wrong and it was: an early crash
