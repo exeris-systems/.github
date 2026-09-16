@@ -276,6 +276,48 @@ def main() -> int:
         assert "hard-block" not in p["labels_remove"], p
         assert p["labels_remove"] == ["doc-debt"], p
 
+    # Measured on exeris-docs#121. The routine returned CONDITIONAL and marked one finding blocking —
+    # the forbidden-import list contradicting the guard it cites — and the gate, reading `decision`
+    # and nothing else, reported green. The comment rendered the finding as **(blocking)** beside a
+    # check saying the pull request was fine.
+    @case("a finding marked blocking blocks, whatever the decision beside it says")
+    def _(tmp):
+        v = verdict(decision="CONDITIONAL",
+                    findings=[finding(tag="CONTRACT", blocking=True,
+                                      location="standards/capability-conventions.md:29")])
+        p = run(root, tmp, verdict_doc=v)
+        assert p["conclusion"] == "red", p
+        assert "blocking" in p["reason"], p
+        assert "capability-conventions.md:29" in p["reason"], p
+        assert gate(tmp, p) == 1
+
+    @case("a PASS is not a way past a finding its own author marked blocking")
+    def _(tmp):
+        v = verdict(findings=[finding(tag="CONTRACT", blocking=True, location="a.md:1")])
+        p = run(root, tmp, verdict_doc=v)
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    # The other direction: a CONDITIONAL whose findings are all non-blocking is still a green, so the
+    # correction does not turn every finding into a block.
+    @case("a CONDITIONAL with nothing marked blocking is still green")
+    def _(tmp):
+        v = verdict(decision="CONDITIONAL", findings=[finding(tag="STYLE")])
+        p = run(root, tmp, verdict_doc=v)
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
+    # And the human path survives it: on a workflow change the routine refuses and marks the refusal
+    # blocking, which is exactly the verdict `l2-human-reviewed` exists to answer.
+    @case("a person's review still answers the blocking refusal on a workflow change")
+    def _(tmp):
+        v = verdict(decision="BLOCKED",
+                    findings=[finding(tag="HARD BLOCK", blocking=True, location="wf.yml:1")])
+        p = run(root, tmp, verdict_doc=v, head_sha="e" * 40, workflow_touching="true",
+                comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
     @case("a mandatory gate reported not-run is published and not green")
     def _(tmp):
         v = verdict()
