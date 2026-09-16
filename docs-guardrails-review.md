@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-15
+last-verified: 2026-09-16
 ---
 
 # Docs & Hygiene Review — Exeris Systems (L2 step, ADR-085 §J.33)
@@ -64,6 +64,14 @@ Every pull request in any Exeris repository, as **Step 1b of `pr-review.md`** �
 ## Step 6 — Changelog and compatibility (changelog-conventions.md)
 24. Release PR: `### Breaking` present and consistent with the japicmp report (Java) or the golden diff (TS); `accepted-api-changes.json` justified; `MIGRATION.md` section for non-empty Breaking → else `[HARD BLOCK]`.
 25. Non-release PR with a `Compatibility impact: breaking (ADR-NNN)` line: is the ADR accepted and does `accepted-api-changes.json` gain the entry in this PR → else `[CONTRACT]`.
+
+## Repository extension
+A calling repository may add to this routine. It may not subtract from it. Two optional inputs carry the extension, and a repository that passes neither gets this routine and nothing else.
+
+- **`repo-routine`** names a file in the calling repository, handed to you as `REPOSITORY EXTENSION`. Read it and the policies it names, and apply it **after** the steps above. It may add checks, raise a severity this routine assigns, or forbid something this routine permits. It may **not** lower a severity, skip a step, or change the output format, the severity tags or the verdict schema below. Those belong to this file: a review whose shape varies by repository is one no shared check can be gated on, and the point of the extension is to stop repositories keeping a whole review workflow of their own to get their rules applied.
+- **`repo-checks`** is a command CI runs in the checked-out repository before you, its combined output and exit code left in the file named as `REPOSITORY CHECK OUTPUT`. **You do not run it.** This runner's harness denies `Bash`, and a routine that asks for what the harness refuses produces a review reporting its own checks as `not-run` — measured, and the reason the command moved into CI. Read the file, judge what it found, and list each script in `checks_run` with what it reported. A non-zero exit is evidence, not a verdict: most repo-local scripts locate candidates rather than decide, so report what was found and let the finding carry the severity, rather than failing the review on an exit code.
+
+Where the extension and this routine disagree about severity, the higher one stands.
 
 ## Output format
 
