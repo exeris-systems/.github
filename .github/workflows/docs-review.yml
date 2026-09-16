@@ -335,7 +335,20 @@ jobs:
     # `always()` is what makes the gate fail-closed: a produce job that crashed, timed out or was
     # cancelled must still reach a publish job that finds no verdict and goes red. Without it the
     # required check would be skipped, and a skipped required check is green.
-    if: ${{ always() && inputs.publish }}
+    # `!cancelled()` and not `always()`, which is a revision of the note above rather than an
+    # oversight of it. That note is right that a SKIPPED required check reads as green, so a produce
+    # job that failed or was skipped must still reach this half — and `!cancelled()` keeps that: it
+    # is false only when the RUN was cancelled, never when a job merely failed.
+    #
+    # What it stops is a dead run publishing. `always()` is true in a cancelled run too, so every run
+    # killed by `concurrency` reached this job, found no verdict and posted a "not run" notice. That
+    # notice is a new comment by design — its marker matches only another notice, so a failed run
+    # cannot erase findings — and the next real verdict then adopts the newest matching comment,
+    # which is that notice, orphaning the verdict comment before it. Measured on exeris-docs#126,
+    # runs 35140258703 and 35140258947: `matched=NONE` then `matched=5703249246`, three comments
+    # where there should be one. A cancelled run has nothing to say, and its checks report as
+    # cancelled rather than green, so nothing is lost by its silence.
+    if: ${{ !cancelled() && inputs.publish }}
     # The publishing half is its own reusable workflow because §B.11 requires more than one producer
     # to reach it: a repository's own `claude-code-review.yml` calls it with the same inputs and its
     # own `schema`, and both reviews then publish under one identity and one label map.
