@@ -68,8 +68,6 @@ on:
       review-label:
         type: string
         default: "needs-l2-review"
-        # Declared here so the caller-facing contract lands with the rest of it; wired to the
-        # publishing half in the pull request after this one, for the reason in `produce` below.
         description: >-
           The label a human applies to ask for a review. A label rather than a comment mention: one
           click instead of writing, an event the caller already receives, and no new permission
@@ -135,21 +133,26 @@ jobs:
     # The actor condition is the same guard from the other side: any bot-initiated run would be
     # refused by the runner and end as a failed produce, which is a red required check for a reason
     # that has nothing to do with the pull request.
-    # STILL ON EVERY PUSH, and the next pull request changes that. The readiness trigger of ADR-087's
-    # 2026-09-16 amendment needs `skip-kind` and `review-label` on the publishing half, and this
-    # workflow reaches that half at `@main` — so an input has to BE on `main` before this file may
-    # pass it. One pull request cannot add an input and use it; the attempt is a startup failure with
-    # zero jobs, which is how this was found. The publishing half of the trigger lands here; the
-    # wiring follows once it is released.
+    # THE REVIEW RUNS ON READINESS (ADR-087, amended 2026-09-16). A verdict is about the commit it
+    # read, and reviewing every push did not honour that so much as hide it — the verdict was fresh
+    # by accident. A human says when the work is ready: by opening it, reopening it, marking it ready
+    # for review, or applying the label. A push afterwards starts nothing and leaves the standing
+    # verdict visibly covering an older commit, which the publish half reports as red.
+    #
+    # The label is the ONLY `labeled` event that starts a review. The bot never applies it, which is
+    # what keeps the publication from triggering itself; every other label change, the bot's own
+    # included, falls through to `not-ready`.
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.fork == false &&
       !contains(inputs.l1-results, '"failure"') &&
       !contains(inputs.l1-results, '"cancelled"') &&
-      github.event.action != 'labeled' &&
-      github.event.action != 'unlabeled' &&
       !endsWith(github.actor, '[bot]') &&
-      github.event.pull_request.user.login != 'dependabot[bot]'
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      (github.event.action == 'opened' ||
+       github.event.action == 'reopened' ||
+       github.event.action == 'ready_for_review' ||
+       (github.event.action == 'labeled' && github.event.label.name == inputs.review-label))
     outputs:
       relevant: ${{ steps.relevant.outputs.any_changed }}
       verdict-written: ${{ steps.wrote.outputs.yes }}
@@ -259,6 +262,19 @@ jobs:
       routine: docs-guardrails-review.md
       mandatory-gates: ${{ inputs.mandatory-gates }}
       l1-results: ${{ inputs.l1-results }}
+      review-label: ${{ inputs.review-label }}
+      # Why the producing job did not run, as a value the publish half branches on. `ready` is a
+      # sentinel rather than the empty string on purpose: GitHub treats `''` as FALSE, so
+      # `(readiness) && ''` falls through to the next `||` and every ready run would report as
+      # `not-ready`. Found by reading the expression back, before it ran.
+      skip-kind: >-
+        ${{ github.event.pull_request.head.repo.fork && 'fork'
+            || (github.event.pull_request.draft || endsWith(github.actor, '[bot]')) && 'draft-or-bot'
+            || (github.event.action == 'opened' || github.event.action == 'reopened'
+                || github.event.action == 'ready_for_review'
+                || (github.event.action == 'labeled'
+                    && github.event.label.name == inputs.review-label)) && 'ready'
+            || 'not-ready' }}
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
       # Three conditions skip the producing job and the reason named two of them, so a fork was
