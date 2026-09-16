@@ -673,6 +673,32 @@ def main() -> int:
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
+    @case("a non-blocking suggestion reaches the reader instead of being dropped")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(
+            suggestions=["The Trigger paragraph could name the caller default explicitly.",
+                         "Consider linking §B.10 from the Verdict section."]))
+        assert "Suggestions" in p["comment"], p["comment"][:400]
+        assert "name the caller default" in p["comment"], p["comment"][:600]
+        assert "none of these blocks" in p["comment"], p["comment"][:400]
+
+    @case("required_validation and handoffs are rendered, not discarded")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(
+            decision="CONDITIONAL", findings=[finding(tag="CONTRACT")],
+            required_validation=["re-run label_map_check.py after the enum changes"],
+            handoffs=[{"from": "exeris-org-docs-reviewer", "to": "exeris-org-docs-reviewer",
+                       "reason": "the schema half belongs to another role", "blocking": False}]))
+        assert "Before this merges, re-check" in p["comment"], p["comment"][:600]
+        assert "label_map_check" in p["comment"], p["comment"][:600]
+        assert "Handed to another role" in p["comment"], p["comment"][:600]
+
+    @case("a verdict carrying none of the three says nothing about them")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict())
+        for heading in ("Suggestions", "Before this merges", "Handed to another role"):
+            assert heading not in p["comment"], (heading, p["comment"][:300])
+
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):
         # Two copies of one rule, and the header of `docs-review.yml` claims "there is exactly one

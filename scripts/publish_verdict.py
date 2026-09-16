@@ -447,6 +447,28 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
         out.append("")
     else:
         out += ["No findings.", ""]
+    # Three fields the schema carries and the comment dropped. A review that writes a non-blocking
+    # nit, or names what must be re-checked before merge, or says another role has to look, had all
+    # of it discarded between the verdict and the page a human reads — so the reader saw "No
+    # findings" where the reviewer had written several paragraphs.
+    suggestions = [s for s in (verdict.get("suggestions") or []) if s]
+    if suggestions:
+        out += ["### Suggestions — none of these blocks the merge", ""]
+        out += [f"- {plain(s)}" for s in suggestions]
+        out.append("")
+    required = [r for r in (verdict.get("required_validation") or []) if r]
+    if required:
+        out += ["### Before this merges, re-check", ""]
+        out += [f"- {plain(r)}" for r in required]
+        out.append("")
+    handoffs = [h for h in (verdict.get("handoffs") or []) if isinstance(h, dict)]
+    if handoffs:
+        out += ["### Handed to another role", ""]
+        for h in handoffs:
+            block = " **(blocking)**" if h.get("blocking") else ""
+            out.append(f"- {plain(h.get('from'))} → {plain(h.get('to'))}{block}: "
+                       f"{plain(h.get('reason'))}")
+        out.append("")
     checks = verdict.get("checks_run") or []
     if checks:
         out += ["### Gates the review read", ""]
