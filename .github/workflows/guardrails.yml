@@ -136,3 +136,10 @@ jobs:
         run: |
           pip install --quiet jsonschema referencing
           python scripts/publish_verdict_suite.py --root .
+      # The half the suite above cannot reach: it drives the planner with `--workflow-touching`
+      # already computed, so the shell that computes it was cited as covered and was not. A wrong
+      # `true` there is a fail-open — it is what lets `l2-human-reviewed` green a check with no
+      # review behind it.
+      - name: The entry-workflow question, one case per way of getting it wrong
+        if: ${{ !cancelled() }}
+        run: python scripts/entry_workflow_suite.py

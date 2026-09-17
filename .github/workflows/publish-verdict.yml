@@ -306,16 +306,16 @@ jobs:
           # `l2-human-reviewed` green a required check without a review, so a test that is too broad
           # hands that power to pull requests a review could have judged — the fail-open this
           # narrowing closes.
-          entry="${GITHUB_WORKFLOW_REF%%@*}"
-          entry="${entry#"$REPO"/}"
-          echo "::notice::publish_verdict: entry workflow is [$entry]"
-          # `grep -q` inside `if` rather than a bare `grep`: a non-match exits 1, and under `errexit`
-          # that ends the step instead of answering the question. This file has paid for that once.
-          if [ -n "$entry" ] && printf '%s\n' "$files" | grep -qxF "$entry"; then
-            echo "touching=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "touching=false" >> "$GITHUB_OUTPUT"
-          fi
+          # The derivation lives in `scripts/entry_workflow.sh`, driven by
+          # `scripts/entry_workflow_suite.py`. It was inline until a review pointed out that
+          # the suite this file cites drives the PYTHON planner with `--workflow-touching`
+          # already computed, and touches this logic nowhere — a check cited as proof of
+          # something it does not reach. A step that fetches the list and decides in one
+          # breath cannot be driven by a fixture; this half takes the list on stdin.
+          touching=$(printf '%s\n' "$files" \
+            | .guardrails/scripts/entry_workflow.sh "$GITHUB_WORKFLOW_REF" "$REPO")
+          echo "::notice::publish_verdict: entry workflow changed by this pull request: $touching"
+          echo "touching=$touching" >> "$GITHUB_OUTPUT"
       - name: Plan the publication
         env:
           OUTCOME: ${{ inputs.produce-outcome }}
