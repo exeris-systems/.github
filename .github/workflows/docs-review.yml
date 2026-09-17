@@ -215,6 +215,44 @@ jobs:
           code=$?
           printf '\n--- repo-checks exit code: %s ---\n' "$code" >>repo-checks.out
           echo "::notice::this repository's own checks exited $code; the reviewer reads repo-checks.out"
+      # The reviewer does not call GitHub. CI does, over REST, and hands the result over — the same
+      # shape as `l1-results` above and `repo-checks.out` beside it.
+      #
+      # REST rather than `gh pr view`: the porcelain wraps GraphQL and asks for fields the task never
+      # needs, so it breaks on deprecations that have nothing to do with the request, and it breaks
+      # in ways that do not look like failure. Measured 2026-09-17: `gh pr edit --add-label` returned
+      # a `Projects (classic)` GraphQL deprecation and DID NOT APPLY THE LABEL, and
+      # `gh pr checks --json` is not a flag this `gh` carries. Neither read as "this did not work".
+      #
+      # Handing the data over is the stronger form of that rule than allowing the call would be. A
+      # reviewer with no GitHub access cannot reach it wrongly; the fields are identical on every
+      # review instead of being whatever the model thought to ask for; and 64 denied `gh pr view`
+      # calls across the logs these repositories held that day were followed by `find /`, `printenv`,
+      # `curl` and `WebFetch` — a model improvising its way to data nobody had given it.
+      - name: The pull request, read by CI and handed over
+        if: ${{ steps.relevant.outputs.any_changed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$PR_REPO/pulls/$PR_NUMBER" > pr.api.json
+          gh api --paginate "repos/$PR_REPO/pulls/$PR_NUMBER/files" > pr.files.json
+          jq -n --slurpfile pr pr.api.json --slurpfile files pr.files.json '{
+            number:  $pr[0].number,
+            title:   $pr[0].title,
+            body:    $pr[0].body,
+            author:  $pr[0].user.login,
+            draft:   $pr[0].draft,
+            base:    {ref: $pr[0].base.ref, sha: $pr[0].base.sha},
+            head:    {ref: $pr[0].head.ref, sha: $pr[0].head.sha},
+            labels:  [$pr[0].labels[].name],
+            files:   [$files[][] | {path: .filename, status: .status,
+                                    additions: .additions, deletions: .deletions}]
+          }' > pull-request.json
+          rm -f pr.api.json pr.files.json
+          echo "::notice::pull-request.json: $(jq '.files | length' pull-request.json) changed file(s)"
       - name: Docs and hygiene review
         id: review
         if: ${{ steps.relevant.outputs.any_changed == 'true' }}
@@ -253,7 +291,7 @@ jobs:
           # publish half can find a verdict, since a runner that posts writes its verdict into a tool
           # call and reports "Review posted" as its text.
           claude_args: |
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*)"
           prompt: |
             Review pull request ${{ github.event.pull_request.number }} in
             ${{ github.repository }} against the documentation and hygiene review routine in
@@ -267,6 +305,12 @@ jobs:
             review the substance those gates cannot judge.
 
             L1 GATE RESULTS: ${{ inputs.l1-results }}
+
+            The pull request itself is in `pull-request.json` in the root of the checkout: title,
+            body, author, labels, base and head, and every changed file with its status. Read it —
+            it is the whole of what a `gh` call would have told you, and you have no GitHub access
+            to make one with. The diff is the checkout: `git diff` against the base SHA that file
+            names.
 
             This repository may extend the routine with rules of its own. The routine's
             `## Repository extension` section says how far that goes and what it may not touch;
