@@ -500,6 +500,7 @@ def provenance(args) -> list[str]:
         except (json.JSONDecodeError, OSError):
             doc = None
         model = harness = version = None
+        billed: list[str] = []
         if isinstance(doc, dict):
             model = doc.get("model") or doc.get("model_id") or (doc.get("usage") or {}).get("model")
             h = doc.get("harness") if isinstance(doc.get("harness"), dict) else {}
@@ -507,17 +508,36 @@ def provenance(args) -> list[str]:
             version = h.get("version") or doc.get("version")
         elif isinstance(doc, list):
             # The shape the runner actually writes: an event list whose `system`/`init` event names
-            # the model and the harness version, and whose `result` event names every model used.
+            # the model and the harness version, and whose `result` event names every model BILLED.
+            # Those are two questions and this line used to answer the first with the second.
+            # Measured over every execution log these repositories held on 2026-09-17: the ledger
+            # names two models in every run, and in every run one of them produces no assistant turn
+            # and spawns no subagent — the harness consulting a model for its own purposes. A footer
+            # built from the ledger states that model reviewed the pull request, which it did not.
+            # The stream says who acted; the ledger says who was billed. ADR-086, amendment of
+            # 2026-09-17.
             init = next((e for e in doc if isinstance(e, dict) and e.get("type") == "system"
                          and e.get("subtype") == "init"), {})
             result = next((e for e in doc if isinstance(e, dict)
                            and e.get("type") == "result"), {})
-            used = sorted((result.get("modelUsage") or {}))
-            model = ", ".join(used) or init.get("model")
+            acted: list[str] = []
+            for event in doc:
+                if isinstance(event, dict) and event.get("type") == "assistant":
+                    spoke = (event.get("message") or {}).get("model")
+                    if spoke and spoke not in acted:
+                        acted.append(spoke)
+            model = ", ".join(acted) or init.get("model")
+            # Named, never hidden: instrument cost is a published line item (ADR-086 §E.26), and a
+            # footer that drops the second model entirely trades one wrong answer for another.
+            billed = [m for m in sorted(result.get("modelUsage") or {})
+                      if m not in acted and m != model]
             version = init.get("claude_code_version")
             harness = "claude-code" if version else None
         lines.append(f"model: {plain(model)}" if model else
                      "model: the execution log carries no model id")
+        if billed:
+            lines.append("harness-side, billed with no turn in the stream: "
+                         + ", ".join(f"`{plain(m)}`" for m in billed))
         # §A.3 names provider, model id, harness AND version, and "provenance survives a swap" is
         # the reason: a footer that cannot say which client ran, at what version, cannot tell one
         # runner from another after the swap it exists to survive. Absent is said, never implied.

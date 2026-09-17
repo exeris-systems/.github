@@ -1178,6 +1178,44 @@ def main() -> int:
         assert "did not pass" in p["comment"], p["comment"][:200]
         assert "cancelled" not in p["comment"], p["comment"][:200]
 
+    # The usage ledger answers "who was billed"; the event stream answers "who acted". The footer
+    # asked the first and printed the answer as the second, so every verdict named a model the
+    # harness had consulted for its own purposes as one of the reviewers. Measured over every
+    # execution log these repositories held on 2026-09-17: two models in the ledger of every run,
+    # one of them with no assistant turn anywhere.
+    @case("the footer names the model that took the turns, not every model in the ledger")
+    def _(tmp):
+        log = [
+            {"type": "system", "subtype": "init", "model": "claude-sonnet-5",
+             "claude_code_version": "2.1.274"},
+            {"type": "assistant", "message": {"model": "claude-sonnet-5", "content": [
+                {"type": "text", "text": "Prose about the review.\n\n```json\n"
+                                         + json.dumps(verdict()) + "\n```"}]}},
+            {"type": "result", "subtype": "success", "result": "",
+             "modelUsage": {"claude-sonnet-5": {}, "claude-haiku-4-5-20251001": {}}},
+        ]
+        p = run(root, tmp, verdict_doc=verdict(), execution_log=log)
+        assert "model: claude-sonnet-5\n" in p["comment"] + "\n", p["comment"][-500:]
+        # The other model is named, but as what it is.
+        assert "harness-side, billed with no turn in the stream: `claude-haiku-4-5-20251001`" \
+            in p["comment"], p["comment"][-500:]
+        # And never as a reviewer.
+        assert "model: claude-haiku" not in p["comment"], p["comment"][-500:]
+        assert "claude-haiku-4-5-20251001, claude-sonnet-5" not in p["comment"], p["comment"][-500:]
+
+    @case("a log with one model names no harness-side line at all")
+    def _(tmp):
+        log = [
+            {"type": "system", "subtype": "init", "model": "claude-sonnet-5",
+             "claude_code_version": "2.1.274"},
+            {"type": "assistant", "message": {"model": "claude-sonnet-5", "content": [
+                {"type": "text", "text": "```json\n" + json.dumps(verdict()) + "\n```"}]}},
+            {"type": "result", "subtype": "success", "result": "",
+             "modelUsage": {"claude-sonnet-5": {}}},
+        ]
+        p = run(root, tmp, verdict_doc=verdict(), execution_log=log)
+        assert "harness-side" not in p["comment"], p["comment"][-400:]
+
     failures = 0
     for name, fn in cases:
         with tempfile.TemporaryDirectory() as tmp:
