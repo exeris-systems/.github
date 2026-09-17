@@ -143,8 +143,8 @@ def override_marker(by: str, sha: str) -> str:
     return f"<!-- exeris-bot: l2-override by={by} sha={sha} -->"
 
 
-def standing_override(comments_json: str, bot_login: str) -> tuple[str, str] | None:
-    """The last human review recorded on this pull request, as `(login, sha)`.
+def standing_override(comments_json: str, bot_login: str) -> tuple[str, str, str] | None:
+    """The last human review recorded on this pull request, as `(login, sha, when)`.
 
     Read only from comments the BOT wrote, for the reason `standing_verdicts` gives: the marker is
     plain text in a public comment, and this one greens a required check. A person types the label;
@@ -156,7 +156,7 @@ def standing_override(comments_json: str, bot_login: str) -> tuple[str, str] | N
             continue
         m = OVERRIDE_RE.match(c["body"])
         if m:
-            found = (m.group(1), m.group(2))
+            found = (m.group(1), m.group(2), c.get("updated_at") or c.get("created_at") or "")
     return found
 
 
@@ -674,27 +674,37 @@ def blocking_findings(verdict: dict) -> list[str]:
             for f in (verdict.get("findings") or []) if f.get("blocking") is True]
 
 
-def human_review(args) -> tuple[str, str] | None:
+def human_review(args) -> tuple[str, str, str] | None:
     """A standing human review that still covers this head, or None.
 
-    Scoped to a pull request that changes `.github/workflows/`, which is the one case the routine
-    cannot read at all: `claude-code-action` refuses to start when a workflow file differs from the
-    default branch's copy, so its BLOCKED there is a refusal rather than a judgement. Anywhere else
-    the review decides and this is not a way around it — the label is taken off and ignored.
-
-    It ages exactly as a verdict does. The record carries the commit the person looked at, so the
-    next push leaves it behind and the check goes red again rather than trading on an old reading.
+    NOT scoped to a workflow change. It was, and that was half a rule: the branch that RECORDS an
+    override was made universal while this one — the half every later run reads — still refused
+    anything but a workflow change. The two disagreed in the gap between them, and the gap is one
+    second wide: recording an override removes the label, the removal is an `unlabeled` event, that
+    event reruns the workflow on the same commit with no `override_by`, and the rerun asks this
+    function, which refused the record written a moment earlier. The check went green and back to
+    red with nothing pushed. Found by the review reading the code rather than the prose, on the
+    pull request that shipped the other half.
     """
-    if not truthy(args.workflow_touching):
-        return None
     if not (args.comments and os.path.exists(args.comments)):
         return None
     with open(args.comments, encoding="utf-8") as fh:
-        standing = standing_override(fh.read(), args.bot_login)
+        dump = fh.read()
+    standing = standing_override(dump, args.bot_login)
     head = (args.head_sha or "")[:7]
-    if standing and head and standing[1][:7] == head:
-        return standing
-    return None
+    if not (standing and head and standing[1][:7] == head):
+        return None
+    # A BLOCK THAT ARRIVED AFTER THE RECORD IS NOT ANSWERED BY IT. The condition belongs to the
+    # moment the override was made — the branch that records one refuses to green a standing block
+    # the person has not answered — and re-deriving it here would ask the same question twice and
+    # risk two answers. What this does ask is whether a block has landed SINCE, which the record
+    # cannot have answered because it did not exist yet. Re-reviews on one commit are ordinary, so
+    # this is not a hypothetical.
+    blocked_at = blocking_standing(dump, args.expect_agent or "unknown", args.bot_login,
+                                   args.head_sha or "")
+    if blocked_at and standing[2] and blocked_at > standing[2]:
+        return None
+    return standing
 
 
 def restate_notice(plan: dict, args, said: str) -> None:
@@ -747,8 +757,8 @@ def standing_gate(plan: dict, args) -> int:
     by_hand = human_review(args)
     if by_hand:
         plan.update(conclusion="green",
-                    reason=(f"{by_hand[0]} reviewed this workflow change by hand, recorded against "
-                            f"{by_hand[1][:7]}"))
+                    reason=(f"{by_hand[0]} reviewed this by hand, recorded against "
+                            f"{by_hand[1][:7]} — a human review outranks this routine's"))
         # The same restatement: a person reviewing by hand is the current state of this pull
         # request, and the standing notice has no way to learn that on its own.
         restate_notice(plan, args, f"`{plain(by_hand[0])}` reviewed this change by hand, "
@@ -1059,8 +1069,8 @@ def cmd_plan(args) -> int:
     elif decision == "BLOCKED" and human_review(args):
         by_hand = human_review(args)
         plan["conclusion"] = "green"
-        plan["reason"] = (f"the verdict is BLOCKED because this routine cannot read a workflow "
-                          f"change, and {by_hand[0]} reviewed it by hand against {by_hand[1][:7]}")
+        plan["reason"] = (f"the verdict is BLOCKED and {by_hand[0]} reviewed this by hand against "
+                          f"{by_hand[1][:7]} — a human review outranks this routine's")
     elif decision == "BLOCKED":
         plan["reason"] = "the verdict is BLOCKED"
     elif blocking_findings(verdict):

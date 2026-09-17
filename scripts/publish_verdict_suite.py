@@ -948,13 +948,37 @@ def main() -> int:
         assert "arkstack" in p["reason"], p
         assert gate(tmp, p) == 0
 
-    # Scope. Off a workflow change the routine CAN read the pull request, so the label is not a way
-    # around a review that ran and blocked it.
-    @case("a human review does not green a BLOCKED verdict on an ordinary pull request")
+    # This case asserted the opposite until 2026-09-17, when the override stopped being scoped to a
+    # workflow change. The record IS the answer: the branch that writes one refuses to write it over
+    # an unanswered block, so a later run reads the record rather than re-deriving the condition.
+    @case("a standing human review greens a BLOCKED verdict on an ordinary pull request")
     def _(tmp):
         p = run(root, tmp, verdict_doc=verdict(decision="BLOCKED",
                                     findings=[finding(tag="HARD BLOCK", blocking=True)]), head_sha="e" * 40, l1=GREEN_L1,
                 comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert "outranks this routine" in p["reason"], p["reason"]
+        assert gate(tmp, p) == 0
+
+    # THE GAP THE REVIEW FOUND, one second wide: recording an override removes the label, the
+    # removal is an `unlabeled` event, that event reruns on the same commit with no `override_by`,
+    # and the rerun reads `human_review()`. While that half was still scoped to a workflow change it
+    # refused the record written a moment earlier, and the check went green and back to red with
+    # nothing pushed.
+    @case("the rerun that follows the label's own removal reads the record, not the scope")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, skip_kind="not-ready",
+                comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert gate(tmp, p) == 0
+
+    # A block the record cannot have answered, because it did not exist when the record was made.
+    @case("a block that lands after the override is not answered by it")
+    def _(tmp):
+        over = by_bot(override_line("arkstack", "e" * 40), 2)
+        later = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 5)
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, skip_kind="not-ready",
+                comments=[over, later])
         assert p["conclusion"] == "red", p
         assert gate(tmp, p) == 1
 
