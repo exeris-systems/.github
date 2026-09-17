@@ -784,6 +784,20 @@ def cmd_plan(args) -> int:
                            + ", ".join(f"`{g}`" for g in cancelled))
         plan.update(conclusion="red", verdict_source="none",
                     reason="the review did not run because the gates it waits on " + "; ".join(said))
+        # A cancelled run has nothing to say, and saying it is how a pull request ends up with a
+        # notice naming gates that are green in the run which replaced this one.
+        #
+        # `!cancelled()` on the publish job does NOT keep this run out of here, and the reason is not
+        # a race. The caller enters this workflow through a job carrying `if: always()`, so inside
+        # the called workflow nothing was cancelled and the function is false. Measured on
+        # exeris-docs#121: three gates cancelled at 05:34:03, and the publish job STARTED at
+        # 05:34:42 — thirty-nine seconds after the cancellation was already recorded on them.
+        #
+        # So the decision is taken from the gate results, which no workflow expression can
+        # misreport: when every gate that is not green was cancelled rather than broken, this run
+        # was replaced, the run that replaced it reports the same check name, and there is nothing
+        # here for a reader. The check still goes red — a cancelled run is not evidence of a green
+        # one, and §B.8's fail-closed half does not soften because the cause was concurrency.
         # The readiness trigger fires once and was being consumed even when it produced nothing: a
         # run that WAS ready but lost its gates left the pull request with no review and no way back
         # to one except a human re-applying the label. The request is re-applied here, so the next
@@ -792,6 +806,10 @@ def cmd_plan(args) -> int:
         if args.skip_kind == "ready" and args.review_label:
             plan["labels_add"] = [args.review_label]
         plan["agent"] = args.expect_agent or "unknown"
+        # Nothing a READER sees. The label above is the request being put back, which the next run
+        # needs; a comment is addressed to a person, and this run has nothing to tell one.
+        if cancelled and not broke:
+            return finish(plan, args)
         plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
         # The same words as the reason above. They were split there and left hardcoded here, so a
         # reader of the comment was told three cancelled gates "did not pass" while the log beside it

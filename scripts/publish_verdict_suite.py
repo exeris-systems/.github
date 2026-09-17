@@ -791,16 +791,17 @@ def main() -> int:
         assert p["labels_add"] == ["needs-l2-review"], p
         assert gate(tmp, p) == 1
 
-    # The reason was split and the published comment was not, so a reader was told three cancelled
-    # gates "did not pass" while the log beside them said cancelled. Measured on exeris-docs#126.
-    @case("the published notice says cancelled where the reason says cancelled")
+    # This case used to assert the WORDING of the notice a fully cancelled run published: the reason
+    # had been split into cancelled-versus-failed and the comment had not, so a reader was told three
+    # cancelled gates "did not pass". The wording is no longer the question — such a run publishes
+    # nothing, which is what `!cancelled()` was supposed to achieve and does not.
+    @case("a fully cancelled run leaves the reason in the log and nothing on the pull request")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
                 l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
                     "pr-body-check": "cancelled"})
-        assert "were cancelled before they finished" in p["comment"], p["comment"]
-        assert "did not pass" not in p["comment"], p["comment"]
-        assert "may already have them green" in p["comment"], p["comment"]
+        assert "were cancelled before they finished" in p["reason"], p["reason"]
+        assert p["comment"] == "" and p["marker_search"] == "", p
 
     @case("the published notice still says did not pass where a gate really failed")
     def _(tmp):
@@ -1144,6 +1145,38 @@ def main() -> int:
         # falls to `standing_gate` and is not green at all — which is the fail-closed half.
         p = run(root, tmp, outcome="skipped", skip_kind="martian", skip_reason="who knows")
         assert p["conclusion"] == "red", p
+
+    # A run killed by `concurrency` is not evidence about the pull request, and the run that killed
+    # it reports the same check name a minute later. `!cancelled()` on the publish job does not keep
+    # it out: the caller enters the called workflow through a job carrying `always()`. Measured on
+    # exeris-docs#121 — gates cancelled at 05:34:03, publish job started 05:34:42.
+    @case("a cancelled run stays red and still puts the review request back")
+    def _(tmp):
+        all_cancelled = {"docs-lint": "cancelled", "commit-lint": "cancelled",
+                         "pr-body-check": "cancelled"}
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=all_cancelled,
+                head_sha="b" * 40)
+        # Silent, but not green: a run that was replaced is not evidence of a passing one.
+        assert p["conclusion"] == "red" and p["comment"] == "", p
+        assert p["labels_add"] == ["needs-l2-review"], p
+        assert gate(tmp, p) == 1
+
+    @case("one broken gate among cancelled ones is still worth saying")
+    def _(tmp):
+        mixed = {"docs-lint": "failure", "commit-lint": "cancelled", "pr-body-check": "success"}
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=mixed, head_sha="b" * 40)
+        assert p["conclusion"] == "red", p
+        assert "did not pass" in p["comment"] and "`docs-lint`" in p["comment"], p["comment"][:250]
+        assert "cancelled" in p["comment"] and "`commit-lint`" in p["comment"], p["comment"][:250]
+        # The review was asked for and never happened, so the request is put back.
+        assert p["labels_add"] == ["needs-l2-review"], p
+
+    @case("gates that simply failed are named, and the run is not treated as replaced")
+    def _(tmp):
+        broke = {"docs-lint": "failure", "commit-lint": "success", "pr-body-check": "success"}
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=broke, head_sha="b" * 40)
+        assert "did not pass" in p["comment"], p["comment"][:200]
+        assert "cancelled" not in p["comment"], p["comment"][:200]
 
     failures = 0
     for name, fn in cases:
