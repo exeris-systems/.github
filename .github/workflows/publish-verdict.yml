@@ -279,18 +279,39 @@ jobs:
       # exactly the events where a human review matters, so its path filter cannot answer it. A
       # failure here fails the step and the gate with it, which is the right way round — answering
       # `false` because a query broke would hand the override to pull requests it does not cover.
-      - name: Does this pull request change a workflow file?
+      - name: Does this pull request change the workflow this run entered through?
         id: workflows
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
           files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          # THE ENTRY workflow, not any workflow. `GITHUB_WORKFLOW_REF` names the file whose `on:`
+          # started this run — `owner/repo/.github/workflows/guardrails.yml@refs/pull/N/merge` —
+          # and the runner action's guard is about that file: it refuses when the workflow it was
+          # invoked from differs from the default branch's copy. A REUSABLE workflow this run calls
+          # is not that file, and a pull request changing one is reviewed normally.
+          #
+          # Measured 2026-09-17, two runs of different shapes. `exeris-ai-execution#4` changes its
+          # own `guardrails.yml`, the entry: the model step lasted five seconds and produced no
+          # verdict — the refusal. `exeris-systems/.github#56` changes `docs-review.yml`, which this
+          # repository calls but does not enter through: the model step ran six and a half minutes
+          # and produced a full verdict. Both are explained by the entry file and neither by "any
+          # file under .github/workflows/", which is what this test asked before.
+          #
+          # It matters in the direction of the override. `workflow_touching` is what lets
+          # `l2-human-reviewed` green a required check without a review, so a test that is too broad
+          # hands that power to pull requests a review could have judged — the fail-open this
+          # narrowing closes.
+          entry="${GITHUB_WORKFLOW_REF%%@*}"
+          entry="${entry#"$REPO"/}"
+          echo "::notice::publish_verdict: entry workflow is [$entry]"
           # `grep -q` inside `if` rather than a bare `grep`: a non-match exits 1, and under `errexit`
           # that ends the step instead of answering the question. This file has paid for that once.
-          if printf '%s\n' "$files" | grep -q '^\.github/workflows/'; then
+          if [ -n "$entry" ] && printf '%s\n' "$files" | grep -qxF "$entry"; then
             echo "touching=true" >> "$GITHUB_OUTPUT"
           else
             echo "touching=false" >> "$GITHUB_OUTPUT"
