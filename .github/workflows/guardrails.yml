@@ -74,6 +74,20 @@ jobs:
         {"docs-lint": "${{ needs.docs.result }}",
          "commit-lint": "${{ needs.commits.result }}",
          "pr-body-check": "${{ needs.pr-body.result }}"}
+      # THIS REPOSITORY'S OWN RULES, alongside the organisation's — the same seam every other
+      # repository gets, finally used by the repository that built it. The shared routine judges
+      # prose and pull request bodies; nothing judged the Python that decides required checks, the
+      # YAML that decides what runs, or the routine file every reviewer reads at `main`.
+      repo-routine: repo-review-rules.md
+      # The checks this repository already runs, handed to the reviewer as output rather than left
+      # as a job result it cannot see. CI runs them because the runner's harness denies Bash.
+      # `;` and not `&&`: a check that exits non-zero has something to say, and `&&` would stop the
+      # list at the first one that did.
+      repo-checks: >-
+        python3 scripts/publish_verdict_suite.py --root .;
+        python3 scripts/entry_workflow_suite.py;
+        python3 scripts/label_map_check.py;
+        python3 scripts/caller_permissions_check.py
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
