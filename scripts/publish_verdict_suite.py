@@ -1216,6 +1216,37 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict(), execution_log=log)
         assert "harness-side" not in p["comment"], p["comment"][-400:]
 
+    # A notice that sends a person to read a log for something it could have said is a correct
+    # message and a useless one. The refusal has a signature — workflow touched, no verdict, and no
+    # execution log, because the runner stopped before writing one — and all three are asked for
+    # together. Measured on `.github`#57, whose model step lasted five seconds and whose
+    # `l2-execution-57` artefact was never uploaded.
+    @case("a refusal by the runner is named, and names the way through")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, workflow_touching="true", head_sha="a" * 40)
+        assert p["conclusion"] == "red", p
+        assert "enters through" in p["comment"], p["comment"][:300]
+        assert "`l2-human-reviewed`" in p["comment"], p["comment"][:300]
+        assert "look at its log" not in p["comment"], p["comment"][:300]
+        assert gate(tmp, p) == 1
+
+    # The conjunction is the whole of it. A model that RAN and produced nothing left a log, and it
+    # is a different fault: sending its author to apply a review label sends them to the wrong
+    # place.
+    @case("a producer that ran and produced nothing is not called a refusal")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, workflow_touching="true", head_sha="a" * 40,
+                execution_log=exec_log())
+        assert p["conclusion"] == "red", p
+        assert "enters through" not in p["comment"], p["comment"][:300]
+        assert "look at its log" in p["comment"], p["comment"][:300]
+
+    @case("a pull request touching no workflow is never called a refusal")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="a" * 40)
+        assert "enters through" not in p["comment"], p["comment"][:300]
+        assert "look at its log" in p["comment"], p["comment"][:300]
+
     failures = 0
     for name, fn in cases:
         with tempfile.TemporaryDirectory() as tmp:

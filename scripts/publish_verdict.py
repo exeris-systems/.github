@@ -870,8 +870,26 @@ def cmd_plan(args) -> int:
     plan["verdict_source"] = source
     if verdict is None:
         plan["agent"] = args.expect_agent or "unknown"
-        plan["reason"] = (f"no verdict to publish: {why}. The producing job reported "
-                          f"`{args.produce_outcome or 'unknown'}`.")
+        # WHEN WE KNOW WHY, SAY WHY. The runner refuses to start on a pull request that changes the
+        # workflow file the run enters through, and a refusal leaves a signature: the produce job
+        # reports success, no verdict exists, and no execution log was uploaded either, because the
+        # runner stopped before writing one. All three together are the refusal; any one of them
+        # alone is not, which is why this asks for the conjunction. A model that ran and produced
+        # nothing DID leave a log, and it gets the general message — it is a different fault and
+        # sending its author to apply a review label would be sending them to the wrong place.
+        #
+        # `Re-run the job, or look at its log` is the right advice only while nobody knows the
+        # cause. Here the publish half knows it deterministically, and a notice that tells a person
+        # to go read a log for something the notice could have said is how a correct message
+        # becomes a useless one.
+        refused = (truthy(args.workflow_touching)
+                   and not (args.execution_log and os.path.exists(args.execution_log)))
+        plan["reason"] = (
+            "no verdict to publish: the runner refuses a pull request that changes the workflow "
+            "this run enters through, and left no execution log, which is that refusal"
+            if refused else
+            f"no verdict to publish: {why}. The producing job reported "
+            f"`{args.produce_outcome or 'unknown'}`.")
         # The absent verdict is the case §B.9's reasoning matters most for, and it was the one case
         # that posted nothing: a required check went red with the explanation only in a job log.
         # Replaces only a previous no-verdict notice, never a comment carrying a real verdict. A
@@ -879,12 +897,24 @@ def cmd_plan(args) -> int:
         # findings somebody has to act on, and the pull request lost them. Both can stand: the last
         # verdict, and a note that a later run reached none.
         plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
-        plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                           + "\n## L2 review — no verdict\n\n"
-                           + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
-                           + f"{why}.\n\nThe required check is red because nothing was reviewed, "
-                             "not because a review found something. Re-run the job, or look at its "
-                             "log to see why it produced nothing.\n")
+        if refused:
+            plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
+                               + "\n## L2 review — not run\n\n"
+                               + "This pull request changes the workflow file this run enters "
+                               + "through, and the runner refuses to start on one: its own "
+                               + "supply-chain guard, which no caller can configure away. Nothing "
+                               + "was reviewed, and the required check is red rather than green so "
+                               + "that nobody reads the absence as a pass.\n\n"
+                               + "A person reviews the change and applies `"
+                               + plain(args.override_label or "l2-human-reviewed")
+                               + "`. The record covers this commit and nothing after it.\n")
+        else:
+            plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
+                               + "\n## L2 review — no verdict\n\n"
+                               + f"The producing job reported `{args.produce_outcome or 'unknown'}` "
+                               + f"and {why}.\n\nThe required check is red because nothing was "
+                                 "reviewed, not because a review found something. Re-run the job, "
+                                 "or look at its log to see why it produced nothing.\n")
         return finish(plan, args)
 
     plan["agent"] = str(verdict.get("agent", ""))
