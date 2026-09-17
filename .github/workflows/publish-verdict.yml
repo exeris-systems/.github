@@ -338,12 +338,21 @@ jobs:
           # `with:` key would have made the whole feature wait for a second pull request, because a
           # caller pinned to `@main` may only pass inputs that already exist there.
           #
-          # `github.actor` is who applied the label. It is checked against `[bot]` because a label a
-          # bot could apply would be a gate able to green itself.
+          # `github.event.sender` is the payload's own record of WHO APPLIED THE LABEL.
+          # `github.actor` was asked before and is a different question — who started the run — and
+          # the two part company on a re-run, where the payload still names the labeller and
+          # `github.actor` names whoever pressed the button.
+          #
+          # The login and the TYPE both travel; neither decides here. Deciding here is what this
+          # changes: `!endsWith(github.actor, '[bot]')` was a rule in a workflow expression, where
+          # nothing can test it, and dropping the override was all it did — the label stayed on the
+          # pull request claiming a human review that had not happened. The planner refuses it,
+          # takes the label off and writes down that it did.
           OVERRIDE_BY: >-
             ${{ (github.event.action == 'labeled'
-                 && github.event.label.name == inputs.override-label
-                 && !endsWith(github.actor, '[bot]')) && github.actor || '' }}
+                 && github.event.label.name == inputs.override-label)
+                && github.event.sender.login || '' }}
+          OVERRIDE_BY_TYPE: ${{ github.event.sender.type }}
           WORKFLOW_TOUCHING: ${{ steps.workflows.outputs.touching }}
           PIN_PROBLEM: ${{ steps.pin.outputs.problem }}
           ROUTINE_SHA: ${{ steps.contract.outputs.sha }}
@@ -384,6 +393,7 @@ jobs:
             --review-label "$REVIEW_LABEL" \
             --override-label "$OVERRIDE_LABEL" \
             --override-by "$OVERRIDE_BY" \
+            --override-by-type "$OVERRIDE_BY_TYPE" \
             --workflow-touching "$WORKFLOW_TOUCHING" \
             --current-labels-file current-labels.txt
       # The only step that writes, and it writes as `exeris-bot` — the organisation's byline, never

@@ -162,10 +162,21 @@ jobs:
     # for review, or applying the label. A push afterwards starts nothing and leaves the standing
     # verdict visibly covering an older commit, which the publish half reports as red.
     #
-    # The label is the ONLY `labeled` event that starts a review. The bot never applies it, which is
-    # what keeps the publication from triggering itself; every other label change, the bot's own
-    # included, falls through to `not-ready`.
+    # THE PRINCIPAL THAT ASKS IS CHECKED, NOT ASSUMED. "The bot never applies the request label"
+    # was a policy, and a policy is a sentence in a comment: nothing refused a run where a bot had.
+    # The condition was `contains(labels, review-label)`, true on ANY event while the label sits
+    # there — including the publication's own label changes, since it adds a verdict label before it
+    # removes the request. That run starts with `exeris-bot` as its actor, the runner refuses a
+    # non-human actor, the produce job FAILS, and the publish half replaces findings with "no
+    # verdict". The publication destroying itself in three seconds was this, and it was described in
+    # this file as prevented while nothing prevented it.
+    #
+    # `sender.type` is the payload's own answer and it is asked of every trigger, not only the
+    # label: opening, reopening and marking ready are readiness signals that mean "a person says so"
+    # — read literally, so that a harness cannot send one. With a second App in the organisation
+    # that is the difference between a policy and a check.
     if: >-
+      github.event.sender.type == 'User' &&
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.fork == false &&
       !contains(inputs.l1-results, '"failure"') &&
@@ -474,25 +485,31 @@ jobs:
       # `draft-or-bot` skip is a green. Measured on #40, where a BLOCKED verdict and a `hard-block`
       # label sat on a pull request GitHub reported as CLEAN. The actor now yields `bot-event`,
       # which decides nothing itself and hands the colour to the standing verdict.
+      #
+      # `bot-event` now sits ABOVE `ready`, and asks the sender rather than the actor. Below it, a
+      # bot's label change on a pull request still carrying the request label was classified
+      # `ready` — a review was asked for and produced nothing — on a run that was never allowed to
+      # review anything. `bot-event` decides nothing itself and hands the colour to the standing
+      # verdict, which is the only honest answer to "a bot touched a label".
       skip-kind: >-
         ${{ github.event.pull_request.head.repo.fork && 'fork'
             || (github.event.pull_request.draft
                 || endsWith(github.event.pull_request.user.login, '[bot]')) && 'draft-or-bot'
+            || github.event.sender.type != 'User' && 'bot-event'
             || (github.event.action == 'opened' || github.event.action == 'reopened'
                 || github.event.action == 'ready_for_review'
                 || contains(github.event.pull_request.labels.*.name,
                             inputs.review-label)) && 'ready'
-            || endsWith(github.actor, '[bot]') && 'bot-event'
             || 'not-ready' }}
       produce-outcome: ${{ needs.produce.result }}
       produce-relevant: ${{ needs.produce.outputs.relevant }}
       # Three conditions skip the producing job and the reason named two of them, so a fork was
       # recorded as a draft. The plan is supposed to say which skip it was.
       skip-reason: >-
-        ${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled')
+        ${{ github.event.sender.type != 'User'
+            && 'the event came from a bot, and a review is read only where a person asked for one — the runner refuses a non-human actor in any case'
+            || (github.event.action == 'labeled' || github.event.action == 'unlabeled')
             && 'the event was a label change, which alters no diff — and the publication applies labels, so reviewing on one would have the review trigger itself'
-            || endsWith(github.actor, '[bot]')
-            && 'the run was started by a bot, and the runner refuses a non-human actor'
             || github.event.pull_request.head.repo.fork
             && 'the pull request comes from a fork, which receives no secrets, so the runner has no credential to review with'
             || 'the pull request is a draft or a dependency bump, which this review does not read' }}

@@ -134,6 +134,31 @@ def truthy(value: str) -> bool:
     return str(value).strip().lower() == "true"
 
 
+HUMAN_PRINCIPAL = "User"
+
+
+def human_principal(login: str, kind: str) -> bool:
+    """Is the principal that acted a person?
+
+    `kind` is the webhook payload's `sender.type`: `User` for an account a person signs into, `Bot`
+    for a GitHub App acting as itself. It is the field GitHub defines for this question, and it is
+    asked HERE rather than in a workflow expression so that the answer has cases against it.
+
+    The login suffix is asked as well, not instead. The two can only disagree if GitHub changes what
+    it writes into either field, and at a door that decides whether a required check believes a
+    human reviewed something, the second question costs nothing.
+
+    NEITHER CAN SEE A MACHINE USER. An ordinary account a script holds a token for reports `User`
+    exactly like a person, and telling those apart needs a list of people this does not have. What
+    this closes is the door an App walks through — the one that is open today, and the one a second
+    App in the organisation makes ordinary rather than hypothetical.
+
+    Empty is not a person: an absent type means the caller passed none, and reading silence as a
+    human would be this rule written fail-open.
+    """
+    return kind.strip() == HUMAN_PRINCIPAL and not login.strip().endswith("[bot]")
+
+
 OVERRIDE_RE = re.compile(
     r"<!-- exeris-bot: l2-override by=([^\s]+) sha=([0-9a-f]{7,40}) -->")
 
@@ -141,6 +166,16 @@ OVERRIDE_RE = re.compile(
 def override_marker(by: str, sha: str) -> str:
     """The machine-readable header of a human's review of a change the routine refuses to read."""
     return f"<!-- exeris-bot: l2-override by={by} sha={sha} -->"
+
+
+def override_refused_marker(by: str, sha: str) -> str:
+    """The header of a refusal: the override label applied by something that is not a person.
+
+    A marker of its own, so the refusal edits itself on the next attempt rather than overwriting a
+    verdict — and so `standing_override` cannot read it back as a review. `OVERRIDE_RE` expects a
+    space after `l2-override`; `-refused` is not one.
+    """
+    return f"<!-- exeris-bot: l2-override-refused by={by} sha={sha} -->"
 
 
 def standing_override(comments_json: str, bot_login: str) -> tuple[str, str, str] | None:
@@ -738,7 +773,7 @@ def restate_notice(plan: dict, args, said: str) -> None:
                        + said + " The required check is green.\n")
 
 
-def standing_gate(plan: dict, args) -> int:
+def standing_decision(plan: dict, args) -> None:
     """No verdict came out of this run, so the STANDING one decides the colour.
 
     The reason a run produced nothing is not itself an answer about the pull request. Only two
@@ -787,6 +822,12 @@ def standing_gate(plan: dict, args) -> int:
     else:
         plan.update(conclusion="green",
                     reason=f"the standing verdict is {standing[0]} and still covers {head}")
+
+
+def standing_gate(plan: dict, args) -> int:
+    """The same decision, written out. Split so a branch can ASK what the standing state is without
+    also concluding the run — the refusal below needs the colour and supplies its own record."""
+    standing_decision(plan, args)
     return finish(plan, args)
 
 
@@ -805,6 +846,40 @@ def cmd_plan(args) -> int:
     # straight back off, exactly as `needs-l2-review` does. What the check reads afterwards is the
     # record, not the label — a label anyone can re-apply after a push, while the record carries the
     # commit it was made against and is left behind by the next one.
+    # THE LABEL IS A CLAIM THAT A PERSON READ THIS. Anything holding `pull-requests: write` can
+    # apply it — `exeris-bot` included, and with a second App in the organisation that stops being
+    # hypothetical. Applying this label IS the capability "make the required check believe a human
+    # reviewed", and a gate able to green itself is not a gate.
+    #
+    # The guard existed before this, as `!endsWith(github.actor, '[bot]')` in a workflow expression,
+    # and it was two things short. It read a login where GitHub publishes a TYPE, and it lived where
+    # nothing tests it. Worse, when it fired it did nothing visible: the override was dropped and
+    # the LABEL STAYED ON THE PULL REQUEST, still saying to every reader — and to any rule written
+    # over labels later — that a person had reviewed this change.
+    #
+    # So: the label comes off, the refusal is written down naming the principal, and the COLOUR is
+    # whatever was already true. Not red. A bot flicking a label is not evidence about the change in
+    # either direction, and turning a legitimately green pull request red on one would be the same
+    # fault as greening it, pointed the other way.
+    if args.override_by and not human_principal(args.override_by, args.override_by_type):
+        standing_decision(plan, args)
+        plan["marker_search"] = "<!-- exeris-bot: l2-override-refused"
+        plan["comment"] = (override_refused_marker(plain(args.override_by), args.head_sha or "")
+                           + "\n## L2 review — the override was refused\n\n"
+                           + f"`{plain(args.override_by)}` applied "
+                           + f"`{plain(args.override_label or 'l2-human-reviewed')}`. That label "
+                           + "records that a **person** reviewed a change this routine cannot "
+                           + f"read, and the principal that applied it is "
+                           + f"`{plain(args.override_by_type or 'unknown')}` — not one. No review "
+                           + "has been recorded and the label has been removed.\n\nThe check says "
+                           + "what was already known about this pull request: "
+                           + plan["reason"] + ".\n")
+        plan["reason"] = (f"{args.override_by} is a "
+                          f"{plain(args.override_by_type or 'unknown')}, not a person, so the "
+                          f"override label was removed and the refusal recorded — "
+                          + plan["reason"])
+        return finish(plan, args)
+
     if args.override_by:
         head = (args.head_sha or "")[:7]
         agent_for_block = args.expect_agent or "unknown"
@@ -1162,6 +1237,9 @@ def main() -> int:
                         "routine cannot read — one that touches a workflow file")
     p.add_argument("--override-by", default="",
                    help="the login that applied the override label IN THIS EVENT, empty otherwise")
+    p.add_argument("--override-by-type", default="",
+                   help="that principal's `sender.type` — `User` is a person, `Bot` is a GitHub "
+                        "App, and empty is not a person either")
     p.add_argument("--workflow-touching", default="false",
                    help="whether this pull request changes a file under .github/workflows/, which "
                         "is the only place the override applies")

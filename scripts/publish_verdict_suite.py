@@ -110,7 +110,7 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
         relevant="true", current="", mandatory="", execution_log=None,
         authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
         l1="", skip_kind="", skip_reason="", head_sha="", override_by="",
-        workflow_touching="") -> dict:
+        override_by_type="User", workflow_touching="") -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
     args = [sys.executable, PLANNER, "plan",
             "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
@@ -149,7 +149,10 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
     if head_sha:
         args += ["--head-sha", head_sha]
     if override_by:
-        args += ["--override-by", override_by]
+        # A PERSON is the ordinary case, so it is the default and every case above means one. The
+        # cases that matter here change it, which is the suite's whole shape: one conforming run,
+        # one thing different.
+        args += ["--override-by", override_by, "--override-by-type", override_by_type]
     if workflow_touching:
         args += ["--workflow-touching", workflow_touching]
     labels = os.path.join(tmp, "labels.txt")
@@ -1323,6 +1326,72 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=None, head_sha="a" * 40)
         assert "enters through" not in p["comment"], p["comment"][:300]
         assert "look at its log" in p["comment"], p["comment"][:300]
+
+    # WHO APPLIED THE LABEL. `l2-human-reviewed` is an ordinary label and `pull-requests: write` is
+    # all it takes to apply one, so the capability "tell the required check a human reviewed this"
+    # was held by every App installed on the organisation. The guard that existed lived in a
+    # workflow expression, read a login where GitHub publishes a type, and — refusing — left the
+    # label in place, so the pull request went on claiming the review to anyone reading it.
+    @case("a bot applying the override label records no review")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40,
+                override_by="exeris-bot[bot]", override_by_type="Bot")
+        assert p["conclusion"] == "red", p
+        assert "l2-override-refused" in p["comment"], p["comment"][:200]
+        assert "l2-override by=" not in p["comment"], p["comment"][:200]
+
+    @case("and the label comes off, so nothing on the pull request still claims it")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40,
+                override_by="exeris-bot[bot]", override_by_type="Bot")
+        assert "l2-human-reviewed" in p["labels_remove"], p
+
+    # Not red BECAUSE of the label. A bot touching a label is not evidence about the change in
+    # either direction, and flipping a sound pull request red on one is the same fault as greening
+    # it, pointed the other way — the green-then-red flip this file already carries a case for.
+    @case("a refused override leaves a standing PASS green")
+    def _(tmp):
+        standing = marker_line("PASS", sha="e" * 40) + "\n## L2 review — **PASS**"
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, outcome="skipped",
+                l1=GREEN_L1, skip_kind="not-ready", comments=[by_bot(standing, 2)],
+                override_by="exeris-bot[bot]", override_by_type="Bot")
+        assert p["conclusion"] == "green", p
+        assert "l2-override-refused" in p["comment"], p["comment"][:200]
+
+    @case("and a standing BLOCKED red, which the refusal does not lift")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, outcome="skipped",
+                l1=GREEN_L1, skip_kind="not-ready", comments=[by_bot(blocked, 2)],
+                override_by="exeris-bot[bot]", override_by_type="Bot")
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    # An absent type is a caller that passed none — a pinned caller from before this existed, a
+    # payload shape that changed. Reading silence as a person is this rule written fail-open.
+    @case("an unnamed principal is not a person either")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40,
+                override_by="arkstack", override_by_type="")
+        assert p["conclusion"] == "red", p
+        assert "l2-override-refused" in p["comment"], p["comment"][:200]
+
+    # Both questions, not one. `type` is the field GitHub defines; the suffix is the convention it
+    # follows. Either answering "not a person" is enough, because this door only ever needs to be
+    # wrong once.
+    @case("a `[bot]` login is refused even where the type says otherwise")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40,
+                override_by="exeris-agent[bot]", override_by_type="User")
+        assert p["conclusion"] == "red", p
+        assert "l2-override-refused" in p["comment"], p["comment"][:200]
+
+    @case("a person still greens the pull request they reviewed")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40,
+                override_by="arkstack", override_by_type="User")
+        assert p["conclusion"] == "green", p
+        assert "l2-override by=arkstack" in p["comment"], p["comment"][:200]
 
     failures = 0
     for name, fn in cases:
