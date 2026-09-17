@@ -269,6 +269,34 @@ jobs:
           }' > pull-request.json
           rm -f pr.api.json pr.files.json
           echo "::notice::pull-request.json: $(jq '.files | length' pull-request.json) changed file(s)"
+      # THE GATE RESULTS IN THE VERDICT'S OWN VOCABULARY. The prompt hands these over and says to
+      # put them in `checks_run` verbatim. They were handed over in GitHub's words — `success`,
+      # `failure`, `cancelled` — and `verdict.base.schema.json` requires `pass`, `fail`, `not-run`
+      # under a `check` key. A model that followed the instruction literally produced a verdict the
+      # schema refused, which is `decision=INVALID` and a red check saying the runner emitted
+      # something unreadable. Measured on exeris-docs#129: `checks_run/0: 'check' is a required
+      # property` and `'success' is not one of ['pass', 'fail', 'not-run']`, twice on one commit.
+      #
+      # Translating here rather than asking the model to translate: the vocabulary is CI's to know,
+      # the mapping is three cases, and an instruction that says `verbatim` is either true or it is
+      # a trap. `cancelled`, `skipped` and an absent result all mean the gate reported nothing,
+      # which is exactly what `not-run` is for.
+      - name: The L1 gate results, in the verdict's vocabulary
+        id: gates
+        env:
+          L1: ${{ inputs.l1-results }}
+        run: |
+          set -euo pipefail
+          if [ -z "${L1:-}" ]; then
+            echo 'checks_run=[]' >> "$GITHUB_OUTPUT"
+          else
+            printf '%s' "$L1" | jq -c '[to_entries[] | {check: .key, result:
+              (if .value == "success" then "pass"
+               elif .value == "failure" then "fail"
+               else "not-run" end)}]' > gates.json
+            echo "checks_run=$(cat gates.json)" >> "$GITHUB_OUTPUT"
+            rm -f gates.json
+          fi
       - name: Docs and hygiene review
         id: review
         uses: anthropics/claude-code-action@v1
@@ -319,7 +347,10 @@ jobs:
             verbatim into `checks_run`, and do not restate in prose what a gate already reported:
             review the substance those gates cannot judge.
 
-            L1 GATE RESULTS: ${{ inputs.l1-results }}
+            L1 GATE RESULTS, already in the shape and the vocabulary `checks_run` takes —
+            copy them in as they are:
+
+            ${{ steps.gates.outputs.checks_run }}
 
             The pull request itself is in `pull-request.json` in the root of the checkout: title,
             body, author, labels, base and head, and every changed file with its status. Read it —
