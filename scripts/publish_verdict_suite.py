@@ -93,6 +93,13 @@ def override_line(by: str = "arkstack", sha: str = "") -> str:
     return f"<!-- exeris-bot: l2-override by={by} sha={sha} -->"
 
 
+# What the publication writes when the gates it waits on were red: the statement the withdrawal
+# below has to take back once they are green.
+NOTICE = (marker_line("NONE", sha="a" * 40)
+          + "\n## L2 review — not run\n\nThe L1 gates this review waits on did not pass: "
+            "`docs-lint`.\n\nFix those first; the review runs once they are green.\n")
+
+
 def by_person(body: str, cid: int = 3) -> dict:
     """Anyone with an account, which on a public pull request is anyone at all."""
     return {"id": cid, "source": "issue-comment", "author": "mallory",
@@ -102,7 +109,8 @@ def by_person(body: str, cid: int = 3) -> dict:
 def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="success",
         relevant="true", current="", mandatory="", execution_log=None,
         authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
-        l1="", skip_kind="", head_sha="", override_by="", workflow_touching="") -> dict:
+        l1="", skip_kind="", skip_reason="", head_sha="", override_by="",
+        workflow_touching="") -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
     args = [sys.executable, PLANNER, "plan",
             "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
@@ -136,6 +144,8 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
         args += ["--l1-results", l1 if isinstance(l1, str) else json.dumps(l1)]
     if skip_kind:
         args += ["--skip-kind", skip_kind]
+    if skip_reason:
+        args += ["--skip-reason", skip_reason]
     if head_sha:
         args += ["--head-sha", head_sha]
     if override_by:
@@ -1044,6 +1054,79 @@ def main() -> int:
         default = [s for s in MANDATORY_DEFAULT.split(",") if s]
         named = re.findall(r"`([a-z-]+)`", text[text.index("Three of them are **mandatory**"):][:240])
         assert named[:len(default)] == default, (named, default)
+
+    # A notice is a statement about the pull request, not a log line. The branches that conclude
+    # green WITHOUT a verdict used to write nothing, so the notice an earlier run left stood beside
+    # a green check still naming the gate it waited on — measured on exeris-ai-execution#1, where
+    # `docs-lint` was named as failing forty minutes after it passed.
+    @case("a green with nothing to review takes back the notice that named a failing gate")
+    def _(tmp):
+        p = run(root, tmp, relevant="false", head_sha="b" * 40,
+                comments=[by_bot(NOTICE)])
+        assert p["conclusion"] == "green", p
+        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "docs-lint" not in p["comment"], p["comment"]
+        # It replaces THAT comment rather than joining it.
+        assert p["marker_search"].endswith("decision=NONE"), p
+        assert gate(tmp, p) == 0
+
+    # The withdrawal must not become the fault it removes. Writing a NONE where none stood would
+    # hand `standing_gate` something to refuse on the next label event, and a pull request that is
+    # legitimately green would go red the moment anyone touched a label on it.
+    @case("it takes nothing back where nothing stood, so a clean pull request gains no NONE")
+    def _(tmp):
+        p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[])
+        assert p["conclusion"] == "green" and p["comment"] == "", p
+        # And with no comments file at all, which is how a first run arrives.
+        p = run(root, tmp, relevant="false", head_sha="b" * 40)
+        assert p["conclusion"] == "green" and p["comment"] == "", p
+
+    @case("a standing verdict is not a notice, and the withdrawal leaves it alone")
+    def _(tmp):
+        for decision in ("PASS", "CONDITIONAL", "BLOCKED"):
+            body = marker_line(decision, sha="a" * 40) + "\n## L2 review — findings"
+            p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[by_bot(body)])
+            assert p["comment"] == "", (decision, p["comment"][:200])
+
+    @case("a fork skip withdraws the notice as well, since it is the same green")
+    def _(tmp):
+        p = run(root, tmp, outcome="skipped", skip_kind="fork", head_sha="b" * 40,
+                comments=[by_bot(NOTICE)])
+        assert p["conclusion"] == "green", p
+        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+
+    # The hand review is the thing a notice on a workflow change is waiting for, and the notice has
+    # no way to learn that on its own.
+    @case("a review by hand withdraws the notice that was waiting for one")
+    def _(tmp):
+        p = run(root, tmp, outcome="skipped", skip_kind="not-ready", head_sha="e" * 40,
+                workflow_touching="true",
+                comments=[by_bot(override_line("arkstack", "e" * 40), 4), by_bot(NOTICE)])
+        assert p["conclusion"] == "green", p
+        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "arkstack" in p["comment"], p["comment"][:300]
+
+    # The caller works the reason out from the EVENT while the colour is worked out from the KIND,
+    # and the two answered differently: a fork whose event was a label change was published as "the
+    # event was a label change". It matters more now that the withdrawal above prints the reason
+    # into a comment a person reads.
+    @case("the reason a skip is green comes from the kind, not from a second reading of the event")
+    def _(tmp):
+        wrong = "the event was a label change, which alters no diff"
+        p = run(root, tmp, outcome="skipped", skip_kind="fork", skip_reason=wrong)
+        assert p["conclusion"] == "green", p
+        assert "fork" in p["reason"] and wrong not in p["reason"], p["reason"]
+        p = run(root, tmp, outcome="skipped", skip_kind="draft-or-bot", skip_reason=wrong)
+        assert "draft" in p["reason"] and wrong not in p["reason"], p["reason"]
+
+    @case("a skip kind this file does not know still says whatever the caller said")
+    def _(tmp):
+        p = run(root, tmp, outcome="skipped", skip_kind="fork", skip_reason="")
+        assert "fork" in p["reason"], p["reason"]
+        # `finish` only reaches the green skip branch for the two kinds above, so an unknown kind
+        # falls to `standing_gate` and is not green at all — which is the fail-closed half.
+        p = run(root, tmp, outcome="skipped", skip_kind="martian", skip_reason="who knows")
+        assert p["conclusion"] == "red", p
 
     failures = 0
     for name, fn in cases:
