@@ -143,8 +143,8 @@ def override_marker(by: str, sha: str) -> str:
     return f"<!-- exeris-bot: l2-override by={by} sha={sha} -->"
 
 
-def standing_override(comments_json: str, bot_login: str) -> tuple[str, str] | None:
-    """The last human review recorded on this pull request, as `(login, sha)`.
+def standing_override(comments_json: str, bot_login: str) -> tuple[str, str, str] | None:
+    """The last human review recorded on this pull request, as `(login, sha, when)`.
 
     Read only from comments the BOT wrote, for the reason `standing_verdicts` gives: the marker is
     plain text in a public comment, and this one greens a required check. A person types the label;
@@ -156,8 +156,48 @@ def standing_override(comments_json: str, bot_login: str) -> tuple[str, str] | N
             continue
         m = OVERRIDE_RE.match(c["body"])
         if m:
-            found = (m.group(1), m.group(2))
+            found = (m.group(1), m.group(2), c.get("updated_at") or c.get("created_at") or "")
     return found
+
+
+def blocking_standing(comments_json: str, agent: str, bot_login: str, head: str) -> str | None:
+    """The `created_at` of a BLOCKED verdict that still covers this head, or None.
+
+    A block is what a human override has to answer rather than step over. It is read from the bot's
+    own marker, like every other standing state here, and only when it covers the commit under
+    review — a block against a tree that has moved is not a block against this one.
+    """
+    stamp = None
+    for c in comments(comments_json):
+        if c.get("author") != bot_login:
+            continue
+        m = MARKER_RE.match(c["body"])
+        if m and m.group(1) == agent and m.group(2) == "BLOCKED":
+            sha = m.group(3) or ""
+            if not head or not sha or sha[:7] == head[:7]:
+                stamp = c.get("updated_at") or c.get("created_at") or ""
+    return stamp
+
+
+def reason_after(comments_json: str, who: str, since: str) -> str | None:
+    """The first thing `who` said on this pull request AFTER the block, or None.
+
+    The override is a person's judgement standing over the routine's, and a judgement that answers a
+    block says what it answers. The label carries no text — a label event has none to carry — so the
+    text is a comment by the same person, written after the block it addresses. Before it, they had
+    not read it yet.
+    """
+    best = None
+    for c in comments(comments_json):
+        if (c.get("author") or "").lower() != (who or "").lower():
+            continue
+        when = c.get("updated_at") or c.get("created_at") or ""
+        if since and when and when <= since:
+            continue
+        body = " ".join((c.get("body") or "").split())
+        if body:
+            best = body
+    return best
 
 
 def marker(agent: str, decision: str, sha: str = "") -> str:
@@ -634,27 +674,37 @@ def blocking_findings(verdict: dict) -> list[str]:
             for f in (verdict.get("findings") or []) if f.get("blocking") is True]
 
 
-def human_review(args) -> tuple[str, str] | None:
+def human_review(args) -> tuple[str, str, str] | None:
     """A standing human review that still covers this head, or None.
 
-    Scoped to a pull request that changes `.github/workflows/`, which is the one case the routine
-    cannot read at all: `claude-code-action` refuses to start when a workflow file differs from the
-    default branch's copy, so its BLOCKED there is a refusal rather than a judgement. Anywhere else
-    the review decides and this is not a way around it — the label is taken off and ignored.
-
-    It ages exactly as a verdict does. The record carries the commit the person looked at, so the
-    next push leaves it behind and the check goes red again rather than trading on an old reading.
+    NOT scoped to a workflow change. It was, and that was half a rule: the branch that RECORDS an
+    override was made universal while this one — the half every later run reads — still refused
+    anything but a workflow change. The two disagreed in the gap between them, and the gap is one
+    second wide: recording an override removes the label, the removal is an `unlabeled` event, that
+    event reruns the workflow on the same commit with no `override_by`, and the rerun asks this
+    function, which refused the record written a moment earlier. The check went green and back to
+    red with nothing pushed. Found by the review reading the code rather than the prose, on the
+    pull request that shipped the other half.
     """
-    if not truthy(args.workflow_touching):
-        return None
     if not (args.comments and os.path.exists(args.comments)):
         return None
     with open(args.comments, encoding="utf-8") as fh:
-        standing = standing_override(fh.read(), args.bot_login)
+        dump = fh.read()
+    standing = standing_override(dump, args.bot_login)
     head = (args.head_sha or "")[:7]
-    if standing and head and standing[1][:7] == head:
-        return standing
-    return None
+    if not (standing and head and standing[1][:7] == head):
+        return None
+    # A BLOCK THAT ARRIVED AFTER THE RECORD IS NOT ANSWERED BY IT. The condition belongs to the
+    # moment the override was made — the branch that records one refuses to green a standing block
+    # the person has not answered — and re-deriving it here would ask the same question twice and
+    # risk two answers. What this does ask is whether a block has landed SINCE, which the record
+    # cannot have answered because it did not exist yet. Re-reviews on one commit are ordinary, so
+    # this is not a hypothetical.
+    blocked_at = blocking_standing(dump, args.expect_agent or "unknown", args.bot_login,
+                                   args.head_sha or "")
+    if blocked_at and standing[2] and blocked_at > standing[2]:
+        return None
+    return standing
 
 
 def restate_notice(plan: dict, args, said: str) -> None:
@@ -707,8 +757,8 @@ def standing_gate(plan: dict, args) -> int:
     by_hand = human_review(args)
     if by_hand:
         plan.update(conclusion="green",
-                    reason=(f"{by_hand[0]} reviewed this workflow change by hand, recorded against "
-                            f"{by_hand[1][:7]}"))
+                    reason=(f"{by_hand[0]} reviewed this by hand, recorded against "
+                            f"{by_hand[1][:7]} — a human review outranks this routine's"))
         # The same restatement: a person reviewing by hand is the current state of this pull
         # request, and the standing notice has no way to learn that on its own.
         restate_notice(plan, args, f"`{plain(by_hand[0])}` reviewed this change by hand, "
@@ -756,25 +806,70 @@ def cmd_plan(args) -> int:
     # record, not the label — a label anyone can re-apply after a push, while the record carries the
     # commit it was made against and is left behind by the next one.
     if args.override_by:
-        if truthy(args.workflow_touching):
-            head = (args.head_sha or "")[:7]
-            plan["marker_search"] = "<!-- exeris-bot: l2-override"
-            plan["comment"] = (override_marker(plain(args.override_by), args.head_sha or "")
-                               + "\n## L2 review — by hand\n\n"
-                               + f"`{plain(args.override_by)}` reviewed this change themselves and "
-                               + f"recorded it against `{head}`.\n\nThis routine cannot read a pull "
-                               + "request that changes a workflow file: the runner refuses to start "
-                               + "when one differs from the default branch's copy. The record covers "
-                               + f"`{head}` and nothing after it — a push leaves it behind and the "
-                               + "check goes red again.\n")
-            plan.update(conclusion="green",
-                        reason=(f"{args.override_by} reviewed this workflow change by hand and it "
-                                f"is recorded against {head}"))
+        head = (args.head_sha or "")[:7]
+        agent_for_block = args.expect_agent or "unknown"
+        blocked_at = None
+        said = None
+        if args.comments and os.path.exists(args.comments):
+            with open(args.comments, encoding="utf-8") as fh:
+                dump = fh.read()
+            blocked_at = blocking_standing(dump, agent_for_block, args.bot_login, args.head_sha or "")
+            if blocked_at:
+                said = reason_after(dump, args.override_by, blocked_at)
+        # A HUMAN REVIEW OUTRANKS THIS ROUTINE'S, ALWAYS. It used to count only where the runner
+        # refuses to start — a pull request changing the workflow its run enters through — and
+        # decided nothing anywhere else. That was the wrong shape: the routine is an instrument, a
+        # person reading the diff is not, and a layer that lets its own verdict outrank the person it
+        # reports to has stopped being a review and become an authority.
+        #
+        # ONE CONDITION, AND IT IS NOT A LIMIT ON THE PERSON. Where a BLOCKED verdict stands against
+        # this same commit, the override greens it only once that person has said something on the
+        # pull request AFTER the block. Not approval — the label is the approval — but an account:
+        # what the block got wrong, or what was done about it. A label event carries no text, so the
+        # text is a comment, and "after" is what makes it an answer rather than something written
+        # before there was anything to answer.
+        #
+        # The cost, stated rather than hidden: this makes a block overridable, which it was not. What
+        # keeps it from being a bypass is that the record names the person, names the commit, quotes
+        # what they said, and is left behind by the next push — the same properties the workflow case
+        # already had, now carrying a reason as well.
+        if blocked_at and not said:
+            plan["agent"] = agent_for_block
+            plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={agent_for_block} decision=NONE"
+            plan["comment"] = (marker(agent_for_block, "NONE", args.head_sha)
+                               + "\n## L2 review — the block still stands\n\n"
+                               + f"`{plain(args.override_by)}` applied "
+                               + f"`{plain(args.override_label or 'l2-human-reviewed')}` while a "
+                               + "**BLOCKED** verdict stands against this commit. A human review "
+                               + "outranks this routine's and can lift that block — but not "
+                               + "silently.\n\nComment on this pull request saying what the block "
+                               + "got wrong or what was done about it, then apply the label again. "
+                               + "The record will quote you.\n")
+            plan.update(conclusion="red",
+                        reason=(f"{args.override_by} applied the override over a standing BLOCKED "
+                                f"verdict without saying what it answers"))
             return finish(plan, args)
-        # Off a pull request the routine CAN read, the label decides nothing. Falling through rather
-        # than going red on it: someone labelling the wrong pull request should not turn a passing
-        # review into a failure, and the review that did run is still the answer.
-        plan["reason"] = "the human-review label does not apply here; the review itself decides"
+
+        why_here = ("This routine cannot read a pull request that changes the workflow file its run "
+                    "enters through: the runner refuses to start when it differs from the default "
+                    "branch's copy."
+                    if truthy(args.workflow_touching) else
+                    "A human review outranks this routine's, and this is the record of one.")
+        quoted = ""
+        if said:
+            clipped = said if len(said) <= 400 else said[:397] + "..."
+            quoted = ("\n\nWhat it answers, in their words:\n\n> " + plain(clipped))
+        plan["marker_search"] = "<!-- exeris-bot: l2-override"
+        plan["comment"] = (override_marker(plain(args.override_by), args.head_sha or "")
+                           + "\n## L2 review — by hand\n\n"
+                           + f"`{plain(args.override_by)}` reviewed this change themselves and "
+                           + f"recorded it against `{head}`. " + why_here + quoted
+                           + f"\n\nThe record covers `{head}` and nothing after it — a push leaves "
+                           + "it behind and the check goes red again.\n")
+        plan.update(conclusion="green",
+                    reason=(f"{args.override_by} reviewed this by hand and it is recorded against "
+                            f"{head}" + (" over a standing block they answered" if said else "")))
+        return finish(plan, args)
 
     # A producing job skipped because a gate it depends on failed is not a skip with nothing to
     # review — it is a review that never happened on a pull request that is already broken. Green
@@ -870,8 +965,26 @@ def cmd_plan(args) -> int:
     plan["verdict_source"] = source
     if verdict is None:
         plan["agent"] = args.expect_agent or "unknown"
-        plan["reason"] = (f"no verdict to publish: {why}. The producing job reported "
-                          f"`{args.produce_outcome or 'unknown'}`.")
+        # WHEN WE KNOW WHY, SAY WHY. The runner refuses to start on a pull request that changes the
+        # workflow file the run enters through, and a refusal leaves a signature: the produce job
+        # reports success, no verdict exists, and no execution log was uploaded either, because the
+        # runner stopped before writing one. All three together are the refusal; any one of them
+        # alone is not, which is why this asks for the conjunction. A model that ran and produced
+        # nothing DID leave a log, and it gets the general message — it is a different fault and
+        # sending its author to apply a review label would be sending them to the wrong place.
+        #
+        # `Re-run the job, or look at its log` is the right advice only while nobody knows the
+        # cause. Here the publish half knows it deterministically, and a notice that tells a person
+        # to go read a log for something the notice could have said is how a correct message
+        # becomes a useless one.
+        refused = (truthy(args.workflow_touching)
+                   and not (args.execution_log and os.path.exists(args.execution_log)))
+        plan["reason"] = (
+            "no verdict to publish: the runner refuses a pull request that changes the workflow "
+            "this run enters through, and left no execution log, which is that refusal"
+            if refused else
+            f"no verdict to publish: {why}. The producing job reported "
+            f"`{args.produce_outcome or 'unknown'}`.")
         # The absent verdict is the case §B.9's reasoning matters most for, and it was the one case
         # that posted nothing: a required check went red with the explanation only in a job log.
         # Replaces only a previous no-verdict notice, never a comment carrying a real verdict. A
@@ -879,12 +992,24 @@ def cmd_plan(args) -> int:
         # findings somebody has to act on, and the pull request lost them. Both can stand: the last
         # verdict, and a note that a later run reached none.
         plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
-        plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                           + "\n## L2 review — no verdict\n\n"
-                           + f"The producing job reported `{args.produce_outcome or 'unknown'}` and "
-                           + f"{why}.\n\nThe required check is red because nothing was reviewed, "
-                             "not because a review found something. Re-run the job, or look at its "
-                             "log to see why it produced nothing.\n")
+        if refused:
+            plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
+                               + "\n## L2 review — not run\n\n"
+                               + "This pull request changes the workflow file this run enters "
+                               + "through, and the runner refuses to start on one: its own "
+                               + "supply-chain guard, which no caller can configure away. Nothing "
+                               + "was reviewed, and the required check is red rather than green so "
+                               + "that nobody reads the absence as a pass.\n\n"
+                               + "A person reviews the change and applies `"
+                               + plain(args.override_label or "l2-human-reviewed")
+                               + "`. The record covers this commit and nothing after it.\n")
+        else:
+            plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
+                               + "\n## L2 review — no verdict\n\n"
+                               + f"The producing job reported `{args.produce_outcome or 'unknown'}` "
+                               + f"and {why}.\n\nThe required check is red because nothing was "
+                                 "reviewed, not because a review found something. Re-run the job, "
+                                 "or look at its log to see why it produced nothing.\n")
         return finish(plan, args)
 
     plan["agent"] = str(verdict.get("agent", ""))
@@ -944,8 +1069,8 @@ def cmd_plan(args) -> int:
     elif decision == "BLOCKED" and human_review(args):
         by_hand = human_review(args)
         plan["conclusion"] = "green"
-        plan["reason"] = (f"the verdict is BLOCKED because this routine cannot read a workflow "
-                          f"change, and {by_hand[0]} reviewed it by hand against {by_hand[1][:7]}")
+        plan["reason"] = (f"the verdict is BLOCKED and {by_hand[0]} reviewed this by hand against "
+                          f"{by_hand[1][:7]} — a human review outranks this routine's")
     elif decision == "BLOCKED":
         plan["reason"] = "the verdict is BLOCKED"
     elif blocking_findings(verdict):
