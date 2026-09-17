@@ -96,7 +96,7 @@ on:
         default: ""
         description: >-
           Why the producing job did not run, as a value rather than as prose: `not-ready`,
-          `draft-or-bot`, `fork` or `path-filter`. The publish step answers differently for each,
+          `draft`, `bot-authored`, `fork` or `path-filter`. The publish step answers differently for each,
           and a job result cannot tell them apart.
       head-sha:
         type: string
