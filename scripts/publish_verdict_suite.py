@@ -958,14 +958,67 @@ def main() -> int:
         assert p["conclusion"] == "red", p
         assert gate(tmp, p) == 1
 
-    @case("labelling an ordinary pull request takes the label off and changes no colour")
+    # A HUMAN REVIEW OUTRANKS THIS ROUTINE'S, ALWAYS. The label used to count only where the runner
+    # refuses to start and decided nothing anywhere else, which made the routine's verdict outrank
+    # the person it reports to.
+    @case("a human review greens an ordinary pull request, workflow or not")
     def _(tmp):
-        p = run(root, tmp, verdict_doc=verdict(decision="BLOCKED",
-                                    findings=[finding(tag="HARD BLOCK", blocking=True)]), head_sha="e" * 40, l1=GREEN_L1,
-                override_by="arkstack")
-        assert p["conclusion"] == "red", p
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack")
+        assert p["conclusion"] == "green", p
+        assert "outranks this routine" in p["comment"], p["comment"][:300]
         assert "l2-human-reviewed" in p["labels_remove"], p
+        assert gate(tmp, p) == 0
+
+    # One condition, and it is not a limit on the person: a block is answered, not stepped over.
+    @case("the override over a standing block is refused until the person says what it answers")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
+                comments=[by_bot(blocked, 2)])
+        assert p["conclusion"] == "red", p
+        assert "the block still stands" in p["comment"], p["comment"][:300]
         assert gate(tmp, p) == 1
+
+    @case("and greens once they have, quoting them")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        answer = {"id": 7, "source": "issue-comment", "author": "arkstack", "author_type": "User",
+                  "created_at": "2026-09-15T00:00:09Z",
+                  "body": "The cited rule was retired in ADR-085 §M.38; nothing to fix."}
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
+                comments=[by_bot(blocked, 2), answer])
+        assert p["conclusion"] == "green", p
+        assert "retired in ADR-085" in p["comment"], p["comment"][:400]
+        assert gate(tmp, p) == 0
+
+    # Before the block there was nothing to answer, so it is not an answer.
+    @case("a comment written before the block does not answer it")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        earlier = {"id": 1, "source": "issue-comment", "author": "arkstack", "author_type": "User",
+                   "created_at": "2026-09-15T00:00:01Z", "body": "Opening this for review."}
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
+                comments=[earlier, by_bot(blocked, 2)])
+        assert p["conclusion"] == "red", p
+        assert "the block still stands" in p["comment"], p["comment"][:300]
+
+    # Somebody else's comment is not this person's account of what they did.
+    @case("another person's comment does not answer the block for the one overriding")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        other = {"id": 9, "source": "issue-comment", "author": "mallory", "author_type": "User",
+                 "created_at": "2026-09-15T00:00:09Z", "body": "Looks fine to me."}
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
+                comments=[by_bot(blocked, 2), other])
+        assert p["conclusion"] == "red", p
+
+    # A block against a tree that has moved is not a block against this one.
+    @case("a block covering an older commit does not hold the override")
+    def _(tmp):
+        stale = marker_line("BLOCKED", sha="a" * 40) + "\n## L2 review — **BLOCKED**"
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
+                comments=[by_bot(stale, 2)])
+        assert p["conclusion"] == "green", p
 
     # The marker is plain text in a public comment and it greens a required check, so the author
     # check comes first here as it does for a verdict.
