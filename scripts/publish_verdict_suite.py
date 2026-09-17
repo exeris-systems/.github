@@ -791,16 +791,17 @@ def main() -> int:
         assert p["labels_add"] == ["needs-l2-review"], p
         assert gate(tmp, p) == 1
 
-    # The reason was split and the published comment was not, so a reader was told three cancelled
-    # gates "did not pass" while the log beside them said cancelled. Measured on exeris-docs#126.
-    @case("the published notice says cancelled where the reason says cancelled")
+    # This case used to assert the WORDING of the notice a fully cancelled run published: the reason
+    # had been split into cancelled-versus-failed and the comment had not, so a reader was told three
+    # cancelled gates "did not pass". The wording is no longer the question — such a run publishes
+    # nothing, which is what `!cancelled()` was supposed to achieve and does not.
+    @case("a fully cancelled run leaves the reason in the log and nothing on the pull request")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
                 l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
                     "pr-body-check": "cancelled"})
-        assert "were cancelled before they finished" in p["comment"], p["comment"]
-        assert "did not pass" not in p["comment"], p["comment"]
-        assert "may already have them green" in p["comment"], p["comment"]
+        assert "were cancelled before they finished" in p["reason"], p["reason"]
+        assert p["comment"] == "" and p["marker_search"] == "", p
 
     @case("the published notice still says did not pass where a gate really failed")
     def _(tmp):
@@ -1059,21 +1060,38 @@ def main() -> int:
     # green WITHOUT a verdict used to write nothing, so the notice an earlier run left stood beside
     # a green check still naming the gate it waited on — measured on exeris-ai-execution#1, where
     # `docs-lint` was named as failing forty minutes after it passed.
-    @case("a green with nothing to review takes back the notice that named a failing gate")
+    @case("a green with nothing to review restates the notice that named a failing gate")
     def _(tmp):
         p = run(root, tmp, relevant="false", head_sha="b" * 40,
                 comments=[by_bot(NOTICE)])
         assert p["conclusion"] == "green", p
-        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "nothing\nto read" in p["comment"] or "nothing to read" in p["comment"], \
+            p["comment"][:200]
         assert "docs-lint" not in p["comment"], p["comment"]
         # It replaces THAT comment rather than joining it.
         assert p["marker_search"].endswith("decision=NONE"), p
         assert gate(tmp, p) == 0
 
+    # The note says what is true now and nothing about the note it replaces. Replacing it IS the
+    # correction; a sentence explaining that it corrects something is a note about itself, and the
+    # reader of a pull request did not ask what an earlier run thought.
+    @case("the note states the state and never narrates the one before it")
+    def _(tmp):
+        for kw in (dict(relevant="false"),
+                   dict(outcome="skipped", skip_kind="fork"),
+                   dict(outcome="skipped", skip_kind="draft-or-bot")):
+            p = run(root, tmp, head_sha="b" * 40, comments=[by_bot(NOTICE)], **kw)
+            body = p["comment"].lower()
+            assert body, kw
+            for banned in ("earlier", "no longer", "takes back", "withdraw", "stopped being true",
+                           "an earlier run", "previous"):
+                assert banned not in body, (kw, banned, p["comment"][:240])
+            assert "## l2 review — not run" in body, (kw, p["comment"][:120])
+
     # The withdrawal must not become the fault it removes. Writing a NONE where none stood would
     # hand `standing_gate` something to refuse on the next label event, and a pull request that is
     # legitimately green would go red the moment anyone touched a label on it.
-    @case("it takes nothing back where nothing stood, so a clean pull request gains no NONE")
+    @case("it writes nothing where nothing stood, so a clean pull request gains no NONE")
     def _(tmp):
         p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[])
         assert p["conclusion"] == "green" and p["comment"] == "", p
@@ -1081,29 +1099,29 @@ def main() -> int:
         p = run(root, tmp, relevant="false", head_sha="b" * 40)
         assert p["conclusion"] == "green" and p["comment"] == "", p
 
-    @case("a standing verdict is not a notice, and the withdrawal leaves it alone")
+    @case("a standing verdict is not a notice, and the restatement leaves it alone")
     def _(tmp):
         for decision in ("PASS", "CONDITIONAL", "BLOCKED"):
             body = marker_line(decision, sha="a" * 40) + "\n## L2 review — findings"
             p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[by_bot(body)])
             assert p["comment"] == "", (decision, p["comment"][:200])
 
-    @case("a fork skip withdraws the notice as well, since it is the same green")
+    @case("a fork skip restates the notice as well, since it is the same green")
     def _(tmp):
         p = run(root, tmp, outcome="skipped", skip_kind="fork", head_sha="b" * 40,
                 comments=[by_bot(NOTICE)])
         assert p["conclusion"] == "green", p
-        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "comes from a fork" in p["comment"], p["comment"][:200]
 
     # The hand review is the thing a notice on a workflow change is waiting for, and the notice has
     # no way to learn that on its own.
-    @case("a review by hand withdraws the notice that was waiting for one")
+    @case("a review by hand is what the notice then says")
     def _(tmp):
         p = run(root, tmp, outcome="skipped", skip_kind="not-ready", head_sha="e" * 40,
                 workflow_touching="true",
                 comments=[by_bot(override_line("arkstack", "e" * 40), 4), by_bot(NOTICE)])
         assert p["conclusion"] == "green", p
-        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "reviewed this change by hand" in p["comment"], p["comment"][:200]
         assert "arkstack" in p["comment"], p["comment"][:300]
 
     # The caller works the reason out from the EVENT while the colour is worked out from the KIND,
@@ -1127,6 +1145,38 @@ def main() -> int:
         # falls to `standing_gate` and is not green at all — which is the fail-closed half.
         p = run(root, tmp, outcome="skipped", skip_kind="martian", skip_reason="who knows")
         assert p["conclusion"] == "red", p
+
+    # A run killed by `concurrency` is not evidence about the pull request, and the run that killed
+    # it reports the same check name a minute later. `!cancelled()` on the publish job does not keep
+    # it out: the caller enters the called workflow through a job carrying `always()`. Measured on
+    # exeris-docs#121 — gates cancelled at 05:34:03, publish job started 05:34:42.
+    @case("a cancelled run stays red and still puts the review request back")
+    def _(tmp):
+        all_cancelled = {"docs-lint": "cancelled", "commit-lint": "cancelled",
+                         "pr-body-check": "cancelled"}
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=all_cancelled,
+                head_sha="b" * 40)
+        # Silent, but not green: a run that was replaced is not evidence of a passing one.
+        assert p["conclusion"] == "red" and p["comment"] == "", p
+        assert p["labels_add"] == ["needs-l2-review"], p
+        assert gate(tmp, p) == 1
+
+    @case("one broken gate among cancelled ones is still worth saying")
+    def _(tmp):
+        mixed = {"docs-lint": "failure", "commit-lint": "cancelled", "pr-body-check": "success"}
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=mixed, head_sha="b" * 40)
+        assert p["conclusion"] == "red", p
+        assert "did not pass" in p["comment"] and "`docs-lint`" in p["comment"], p["comment"][:250]
+        assert "cancelled" in p["comment"] and "`commit-lint`" in p["comment"], p["comment"][:250]
+        # The review was asked for and never happened, so the request is put back.
+        assert p["labels_add"] == ["needs-l2-review"], p
+
+    @case("gates that simply failed are named, and the run is not treated as replaced")
+    def _(tmp):
+        broke = {"docs-lint": "failure", "commit-lint": "success", "pr-body-check": "success"}
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=broke, head_sha="b" * 40)
+        assert "did not pass" in p["comment"], p["comment"][:200]
+        assert "cancelled" not in p["comment"], p["comment"][:200]
 
     failures = 0
     for name, fn in cases:
