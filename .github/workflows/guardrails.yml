@@ -163,3 +163,12 @@ jobs:
       - name: The entry-workflow question, one case per way of getting it wrong
         if: ${{ !cancelled() }}
         run: python scripts/entry_workflow_suite.py
+      # Two labels carry authority no routine may grant itself: one starts a review, the other
+      # tells the required check a person made it. Both are ordinary labels, and the rules deciding
+      # who may apply them live in workflow expressions no suite can execute. This reads the
+      # expressions that SHIP and fails when one is edited back to a form that trusts the caller.
+      - name: The doors that ask for a person ask GitHub what applied the label
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet pyyaml
+          python scripts/principal_check.py --root .
