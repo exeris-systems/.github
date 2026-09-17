@@ -83,7 +83,21 @@ jobs:
       # as a job result it cannot see. CI runs them because the runner's harness denies Bash.
       # `;` and not `&&`: a check that exits non-zero has something to say, and `&&` would stop the
       # list at the first one that did.
+      #
+      # THE FIRST COMMAND IS AN INSTALL, and it installs what the JOBS install rather than what the
+      # scripts turn out to need. It is here and not in the routine because the routine cannot know
+      # a repository's dependencies, and it is the jobs' list because "what is already on the
+      # runner" is not a thing this file can see: `pyyaml` happens to be there today, `referencing`
+      # is not, and the difference is invisible until a suite fails. Without it `publish_verdict_suite.py`
+      # failed 57 of its 129 cases on `ModuleNotFoundError: No module named 'referencing'` and the
+      # reviewer was handed that as the state of this repository's own gate — while the CI job two
+      # blocks down ran the identical command green, because it installs first. Two places running
+      # one command in two environments, and nothing compared them until a review did
+      # (exeris-systems/.github#62, the first pull request the routine has actually read since
+      # `repo-checks` was wired: #59, #60 and #61 all changed the entry workflow and were never
+      # reviewed at all). `repo_checks_env_check.py` compares them now.
       repo-checks: >-
+        pip install --quiet pyyaml jsonschema referencing;
         python3 scripts/publish_verdict_suite.py --root .;
         python3 scripts/entry_workflow_suite.py;
         python3 scripts/label_map_check.py;
@@ -172,3 +186,12 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python scripts/principal_check.py --root .
+      # The same command in two places is two places until something says so. `repo-checks` hands
+      # the reviewer this repository's own gates; the jobs above run several of the same scripts.
+      # When they disagree about what is installed, the reviewer reads a failure that CI does not
+      # have — and reads it as the repository's state.
+      - name: The reviewer's checks run in the environment the jobs test them in
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet pyyaml
+          python scripts/repo_checks_env_check.py --root .
