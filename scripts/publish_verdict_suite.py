@@ -1059,21 +1059,38 @@ def main() -> int:
     # green WITHOUT a verdict used to write nothing, so the notice an earlier run left stood beside
     # a green check still naming the gate it waited on — measured on exeris-ai-execution#1, where
     # `docs-lint` was named as failing forty minutes after it passed.
-    @case("a green with nothing to review takes back the notice that named a failing gate")
+    @case("a green with nothing to review restates the notice that named a failing gate")
     def _(tmp):
         p = run(root, tmp, relevant="false", head_sha="b" * 40,
                 comments=[by_bot(NOTICE)])
         assert p["conclusion"] == "green", p
-        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "nothing\nto read" in p["comment"] or "nothing to read" in p["comment"], \
+            p["comment"][:200]
         assert "docs-lint" not in p["comment"], p["comment"]
         # It replaces THAT comment rather than joining it.
         assert p["marker_search"].endswith("decision=NONE"), p
         assert gate(tmp, p) == 0
 
+    # The note says what is true now and nothing about the note it replaces. Replacing it IS the
+    # correction; a sentence explaining that it corrects something is a note about itself, and the
+    # reader of a pull request did not ask what an earlier run thought.
+    @case("the note states the state and never narrates the one before it")
+    def _(tmp):
+        for kw in (dict(relevant="false"),
+                   dict(outcome="skipped", skip_kind="fork"),
+                   dict(outcome="skipped", skip_kind="draft-or-bot")):
+            p = run(root, tmp, head_sha="b" * 40, comments=[by_bot(NOTICE)], **kw)
+            body = p["comment"].lower()
+            assert body, kw
+            for banned in ("earlier", "no longer", "takes back", "withdraw", "stopped being true",
+                           "an earlier run", "previous"):
+                assert banned not in body, (kw, banned, p["comment"][:240])
+            assert "## l2 review — not run" in body, (kw, p["comment"][:120])
+
     # The withdrawal must not become the fault it removes. Writing a NONE where none stood would
     # hand `standing_gate` something to refuse on the next label event, and a pull request that is
     # legitimately green would go red the moment anyone touched a label on it.
-    @case("it takes nothing back where nothing stood, so a clean pull request gains no NONE")
+    @case("it writes nothing where nothing stood, so a clean pull request gains no NONE")
     def _(tmp):
         p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[])
         assert p["conclusion"] == "green" and p["comment"] == "", p
@@ -1081,29 +1098,29 @@ def main() -> int:
         p = run(root, tmp, relevant="false", head_sha="b" * 40)
         assert p["conclusion"] == "green" and p["comment"] == "", p
 
-    @case("a standing verdict is not a notice, and the withdrawal leaves it alone")
+    @case("a standing verdict is not a notice, and the restatement leaves it alone")
     def _(tmp):
         for decision in ("PASS", "CONDITIONAL", "BLOCKED"):
             body = marker_line(decision, sha="a" * 40) + "\n## L2 review — findings"
             p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[by_bot(body)])
             assert p["comment"] == "", (decision, p["comment"][:200])
 
-    @case("a fork skip withdraws the notice as well, since it is the same green")
+    @case("a fork skip restates the notice as well, since it is the same green")
     def _(tmp):
         p = run(root, tmp, outcome="skipped", skip_kind="fork", head_sha="b" * 40,
                 comments=[by_bot(NOTICE)])
         assert p["conclusion"] == "green", p
-        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "comes from a fork" in p["comment"], p["comment"][:200]
 
     # The hand review is the thing a notice on a workflow change is waiting for, and the notice has
     # no way to learn that on its own.
-    @case("a review by hand withdraws the notice that was waiting for one")
+    @case("a review by hand is what the notice then says")
     def _(tmp):
         p = run(root, tmp, outcome="skipped", skip_kind="not-ready", head_sha="e" * 40,
                 workflow_touching="true",
                 comments=[by_bot(override_line("arkstack", "e" * 40), 4), by_bot(NOTICE)])
         assert p["conclusion"] == "green", p
-        assert "the earlier notice is withdrawn" in p["comment"], p["comment"][:200]
+        assert "reviewed this change by hand" in p["comment"], p["comment"][:200]
         assert "arkstack" in p["comment"], p["comment"][:300]
 
     # The caller works the reason out from the EVENT while the colour is worked out from the KIND,

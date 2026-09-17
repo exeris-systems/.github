@@ -61,6 +61,18 @@ SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event"})
 # reason derived from anything else is a second opinion about a question already answered. The
 # caller's string stays the fallback for a kind this file does not know; it is no longer consulted
 # for one it does.
+# The same two skips as a sentence addressed to a READER of the pull request rather than to a log.
+# A notice on a pull request says what is true of it now; it does not narrate what an earlier run
+# said, because replacing the notice IS the correction and a note explaining that it corrects
+# something is a note about itself.
+NOT_RUN_SAID = {
+    "fork": ("This pull request comes from a fork. A fork receives no secrets, so the runner has no "
+             "credential to review with."),
+    "draft-or-bot": "This pull request is a draft or was opened by a bot. The routine reads neither.",
+}
+NOTHING_TO_READ = ("No Markdown or Java changed in this pull request, so the routine had nothing "
+                   "to read.")
+
 SKIP_IS_GREEN_BECAUSE = {
     "fork": ("the pull request comes from a fork, which receives no secrets, so the runner has no "
              "credential to review with"),
@@ -625,16 +637,18 @@ def human_review(args) -> tuple[str, str] | None:
     return None
 
 
-def withdraw_notice(plan: dict, args) -> None:
-    """Take back a `not run` notice whose condition has passed.
+def restate_notice(plan: dict, args, said: str) -> None:
+    """Put the CURRENT state in the standing `not run` notice.
 
-    The notice is a STATEMENT ABOUT THE PULL REQUEST, not a log line: it tells the author the review
-    is waiting on something and to go fix it. Every branch that publishes one edits it in place on
-    the next run — except the branches that conclude green without a verdict, which wrote nothing at
-    all, so the notice stood next to a green check still naming the thing it waited on. Measured on
-    exeris-ai-execution#1, where `docs-lint` was named as failing forty minutes after it passed and
-    the check beside it read green. §B.8 says green is stated, never inferred; its mirror is that a
-    statement which has stopped being true is withdrawn, not merely outvoted.
+    The notice is a statement about the pull request, not a log line: a reader takes it for what is
+    true now. Every branch that publishes one edits it in place on the next run — except the
+    branches that conclude green without a verdict, which wrote nothing at all, so a notice naming
+    a gate that had since passed stood next to a green check. Measured on exeris-ai-execution#1,
+    where `docs-lint` was named as failing forty minutes after it passed.
+
+    `said` is that current state in one sentence. It does not mention the notice it replaces:
+    replacing it IS the correction, and a note explaining that it corrects something is a note
+    about itself rather than about the pull request.
 
     Only an existing `NONE` notice is rewritten, and only when one is actually there. Writing one
     where none stood would leave `standing_gate` a `NONE` to refuse on the next label event, turning
@@ -650,12 +664,8 @@ def withdraw_notice(plan: dict, args) -> None:
         return
     plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
     plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                       + "\n## L2 review — the earlier notice is withdrawn\n\n"
-                       + "An earlier run left a notice here saying this review was waiting on "
-                       + f"something. It no longer is: {plan['reason']}.\n\n"
-                       + "This note is not a review and records no finding. It takes back a "
-                       + "statement that has stopped being true, so that nothing on this pull "
-                       + "request contradicts the check beside it.\n")
+                       + "\n## L2 review — not run\n\n"
+                       + said + " The required check is green.\n")
 
 
 def standing_gate(plan: dict, args) -> int:
@@ -679,9 +689,10 @@ def standing_gate(plan: dict, args) -> int:
         plan.update(conclusion="green",
                     reason=(f"{by_hand[0]} reviewed this workflow change by hand, recorded against "
                             f"{by_hand[1][:7]}"))
-        # The same withdrawal, for the same reason: a person reviewing by hand is what the notice
-        # was waiting for, and the notice does not know that on its own.
-        withdraw_notice(plan, args)
+        # The same restatement: a person reviewing by hand is the current state of this pull
+        # request, and the standing notice has no way to learn that on its own.
+        restate_notice(plan, args, f"`{plain(by_hand[0])}` reviewed this change by hand, "
+                                   f"recorded against `{by_hand[1][:7]}`.")
     elif standing is None:
         plan["reason"] = ("no review has run on this pull request yet — apply the review label "
                           "when it is ready to look at")
@@ -809,11 +820,12 @@ def cmd_plan(args) -> int:
         plan.update(conclusion="green", verdict_source="none",
                     reason=(SKIP_IS_GREEN_BECAUSE.get(args.skip_kind)
                             or args.skip_reason or "the producing job did not run"))
-        withdraw_notice(plan, args)
+        restate_notice(plan, args, NOT_RUN_SAID.get(args.skip_kind,
+                                                    "The producing job did not run."))
         return finish(plan, args)
     if args.produce_outcome == "success" and args.produce_relevant == "false":
         plan.update(conclusion="green", verdict_source="none", reason=SKIP_DEFAULT)
-        withdraw_notice(plan, args)
+        restate_notice(plan, args, NOTHING_TO_READ)
         return finish(plan, args)
 
     verdict, source, why = load_verdict(args, lambda d: not schema_errors(d, args.schema))
