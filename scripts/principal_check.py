@@ -52,8 +52,14 @@ def main() -> int:
     produce = review["jobs"]["produce"]
     hands_over = review["jobs"]["publish"]["with"]
     bad: list[str] = []
+    # Counted where they run, not counted by a reader. A number in a pull request body that no tool
+    # prints is a number somebody arrived at, and on #62 that number was wrong by four — asserted as
+    # "eight rules" against a file carrying twelve. `claims-and-evidence.md` rule 1 asks for the
+    # report a figure came from; the cheapest way to have one is for the tool to say it.
+    checked = [0]
 
     def rule(ok: bool, said: str) -> None:
+        checked[0] += 1
         if not ok:
             bad.append(said)
 
@@ -117,9 +123,10 @@ def main() -> int:
     for said in bad:
         print(f"::error::principal_check: {said}")
     if bad:
-        print(f"principal_check: {len(bad)} rule(s) broken")
+        print(f"principal_check: {len(bad)} of {checked[0]} rule(s) broken")
         return 1
-    print("principal_check: every door that asks for a person asks GitHub what it is looking at")
+    print(f"principal_check: {checked[0]} rule(s) checked — every door that asks for a person "
+          f"asks GitHub what it is looking at")
     return 0
 
 
