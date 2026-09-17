@@ -176,7 +176,11 @@ jobs:
        github.event.action == 'ready_for_review' ||
        contains(github.event.pull_request.labels.*.name, inputs.review-label))
     outputs:
-      relevant: ${{ steps.relevant.outputs.any_changed }}
+      # Constant, and kept rather than dropped: `publish_verdict.py` reads it and its `false`
+      # branch is a green without a verdict. A produce job that runs now always runs the model, so
+      # the branch is unreachable from here — and it stays in the publish half as the guard it is
+      # for any other producer that calls it.
+      relevant: 'true'
       verdict-written: ${{ steps.wrote.outputs.yes }}
     steps:
       - uses: actions/checkout@v7
@@ -184,7 +188,20 @@ jobs:
       - name: Fetch the review routine (exeris-systems/.github)
         uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, path: .guardrails }
-      - name: Does this pull request touch documentation or Javadoc?
+      # WHICH of the routine's file-scoped steps apply — not WHETHER the routine runs. The routine
+      # is Step 1b of the PR-review router and the router's own heading is "Docs & hygiene review
+      # (ALL PRs)": its Step 1 judges the pull request BODY against the diff, and its Step 5 judges
+      # commits and agent files. Neither needs a `.md` in the diff, and the steps that do — doc type
+      # discipline, record integrity, Javadoc prose — already find nothing and say nothing when there
+      # is nothing to find.
+      #
+      # Gating the whole routine on this list meant a pull request with no documentation in it got no
+      # review of its body at all. Measured 2026-09-17: of five pull requests opened that day, three
+      # were never read — including one that rewrote what the reviewer itself is allowed to run, and
+      # every one of `exeris-ai-execution`'s three, the repository holding the dataset contract.
+      # Half the findings the reviewed two received were Step 1 findings about their bodies, which
+      # the unreviewed three would have earned just as well.
+      - name: Which of this routine's file-scoped steps apply?
         id: relevant
         uses: tj-actions/changed-files@v47
         with:
@@ -203,7 +220,7 @@ jobs:
       # it. A candidate locator exiting non-zero is not a verdict, and a step that went red here
       # would skip the review that was supposed to judge the finding.
       - name: This repository's own checks
-        if: ${{ inputs.repo-checks != '' && steps.relevant.outputs.any_changed == 'true' }}
+        if: ${{ inputs.repo-checks != '' }}
         env:
           # Through the environment, not spliced into `run:`. The value comes from a caller's
           # workflow file rather than from pull-request content, but a command assembled by string
@@ -230,7 +247,6 @@ jobs:
       # calls across the logs these repositories held that day were followed by `find /`, `printenv`,
       # `curl` and `WebFetch` — a model improvising its way to data nobody had given it.
       - name: The pull request, read by CI and handed over
-        if: ${{ steps.relevant.outputs.any_changed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -255,7 +271,6 @@ jobs:
           echo "::notice::pull-request.json: $(jq '.files | length' pull-request.json) changed file(s)"
       - name: Docs and hygiene review
         id: review
-        if: ${{ steps.relevant.outputs.any_changed == 'true' }}
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
@@ -312,6 +327,14 @@ jobs:
             to make one with. The diff is the checkout: `git diff` against the base SHA that file
             names.
 
+            Some of this routine's steps are scoped to file types — doc type discipline, record
+            integrity, Javadoc and TSDoc prose. Those apply to the files in this diff that have
+            them and to no others; where the diff has none, they find nothing and you say nothing
+            about them. That is not a reason to skip the review. Step 1 judges the pull request's
+            BODY against its diff and Step 5 judges its commits and agent files, and both apply to
+            every pull request whatever it changes — the routine is Step 1b of the review router,
+            whose heading reads "Docs & hygiene review (ALL PRs)".
+
             This repository may extend the routine with rules of its own. The routine's
             `## Repository extension` section says how far that goes and what it may not touch;
             read that section before you read the extension. Where a value below is `(none)`,
@@ -350,10 +373,10 @@ jobs:
       # project several hours in one evening. The path stays wired for a runner that can write one.
       - name: Did the runner write a verdict?
         id: wrote
-        if: ${{ !cancelled() && steps.relevant.outputs.any_changed == 'true' }}
+        if: ${{ !cancelled() }}
         run: echo "yes=${{ hashFiles('verdict.json') != '' }}" >> "$GITHUB_OUTPUT"
       - name: Keep the verdict for the publish job
-        if: ${{ !cancelled() && steps.relevant.outputs.any_changed == 'true' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: l2-verdict-${{ github.event.pull_request.number }}
