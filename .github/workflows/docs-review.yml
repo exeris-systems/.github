@@ -437,11 +437,17 @@ jobs:
         with:
           name: l2-verdict-${{ github.event.pull_request.number }}
           path: verdict.json
-          # Seven, unlike the execution log below. A verdict is the review, and the review is
-          # published as a comment on the pull request the moment this run ends -- there is nothing
-          # in it a reader cannot already see.
+          # NINETY, against the execution log's one, and the asymmetry is the point. A verdict is
+          # the review: it is published as a comment the moment this run ends, so nothing in it is
+          # withheld by a short retention -- only the MACHINE-READABLE copy is. The comment renders
+          # the object as a table and does not repeat it, so once this artefact lapses `checks_run`
+          # exists only as a bulleted list and a consumer has to parse prose to read what the
+          # publication already had as data.
+          #
+          # Ninety is GitHub's ceiling for a public repository, which is what makes this the whole
+          # of the available answer rather than a chosen number.
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 90
       # Separate, because §C.14 wants the execution log as its own artefact with its own digest when
       # the capture step arrives, and because it is the only way the verdict keeps its own path.
       #
