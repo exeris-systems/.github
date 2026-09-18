@@ -142,9 +142,8 @@ def check_cancellation(path: str, wf: dict, bad: list) -> None:
 
     The publishing job removes the review label as one of its last steps. That removal is an
     `unlabeled` event, it starts a second run, and an unconditional `cancel-in-progress: true`
-    points that run at the one still publishing. Measured on #35: the publishing run's last job
-    completed at 07:06:26 and the cancelling run was created at 07:06:26 — every job came out
-    `success` and the run was still recorded as `cancelled`. A slower review loses the
+    points that run at the one still publishing. The two overlap to the second, so a run whose every
+    job came out `success` can still be recorded as `cancelled`. A slower review loses the
     `publish / verdict` job to the cancel, and a cancelled required check blocks a pull request for
     a reason no human can act on.
 

@@ -165,9 +165,8 @@ jobs:
       # `ref` is NAMED, and that is not redundant. `actions/checkout` reads the default branch only
       # for a DIFFERENT repository; pointed at the one the workflow is running in, it takes the
       # triggering SHA — so when `exeris-systems/.github` reviewed itself the contract came from
-      # `refs/remotes/pull/N/merge`, which is the pull request proposing to change it. Measured on
-      # run 35017181561. Everything this file says about being judged by the rule in force depends
-      # on this line.
+      # `refs/remotes/pull/N/merge`, which is the pull request proposing to change it. Everything
+      # this file says about being judged by the rule in force depends on this line.
       - name: Fetch the contract (exeris-systems/.github@main)
         uses: actions/checkout@v7
         with: { repository: exeris-systems/.github, ref: main, path: .guardrails }
@@ -425,11 +424,11 @@ jobs:
                           and .body != null and (.body | startswith($m))))
                | last | .id // empty' comments.json)
             # What the search was, what it had to choose from, and what it chose. Written because a
-            # publication once created a second comment where it should have updated the first
-            # (exeris-docs#126, run 35136663097) and the log could not say which of the two causes it
-            # was: the candidate missing from `comments.json`, or its body not starting with the
-            # marker. Both are visible here, and the first 72 characters of each candidate are enough
-            # to compare a prefix by eye.
+            # publication that creates a second comment where it should have updated the first has
+            # two possible causes, and a log naming neither cannot tell them apart: the candidate
+            # missing from `comments.json`, or its body not starting with the marker. Both are
+            # visible here, and the first 72 characters of each candidate are enough to compare a
+            # prefix by eye.
             bots=$(jq --arg bot "$BOT_LOGIN" \
               '[.[] | select(.source == "issue-comment" and .author == $bot)] | length' comments.json)
             echo "::notice::publish_verdict: marker_search=[$search]"

@@ -121,10 +121,9 @@ jobs:
             echo 'GLOBS_EOF'
           } >> "$GITHUB_OUTPUT"
       # Every check below reads the checkout and nothing else, so each reports on its own. A step
-      # is skipped by default once an earlier one fails, and these run in one job: measured on
-      # exeris-sdk#130, `Frontmatter, filenames, private links` failed and the registry check, the
-      # agent-file check, markdownlint, both Vale passes and the link check were all skipped — six
-      # worklists a repository needs at once, hidden by the first one to go red. Same fix as
+      # is skipped by default once an earlier one fails, and these run in one job: without this,
+      # the first check to go red hides the registry check, the agent-file check, markdownlint, both
+      # Vale passes and the link check — six worklists a repository needs at once. Same fix as
       # javadoc-gate.yml and tsdoc-gate.yml; this file is where it was noticed last, not first.
       #
       # Gated on `globs` rather than bare `!cancelled()`, because with no glob list resolved these

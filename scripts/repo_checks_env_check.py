@@ -7,11 +7,10 @@ The jobs in the same file run several of the same scripts. Two places, one comma
 disagree about what is installed, the reviewer is handed a failure CI does not have and reads it as
 the state of the repository.
 
-Measured: `publish_verdict_suite.py` failed 57 of 129 cases under `repo-checks` on
-`ModuleNotFoundError: No module named 'referencing'` while the `verdict-contract` job ran the same
-command green, having installed first. It had been that way since `repo-checks` was wired and no
-review had seen it, because every pull request in between changed the entry workflow and was never
-reviewed at all.
+The failure is invisible from either side alone. The job passes, because it installs first; the
+reviewer is handed an `ImportError` and reads it as the state of the repository. Nothing compares
+the two, and a pull request that changes the entry workflow is never reviewed at all, so the
+disagreement can stand for a long time without anything reporting it.
 
 What this compares: for every script `repo-checks` runs that a CI step also runs, the packages that
 step's job installs before it must be installed by `repo-checks` too. Not the reverse — `repo-checks`
