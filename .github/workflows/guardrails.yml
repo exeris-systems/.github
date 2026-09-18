@@ -99,6 +99,7 @@ jobs:
       repo-checks: >-
         pip install --quiet pyyaml jsonschema referencing;
         python3 scripts/publish_verdict_suite.py --root .;
+        python3 scripts/javadoc_trivial_members_suite.py;
         python3 scripts/entry_workflow_suite.py;
         python3 scripts/label_map_check.py;
         python3 scripts/caller_permissions_check.py
@@ -164,6 +165,7 @@ jobs:
         run: |
           pip install --quiet jsonschema referencing
           python scripts/publish_verdict_suite.py --root .
+          python scripts/javadoc_trivial_members_suite.py
       # The mapping between GitHub's gate vocabulary and the verdict's. They are two files apart
       # and neither knows the other changed; the tell is a refused verdict, which reads as the
       # runner emitting nonsense rather than as this repository drifting from its own schema.
