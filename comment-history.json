@@ -1,0 +1,18 @@
+{
+  "$comment": "The tokens that mark a comment as history rather than contract — javadoc-conventions.md rule 12, tsdoc-conventions.md rule 12, comment-conventions.md. It sits beside labels.yml and labels-from-verdict.json because it is the same kind of thing: taxonomy data a check applies, not a rule a check restates. Three consumers read it — scripts/comment_history_check.py directly, ts/eslint.tsdoc.mjs by import, and java/checkstyle-javadoc.xml through a regenerated `format` attribute, because Checkstyle reads no JSON. scripts/comment_history_suite.py asserts all three carry this list; `comment_history_check.py --emit-checkstyle` prints what the XML must hold. Each alternative is anchored to the verb or the number that makes it past-referential: an unanchored list fires on present-tense English and a check that is wrong most of the time is one people learn to ignore. `no longer` and a bare `previously` are deliberately absent and left to review.",
+  "alternatives": [
+    "previously\\s+(returned|threw|thrown|was|were|did|had|used|accepted|required|allowed|emitted|read|took|lived|behaved)",
+    "(this|it|which|that)\\s+used\\s+to\\s",
+    "used\\s+to\\s+(be|have|read|emit|export|produce|write|generate|return|take|live|sit|do|call|throw|accept|require|spell|prevent|default)",
+    "fixed\\s+in\\s+v?\\d",
+    "\\b(bug|issue|ticket|PR)\\s*#\\d+",
+    "\\bformerly\\b",
+    "\\bhistorically\\b",
+    "(before|after|since)\\s+the\\s+.{0,40}\\b(refactor|rewrite|migration|port)\\b",
+    "\\bas\\s+of\\s+\\d+\\.\\d",
+    "\\bwe\\s+(hit|had|saw|found|used)\\b",
+    "workaround\\s+for",
+    "because\\s+of\\s+a\\s+bug",
+    "earlier\\s+(version|revision|design|implementation)s?"
+  ]
+}

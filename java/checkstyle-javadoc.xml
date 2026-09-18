@@ -54,7 +54,7 @@
        exists and this will miss it; that is the trade the level and the width are both chosen for. -->
   <module name="RegexpSingleline">
     <property name="severity" value="warning"/>
-    <property name="format" value="^\s*\*.*(previously\s+(returned|threw|thrown|was|were|did|had|accepted|required|behaved)|(this|it|which|that)\s+used\s+to\s|used\s+to\s+(be|return|throw|require|accept|spell|prevent|have|do)|fixed\s+in\s+v?\d|\b(bug|issue|ticket|PR)\s*#\d+|\bformerly\b|\bhistorically\b|(before|after|since)\s+the\s+[\w-]+\s+(refactor|rewrite|migration|port)|\bas\s+of\s+\d+\.\d|\bwe\s+(hit|had|saw|found|used)\b)"/>
+    <property name="format" value="^\s*\*.*(previously\s+(returned|threw|thrown|was|were|did|had|used|accepted|required|allowed|emitted|read|took|lived|behaved)|(this|it|which|that)\s+used\s+to\s|used\s+to\s+(be|have|read|emit|export|produce|write|generate|return|take|live|sit|do|call|throw|accept|require|spell|prevent|default)|fixed\s+in\s+v?\d|\b(bug|issue|ticket|PR)\s*#\d+|\bformerly\b|\bhistorically\b|(before|after|since)\s+the\s+.{0,40}\b(refactor|rewrite|migration|port)\b|\bas\s+of\s+\d+\.\d|\bwe\s+(hit|had|saw|found|used)\b|workaround\s+for|because\s+of\s+a\s+bug|earlier\s+(version|revision|design|implementation)s?)"/>
     <property name="message" value="Javadoc carries no history (javadoc-conventions.md rule 12). A doc comment states the contract as it is today; the only temporal tags are @since and @deprecated. If this sentence records how something used to be, move it to the release notes or an ADR and reference the ADR with @see. If it is a statement about the present, this is a false positive - say so in review."/>
   </module>
   <module name="TreeWalker">
