@@ -19,9 +19,9 @@ repository: .github
 # version means re-vendoring; the pin and the tree are one fact and land together.
 imports:
   - bundle: exeris-agents
-    version: 2.0.0
-    ref: dfe373ffb67c63c80daf6e90a6a36903dd12e640
-    sha256: sha256:56284cb7d8c08efeffe837ad5cb2a5d2e93fc8d4fbd5a0984af1d32d5426116c
+    version: 2.1.0
+    ref: abfdbe5336e3c29b807241b0bb00a6091cb42fea
+    sha256: sha256:7454a4e4f8682b664899225551dbf4e827e40a2c8889c989ff24e9ebdf2f960f
 
 schemas:
   - verdict
