@@ -230,6 +230,21 @@ jobs:
       # zero whatever the scripts returned; the code is written INTO the file so the reviewer sees
       # it. A candidate locator exiting non-zero is not a verdict, and a step that went red here
       # would skip the review that was supposed to judge the finding.
+      # THE ROUTINE SUPPLIES THE INTERPRETER; THE CALLER NAMES THE PACKAGES. Without this the step
+      # below ran under the runner image's system `python3`, where `pip install jsonschema` reports
+      # "already satisfied" against whatever apt left there and installs nothing. The caller's list
+      # was therefore honoured in name and not in version: `publish_verdict_suite.py` failed 57 of
+      # its 129 cases on `Draft202012Validator(..., registry=)`, a keyword that arrived in
+      # jsonschema 4.18, and the reviewer was handed that as the state of the repository.
+      #
+      # A caller's list is honoured in name and not in version without this: naming a package is not
+      # resolving it, and `pip install` against a system interpreter reports whatever is already
+      # there as satisfied. A caller cannot close that — it does not own this job — so the split is:
+      # this workflow guarantees a managed interpreter with a working `pip`, and `repo-checks` says
+      # what to put in it.
+      - uses: actions/setup-python@v7
+        if: ${{ inputs.repo-checks != '' }}
+        with: { python-version: "3.14" }
       - name: This repository's own checks
         if: ${{ inputs.repo-checks != '' }}
         env:

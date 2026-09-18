@@ -96,10 +96,18 @@ jobs:
       # (exeris-systems/.github#62, the first pull request the routine has actually read since
       # `repo-checks` was wired: #59, #60 and #61 all changed the entry workflow and were never
       # reviewed at all). `repo_checks_env_check.py` compares them now.
+      #
+      # EVERY CHECK. A reviewer reads `repo-checks.out` as the state of this repository, so a gate
+      # missing from this list is a gate it cannot see: its result never reaches the verdict, and a
+      # rule it enforces can break without anything saying so.
       repo-checks: >-
         pip install --quiet pyyaml jsonschema referencing;
         python3 scripts/publish_verdict_suite.py --root .;
         python3 scripts/entry_workflow_suite.py;
+        python3 scripts/gate_vocabulary_check.py --root .;
+        python3 scripts/principal_check.py --root .;
+        python3 scripts/repo_checks_env_check.py --root .;
+        python3 scripts/repo_checks_env_check_suite.py;
         python3 scripts/label_map_check.py;
         python3 scripts/caller_permissions_check.py
     secrets:
@@ -195,3 +203,10 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python scripts/repo_checks_env_check.py --root .
+      # The checker above decides whether the reviewer is handed a broken environment, and it was
+      # written twice before anything exercised it: first it compared package names while the
+      # interpreter differed, then the interpreter rule shipped with no case. A checker with no
+      # cases is the thing it checks for.
+      - name: The environment comparison, one case per way of getting it wrong
+        if: ${{ !cancelled() }}
+        run: python scripts/repo_checks_env_check_suite.py
