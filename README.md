@@ -64,10 +64,14 @@ scripts/
                          conclusion the workflow then applies and gates on
   publish_verdict_suite.py  one case per red path ADR-087 §B.8 names, run in this repository's CI
   bundle_pin_check.py    the vendored bundle is the ref docs-lint.yml resolves
+  commitlint_anchor_repro.sh  the report behind `package.json`: builds the caller layout twice,
+                         with the anchor and without, and prints what differs. Needs network, so it
+                         is run rather than wired in
   label_map_check.py     labels-from-verdict.json names only tags in the schema and labels in labels.yml
   caller_bundle_check.py the reviewed repository's bundle pin against this one's (§B.6a)
   (the agent-layer tooling is NOT here — the bundle owns it. docs-lint.yml checks exeris-agents out
    into .agents-tools/ and runs it from there; `.agents/` below is this repository's vendored copy)
+package.json             anchors this checkout as its own Node project — see commit-lint.yml for what walks up without it
 commitlint.config.js     commit-conventions.md rules 1–4 (custom rules: exeris-header-length, exeris-mmr-sections, exeris-trailers)
 .markdownlint.yaml
 vale/.vale.ini           + vale/styles/Quarkus (vendored, Apache-2.0) + vale/styles/Exeris (Terminology, RetractedFigures, DriftPatterns, Numbers, Absolutes)
