@@ -157,6 +157,14 @@ jobs:
       - name: Agent adapters are up to date
         if: ${{ !cancelled() && inputs.agent-check }}
         run: python .agents-tools/tools/agents_render.py --root . --check
+      # comment-conventions.md rule 1, for the languages Checkstyle and ESLint do not read. Warning
+      # only, like its two siblings: whether a sentence is archaeology or a statement about the
+      # present is a reviewer's call.
+      - name: Comments carry no history (warning)
+        if: ${{ !cancelled() }}
+        run: |
+          python .guardrails/scripts/comment_history_check.py \
+            --root "${{ inputs.docs-root }}" --exclude "${{ inputs.exclude }}"
       - name: markdownlint (warning)
         if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         continue-on-error: true

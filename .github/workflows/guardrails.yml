@@ -87,7 +87,8 @@ jobs:
         python3 scripts/publish_verdict_suite.py --root .;
         python3 scripts/entry_workflow_suite.py;
         python3 scripts/label_map_check.py;
-        python3 scripts/caller_permissions_check.py
+        python3 scripts/caller_permissions_check.py;
+        python3 scripts/comment_history_suite.py
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
@@ -153,6 +154,9 @@ jobs:
       # The mapping between GitHub's gate vocabulary and the verdict's. They are two files apart
       # and neither knows the other changed; the tell is a refused verdict, which reads as the
       # runner emitting nonsense rather than as this repository drifting from its own schema.
+      - name: The history tokens are one list, whatever reads them
+        if: ${{ !cancelled() }}
+        run: python scripts/comment_history_suite.py
       - name: The gate results speak the verdict's vocabulary
         if: ${{ !cancelled() }}
         run: python scripts/gate_vocabulary_check.py --root .

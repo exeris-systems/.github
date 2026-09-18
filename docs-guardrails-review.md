@@ -56,7 +56,7 @@ One condition, and it is not a limit on the person. Where a **BLOCKED** verdict 
 19. `@throws` on a method that can raise an `ExerisKernelException` without the EX-code → `[CONTRACT]`.
 20. `<pre>{@code` examples added → `[STYLE]` (use `{@snippet}`).
 
-20a. Doc comment (Java or TS) narrates history — "previously", "used to be", "fixed in", PR/issue numbers, why an earlier design was wrong → `[STYLE]` with the CHANGELOG/ADR destination named; CI catches the precision-first list, this step catches the rest ("no longer", bare "used to" in a past-tense reading).
+20a. **A comment narrates history — in any language, and not only a doc comment.** "previously returned", "used to be", "fixed in 0.8.1", PR/issue numbers, why an earlier design was wrong → `[STYLE]` with the CHANGELOG/ADR destination named. Three gates catch the anchored list, all reading the same `comment-history.json`: Checkstyle over Java, ESLint over TypeScript, `comment_history_check.py` over Python, YAML and shell. This step catches what no token list can — "no longer" and a bare "used to" in a past-tense reading, and the comment that is true today yet exists only to explain a diff. `comment-conventions.md` is the rule; a comment that needs a story is a missing ADR link.
 
 ## Step 4-TS — TypeScript doc comments and goldens (tsdoc-conventions.md)
 20b. Javadoc markup in a `.ts` doc comment (`<p>`, `{@code}`, `@author`, `{type}` in a tag, `@param name desc` without the hyphen) → `[STYLE]`.

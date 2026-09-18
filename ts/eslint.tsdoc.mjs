@@ -22,15 +22,17 @@
 //
 // `gated` = files whose exports are the published surface (rule 1 → error);
 // everything else gets rule 1 as a warning so the diff-aware gate can ramp.
+import { readFileSync } from "node:fs";
 import jsdoc from "eslint-plugin-jsdoc";
 import tsdoc from "eslint-plugin-tsdoc";
 
-// Rule 12 regex, anchored by measurement (ADR-085 amendment 2026-09-05): each token is tied
-// to the verb that makes it past-referential. Unanchored, "no longer", bare "used to" and bare
-// "previously" are mostly correct present-tense English ("is used to validate", "deletes any it
-// no longer emits"), so they are left to L2. The rule WARNS — archaeology vs. contract is a
-// reviewer's call — and mirrors java/checkstyle-javadoc.xml.
-const HISTORY = "\\b(previously (returned|threw|was|were|did|had|used|required|allowed|emitted|read|took|lived)|historically|fixed in \\d|used to (be|have|read|emit|export|produce|write|generate|return|take|live|sit|do|call|throw|accept|require|default)|after the .{0,40}(refactor|rewrite|migration)|(PR|issue|bug) #\\d+|workaround for|because of a bug|earlier (version|revision|design|implementation)s?)\\b";
+// Rule 12's tokens are authored in ../comment-history.json and read, never copied: the same list
+// reaches Checkstyle over Java, this over TypeScript and scripts/comment_history_check.py over
+// everything else, and a copy is a list that drifts. The rule WARNS — archaeology vs. contract is
+// a reviewer's call.
+const HISTORY = "(" + JSON.parse(
+  readFileSync(new URL("../comment-history.json", import.meta.url), "utf8")
+).alternatives.join("|") + ")";
 
 const base = {
   plugins: { jsdoc, tsdoc },
