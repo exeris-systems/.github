@@ -42,16 +42,37 @@ import sys
 # `docs-guardrails-review.md` names them; this default mirrors that sentence and `--mandatory`
 # overrides it for a repository whose caller runs more.
 # Why a producing job did not run, split by whether the reason is a statement ABOUT THE PULL
-# REQUEST or merely about this event. A draft, a bot's own pull request and a fork have nothing to
-# review and green is honest. A label change, a push with no review asked for, or a kind this file
-# does not recognise say nothing, so the standing verdict decides instead — the difference between
-# them was the fail-open measured on #40.
+# REQUEST or merely about this event. A fork and a draft have nothing to review and green is
+# honest: a fork can carry no credential, and a draft is not mergeable, so its colour decides
+# nothing. A label change, a push with no review asked for, or a kind this file does not recognise
+# say nothing, so the standing verdict decides instead — the difference was the fail-open on #40.
+#
+# `bot-authored` USED TO SIT IN THE FIRST SET, inside `draft-or-bot`, and it is the one member that
+# does not belong there. A draft cannot merge; a pull request opened by a bot CAN, so greening it
+# is a merge gate reporting a pass on a change nothing read. ADR-087 §B.8 never named it — it names
+# a passing verdict and the path-filter skip whose producing job succeeded, and says every other
+# state is red. The implementation was wider than the ADR it implements.
+#
+# Nothing had ever taken that branch, either: no pull request authored by a bot has ever reached a
+# repository that calls this routine. A branch nothing has reached is not a working branch, and the
+# first thing to reach this one would be the first pull request an agent harness opens — a green
+# required check on the worst possible first exercise. Skipping the WORK on a dependency bump is a
+# decision about cost and stays; claiming a PASS for it is not that decision.
 # The decisions that may green a check on their own. `BLOCKED` is refused by name for the message it
 # earns; everything else — `NONE`, and anything a later schema adds — is refused by absence, because
 # the alternative is a list that has to be kept in step with an enum it does not own.
 PASSING_DECISIONS = frozenset({"PASS", "CONDITIONAL"})
-ABOUT_THE_PULL_REQUEST = frozenset({"fork", "draft-or-bot"})
-SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event"})
+ABOUT_THE_PULL_REQUEST = frozenset({"fork", "draft"})
+# `draft-or-bot` is deliberately in NEITHER set. A caller pinned before the split still sends it,
+# and an unrecognised kind hands the colour to the standing verdict — which is the safe half of
+# what it used to mean, and red where it used to be wrong.
+SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event", "bot-authored"})
+# THE TWO SETS ARE CONSULTED IN ORDER, not independently: `SAYS_NOTHING_ABOUT_THE_DIFF` is asked
+# first and returns, so a kind in both would have its membership of the second silently dead. Found
+# by a mutation that added `bot-authored` back to the green set and failed nothing at all — the
+# mutation was a no-op, which reads exactly like a rule that holds.
+assert not (ABOUT_THE_PULL_REQUEST & SAYS_NOTHING_ABOUT_THE_DIFF), \
+    "a skip kind in both sets takes the first branch and its place in the second decides nothing"
 
 # Why a skip of one of those two kinds is a green, keyed by the kind itself. The caller computes the
 # same sentence in a second YAML expression that asks the EVENT over again, and the two disagree: a
@@ -68,7 +89,8 @@ SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event"})
 NOT_RUN_SAID = {
     "fork": ("This pull request comes from a fork. A fork receives no secrets, so the runner has no "
              "credential to review with."),
-    "draft-or-bot": "This pull request is a draft or was opened by a bot. The routine reads neither.",
+    "draft": ("This pull request is a draft. The routine reads one when it is marked ready, and a "
+              "draft cannot be merged in the meantime."),
 }
 NOTHING_TO_READ = ("No Markdown or Java changed in this pull request, so the routine had nothing "
                    "to read.")
@@ -76,8 +98,8 @@ NOTHING_TO_READ = ("No Markdown or Java changed in this pull request, so the rou
 SKIP_IS_GREEN_BECAUSE = {
     "fork": ("the pull request comes from a fork, which receives no secrets, so the runner has no "
              "credential to review with"),
-    "draft-or-bot": ("the pull request is a draft or was opened by a bot, and this review reads "
-                     "neither"),
+    "draft": ("the pull request is a draft, which this review does not read and GitHub does not "
+              "merge"),
 }
 
 MANDATORY_DEFAULT = "docs-lint,commit-lint,pr-body-check"
@@ -777,9 +799,12 @@ def standing_decision(plan: dict, args) -> None:
     """No verdict came out of this run, so the STANDING one decides the colour.
 
     The reason a run produced nothing is not itself an answer about the pull request. Only two
-    reasons are: it is a draft or a bot's own pull request, and it is a fork this workflow cannot
-    review. Every other reason — no review was asked for, the event was a label change, a skip kind
-    nobody has seen before — leaves the question open, and the answer is the last verdict: it is
+    reasons are: it is a draft, which cannot merge while it stays one, and it is a fork this
+    workflow can carry no credential for. A pull request OPENED BY A BOT is not among them: it can
+    merge, so greening it is a merge gate reporting a pass on a change nothing read.
+
+    Every other reason — no review was asked for, the event was a label change, a bot opened the
+    pull request, a skip kind nobody has seen before — leaves the question open, and the answer is the last verdict: it is
     green only if one exists, still covers this head, and did not block.
     """
     plan["agent"] = args.expect_agent or "unknown"
@@ -1226,7 +1251,7 @@ def main() -> int:
     p.add_argument("--pin-problem", default="",
                    help="what caller_bundle_check.py said, when it said anything (ADR-087 §B.6a)")
     p.add_argument("--skip-kind", default="",
-                   help="why the producing job did not run. `fork` and `draft-or-bot` are about the pull request and are a green on their own; `not-ready`, `bot-event` and anything this file does not recognise hand the colour to the standing verdict")
+                   help="why the producing job did not run. `fork` and `draft` are about the pull request and are a green on their own; `bot-authored`, `not-ready`, `bot-event` and anything this file does not recognise — `draft-or-bot` from a caller pinned before the split included — hand the colour to the standing verdict")
     p.add_argument("--head-sha", default="",
                    help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
     p.add_argument("--review-label", default="needs-l2-review",

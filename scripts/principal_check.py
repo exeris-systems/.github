@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 import yaml
@@ -82,6 +83,14 @@ def main() -> int:
     rule(SENDER_TYPE in kind,
          f"`skip-kind` does not decide `bot-event` from {SENDER_TYPE}")
 
+    # 2a. A PULL REQUEST A BOT OPENED CAN BE MERGED, so it is its own kind. `draft-or-bot` was one
+    # word for two situations and one green for both; only the draft half earns it, because GitHub
+    # refuses to merge a draft whatever this check says. This reads the shipped expression because
+    # no Python suite can execute it, and the planner's own half is read below.
+    rule("'draft'" in kind and "'bot-authored'" in kind and "draft-or-bot" not in kind,
+         "`skip-kind` does not name `draft` and `bot-authored` as separate kinds — merged, a pull "
+         "request a bot opened takes the draft's green and merges having been read by nothing")
+
     reason = " ".join(str(hands_over.get("skip-reason", "")).split())
     rule(SENDER_TYPE in reason,
          f"`skip-reason` does not name {SENDER_TYPE}, so the reason and the classification can "
@@ -115,6 +124,11 @@ def main() -> int:
     planner = os.path.join(root, "scripts", "publish_verdict.py")
     with open(planner, encoding="utf-8") as fh:
         code = fh.read()
+    green_set = re.search(r"ABOUT_THE_PULL_REQUEST\s*=\s*frozenset\(\{([^}]*)\}\)", code)
+    rule(green_set is not None and "bot-authored" not in green_set.group(1)
+         and "draft-or-bot" not in green_set.group(1),
+         "publish_verdict.py greens a skip on a pull request a bot opened — ADR-087 §B.8 names a "
+         "passing verdict and the path-filter skip, and calls every other state red")
     rule("def human_principal(" in code,
          "publish_verdict.py no longer decides who is a person")
     rule("not human_principal(args.override_by, args.override_by_type)" in code,

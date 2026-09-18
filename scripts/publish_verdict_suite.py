@@ -420,8 +420,8 @@ def main() -> int:
                 "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
                 "--labels-map", os.path.join(root, "labels-from-verdict.json"),
                 "--out", os.path.join(tmp, "plan.json"), "--produce-outcome", "skipped",
-                "--skip-kind", "draft-or-bot",
-                "--skip-reason", "the pull request is a draft or a dependency bump"]
+                "--skip-kind", "draft",
+                "--skip-reason", "the pull request is a draft"]
         # Same redirect every other case gets through `run`: without it this planner appends to the
         # real step summary and the suite's own report arrives with a stray plan on top of it.
         subprocess.run(args, capture_output=True, text=True, check=True,
@@ -830,7 +830,7 @@ def main() -> int:
     @case("a skip with every gate green is still the ordinary green skip")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
-                skip_kind="draft-or-bot")
+                skip_kind="draft")
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
@@ -1159,7 +1159,7 @@ def main() -> int:
     def _(tmp):
         for kw in (dict(relevant="false"),
                    dict(outcome="skipped", skip_kind="fork"),
-                   dict(outcome="skipped", skip_kind="draft-or-bot")):
+                   dict(outcome="skipped", skip_kind="draft")):
             p = run(root, tmp, head_sha="b" * 40, comments=[by_bot(NOTICE)], **kw)
             body = p["comment"].lower()
             assert body, kw
@@ -1214,7 +1214,7 @@ def main() -> int:
         p = run(root, tmp, outcome="skipped", skip_kind="fork", skip_reason=wrong)
         assert p["conclusion"] == "green", p
         assert "fork" in p["reason"] and wrong not in p["reason"], p["reason"]
-        p = run(root, tmp, outcome="skipped", skip_kind="draft-or-bot", skip_reason=wrong)
+        p = run(root, tmp, outcome="skipped", skip_kind="draft", skip_reason=wrong)
         assert "draft" in p["reason"] and wrong not in p["reason"], p["reason"]
 
     @case("a skip kind this file does not know still says whatever the caller said")
@@ -1392,6 +1392,47 @@ def main() -> int:
                 override_by="arkstack", override_by_type="User")
         assert p["conclusion"] == "green", p
         assert "l2-override by=arkstack" in p["comment"], p["comment"][:200]
+
+    # A PULL REQUEST A BOT OPENED CAN BE MERGED. That is the whole of it: `draft-or-bot` was one
+    # word covering two situations, and only the draft half earns a green, because GitHub refuses to
+    # merge a draft whatever this check says. Greening the other half is a merge gate reporting a
+    # pass on a change nothing read — and ADR-087 §B.8 never named it, naming a passing verdict and
+    # the path-filter skip and calling every other state red.
+    @case("a bot's own pull request is not a green on its own")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-authored", head_sha="e" * 40)
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    @case("a draft still is, because a draft cannot merge while it stays one")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="draft")
+        assert p["conclusion"] == "green", p
+
+    # Not red because a bot wrote it — red because nothing has reviewed it. The distinction is the
+    # point: once something has, the colour follows the review, exactly as it does for a person.
+    @case("and it goes green on a standing verdict like anyone else's")
+    def _(tmp):
+        standing = marker_line("PASS", sha="e" * 40) + "\n## L2 review — **PASS**"
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-authored", head_sha="e" * 40, comments=[by_bot(standing, 2)])
+        assert p["conclusion"] == "green", p
+
+    @case("a standing block on a bot's pull request is not skipped past")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-authored", head_sha="e" * 40, comments=[by_bot(blocked, 2)])
+        assert p["conclusion"] == "red", p
+
+    # A caller pinned before the split still sends the old word. It is in neither set now, so it
+    # takes the unrecognised path and hands the colour over — the safe half of what it used to mean.
+    @case("the word it used to be is no longer a green by itself")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="draft-or-bot", head_sha="e" * 40)
+        assert p["conclusion"] == "red", p
 
     failures = 0
     for name, fn in cases:
