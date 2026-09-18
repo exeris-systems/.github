@@ -12,8 +12,8 @@ This turns a base..head range into the two forms the two halves of the gate cons
   <out>/<n>.files     one absolute path per line — javadoc reads it as `@argfile`, so no shell
                       word-splitting stands between the file list and the tool
   <out>/<n>.includes  the same files relative to the module's source root, comma-joined, which is
-                      the form `-Dcheckstyle.includes` takes (measured: 266 files/646 findings on
-                      exeris-kernel-spi narrows to 1/1 with a single include)
+                      the form `-Dcheckstyle.includes` takes, which is what narrows a whole-module
+                      run down to the files a pull request actually changed
 
 A module with no changed Java file gets no group at all, so the gate stays silent on modules the
 pull request did not touch rather than reporting them green.

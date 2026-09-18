@@ -140,11 +140,11 @@ jobs:
     # required check that can never pass is not a gate, it is a wall. The path that reviews a fork
     # safely is `pull_request_target` with the risk analysis that deserves, and it is not this
     # pull request's.
-    # A LABEL CHANGE MUST NOT START A REVIEW, because the publication applies labels. Measured: the
-    # publish step added `doc-debt` at 20:12:17 and a new run began at 20:12:20 with `exeris-bot` as
-    # its actor; the runner refuses a non-human actor, so the produce job failed and the publish job
-    # replaced a comment carrying real findings with "no verdict". The publication destroyed itself
-    # in three seconds. A label change alters no diff, so there is nothing to review either way.
+    # A LABEL CHANGE MUST NOT START A REVIEW, because the publication applies labels. A review that
+    # ran on the label its own publication had just written would start a run whose actor is the
+    # bot, which the runner refuses, and the failed produce would replace a comment carrying real
+    # findings with "no verdict" -- the publication undoing itself. A label change alters no diff, so
+    # there is nothing to review either way.
     #
     # THE L1 CONDITION IS THE ORDERING, not a dependency. A review judges what the gates cannot, so
     # running it on a pull request whose commit message does not lint spends eight minutes of a model
@@ -300,8 +300,9 @@ jobs:
       # `failure`, `cancelled` — and `verdict.base.schema.json` requires `pass`, `fail`, `not-run`
       # under a `check` key. A model that followed the instruction literally produced a verdict the
       # schema refused, which is `decision=INVALID` and a red check saying the runner emitted
-      # something unreadable. Measured on exeris-docs#129: `checks_run/0: 'check' is a required
-      # property` and `'success' is not one of ['pass', 'fail', 'not-run']`, twice on one commit.
+      # something unreadable. The failure is intermittent by nature: a model that translates on its
+      # own initiative produces a valid verdict and one that obeys the instruction does not, so the
+      # contradiction reads as runner variance rather than as two files disagreeing.
       #
       # Translating here rather than asking the model to translate: the vocabulary is CI's to know,
       # the mapping is three cases, and an instruction that says `verbatim` is either true or it is
@@ -333,8 +334,8 @@ jobs:
           # when a ready run loses its gates the publication re-applies the review label, so the run
           # that repairs it is initiated by `exeris-bot`. The action then refused to start and the
           # produce job came out `failure` rather than skipped, which is worse than the state it was
-          # repairing. Measured on exeris-docs#126, run 35124701902: "Workflow initiated by non-human
-          # actor: exeris-bot (type: Bot)".
+          # repairing: the action refuses to start for a non-human actor and says so, and a failed
+          # produce is a red check about the runner rather than about the pull request.
           #
           # Narrow on purpose: one login, not `*`. The bot applies the review label in exactly one
           # place — the lost-request branch of `publish_verdict.py` — and the producing job still
@@ -342,11 +343,9 @@ jobs:
           allowed_bots: "exeris-bot"
           # THE REVIEWER MAY NOT PUBLISH. ADR-087 §A.3 gives publication to `exeris-bot` and
           # nothing else: the bot signs the comment, carries the marker the gate reads, and writes
-          # the provenance footer. Without this line the runner published its own review instead —
-          # measured on exeris-docs#121, where it made 28 shell calls, none denied, and the last one
-          # returned the URL of a comment posted as `claude[bot]`. That comment carried no marker, no
-          # footer and no gate: a review nothing could act on, beside a required check that went red
-          # saying no verdict had arrived.
+          # the provenance footer. Without this line the runner publishes its own review instead,
+          # under its own identity: a comment with no marker, no footer and no gate -- a review
+          # nothing can act on, beside a required check going red because no verdict arrived.
           #
           # Worse than the duplicate: what the shared review may do was being decided by the
           # repository it ran in rather than by this file. The same workflow denied every `gh` call
@@ -486,9 +485,8 @@ jobs:
     # killed by `concurrency` reached this job, found no verdict and posted a "not run" notice. That
     # notice is a new comment by design — its marker matches only another notice, so a failed run
     # cannot erase findings — and the next real verdict then adopts the newest matching comment,
-    # which is that notice, orphaning the verdict comment before it. Measured on exeris-docs#126,
-    # runs 35140258703 and 35140258947: `matched=NONE` then `matched=5703249246`, three comments
-    # where there should be one. A cancelled run has nothing to say, and its checks report as
+    # which is that notice, orphaning the verdict comment before it -- three comments where the
+    # routine is supposed to keep one. A cancelled run has nothing to say, and its checks report as
     # cancelled rather than green, so nothing is lost by its silence.
     if: ${{ !cancelled() && inputs.publish }}
     # The publishing half is its own reusable workflow because §B.11 requires more than one producer
@@ -509,14 +507,13 @@ jobs:
       # Why the producing job did not run, as a value the publish half branches on. `ready` is a
       # sentinel rather than the empty string on purpose: GitHub treats `''` as FALSE, so
       # `(readiness) && ''` falls through to the next `||` and every ready run would report as
-      # `not-ready`. Found by reading the expression back, before it ran.
+      # `not-ready`.
       #
       # These ask about the PULL REQUEST — is it a draft, was it opened by a bot — where `bot-event`
       # below asks who triggered THIS EVENT. The two differ exactly when the publication applies a
       # label: the bot's label change starts a run whose actor is the bot on a pull request a person
-      # opened, and that run was once classified as being about the pull request, which is a green.
-      # Measured on #40, where a BLOCKED verdict and a `hard-block` label sat on a pull request
-      # GitHub reported as CLEAN.
+      # opened. Classifying that run as being about the pull request makes it a green, which is how
+      # a BLOCKED verdict and a `hard-block` label end up on a pull request GitHub reports as CLEAN.
       #
       # `draft` AND `bot-authored` ARE TWO KINDS, not one. They were `draft-or-bot`, one word and
       # one green, and only the draft half earns it: a draft cannot be merged while it stays one, so

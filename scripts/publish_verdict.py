@@ -360,8 +360,7 @@ def execution_verdicts(path: str) -> list[dict]:
     The third source and the best one. The runner writes an execution log, the produce job uploads it
     already, and the model's own final message is in it — so the verdict reaches the publish step
     without the runner needing permission to write a file or to post a comment, both of which its
-    harness denies (measured: one `Write` call and twenty-five `gh` calls, all refused by the action's
-    permission mode). It is also the only source whose authorship is not a question: an artefact of
+    harness denies. It is also the only source whose authorship is not a question: an artefact of
     the run is not a surface anyone can write to, which is why §B.10's comment fallback needs a
     trusted-author list and this needs none.
     """
@@ -544,10 +543,9 @@ def ci_results(raw: str) -> dict[str, str]:
     """What CI knows about its own gates, as `{gate: conclusion}`.
 
     The authority on whether `docs-lint` ran is the workflow that ran it, not a model reading a page
-    it may not be able to reach. Measured on the first real run: the runner's harness denied every
-    `gh` call, so the review reported all three mandatory gates as `not-run` and the required check
-    was red for ever — a verdict about the pull request's prose, defeated by the reviewer's inability
-    to read a step summary.
+    it may not be able to reach. Where the harness denies the calls that would read one, every
+    mandatory gate comes back `not-run` and the required check is red for ever — a verdict about the
+    pull request's prose, defeated by the reviewer's inability to reach a step summary.
     """
     try:
         doc = json.loads(raw or "{}")
@@ -721,8 +719,7 @@ def blocking_findings(verdict: dict) -> list[str]:
 
     The gate read `decision` and nothing else, so a review that set `CONDITIONAL` and marked a
     finding `blocking: true` produced a green check next to a comment rendering that finding as
-    **(blocking)**. Measured on exeris-docs#121: the routine said the forbidden-import list
-    contradicted the guard it cites, marked it blocking, and the pull request came out mergeable.
+    **(blocking)**, and the pull request came out mergeable beside it.
     A decision and a finding disagreeing is not a tie to resolve in the decision's favour — the
     stricter of the two is the one a reader acts on, which is §B.11's rule applied within one
     verdict rather than between two.
@@ -740,8 +737,7 @@ def human_review(args) -> tuple[str, str, str] | None:
     second wide: recording an override removes the label, the removal is an `unlabeled` event, that
     event reruns the workflow on the same commit with no `override_by`, and the rerun asks this
     function, which refused the record written a moment earlier. The check went green and back to
-    red with nothing pushed. Found by the review reading the code rather than the prose, on the
-    pull request that shipped the other half.
+    red with nothing pushed.
     """
     if not (args.comments and os.path.exists(args.comments)):
         return None
@@ -770,8 +766,8 @@ def restate_notice(plan: dict, args, said: str) -> None:
     The notice is a statement about the pull request, not a log line: a reader takes it for what is
     true now. Every branch that publishes one edits it in place on the next run — except the
     branches that conclude green without a verdict, which wrote nothing at all, so a notice naming
-    a gate that had since passed stood next to a green check. Measured on exeris-ai-execution#1,
-    where `docs-lint` was named as failing forty minutes after it passed.
+    a gate that had since passed stands next to a green check, naming it as failing long after it
+    passed.
 
     `said` is that current state in one sentence. It does not mention the notice it replaces:
     replacing it IS the correction, and a note explaining that it corrects something is a note
@@ -835,10 +831,9 @@ def standing_decision(plan: dict, args) -> None:
     elif standing[0] not in PASSING_DECISIONS:
         # `NONE` above all. The publication writes that marker precisely when NO review ran — gates
         # red, verdict unreadable, runner produced nothing — and a later run was reading it back as
-        # a verdict that passed, because this branch only ever refused `BLOCKED`. Measured on
-        # exeris-docs#123: one run published `decision=NONE` and was cancelled, the run that replaced
-        # it reported "the standing verdict is NONE and still covers ac4b63d" and went green on a
-        # pull request nothing had reviewed.
+        # a verdict that passed, because this branch only ever refused `BLOCKED`. A run that
+        # published `NONE` and was then cancelled leaves its replacement reporting that the standing
+        # verdict still covers the head — green, on a pull request nothing had reviewed.
         #
         # Named forward rather than backward: a decision this file does not recognise is not a pass
         # either. The enum can grow in the schema without this turning into a hole the day it does.
@@ -984,9 +979,8 @@ def cmd_plan(args) -> int:
         return standing_gate(plan, args)
     if args.produce_outcome == "skipped" and failed_l1:
         # `cancelled` is not `failure`. A gate cancelled by `concurrency` reported nothing, and
-        # telling the author it "did not pass" sends them to fix three green checks — measured on
-        # exeris-docs#124, where a label applied seconds after opening killed the run and the comment
-        # blamed the gates it had killed.
+        # telling the author it "did not pass" sends them to fix green checks. A label applied
+        # seconds after opening kills the run, and the comment then blames the gates it killed.
         cancelled = sorted(g for g in failed_l1 if ci.get(g) == "cancelled")
         broke = [g for g in failed_l1 if g not in cancelled]
         said, said_md = [], []
@@ -1004,9 +998,9 @@ def cmd_plan(args) -> int:
         #
         # `!cancelled()` on the publish job does NOT keep this run out of here, and the reason is not
         # a race. The caller enters this workflow through a job carrying `if: always()`, so inside
-        # the called workflow nothing was cancelled and the function is false. Measured on
-        # exeris-docs#121: three gates cancelled at 05:34:03, and the publish job STARTED at
-        # 05:34:42 — thirty-nine seconds after the cancellation was already recorded on them.
+        # the called workflow nothing was cancelled and the function is false. The publish job
+        # starts well after the cancellation is recorded on the gates, so this is not a window to
+        # narrow: the guard simply does not see what happened outside its own workflow.
         #
         # So the decision is taken from the gate results, which no workflow expression can
         # misreport: when every gate that is not green was cancelled rather than broken, this run
@@ -1043,10 +1037,10 @@ def cmd_plan(args) -> int:
     # a green skip with a log line claiming a filter had run. Absence of a signal is not a `false`.
     # A skip whose kind is not one of the two above says nothing about whether this pull request has
     # been reviewed, so it cannot be a green on its own — it falls back to the standing verdict, like
-    # `not-ready` does. Measured: on #40 the publication applied `hard-block` from a BLOCKED verdict,
-    # the label event started a run whose ACTOR was the bot, that run reported green, and because it
-    # was the last run for the check name the pull request read as CLEAN with a BLOCKED verdict
-    # standing on it. An unrecognised skip kind lands here too, and fails closed rather than open.
+    # `not-ready` does. A label event started by the publication runs with the bot as its actor; if
+    # such a run reports green it becomes the last run for the check name, and the pull request reads
+    # as CLEAN with a BLOCKED verdict standing on it. An unrecognised skip kind lands here too, and
+    # fails closed rather than open.
     if args.produce_outcome == "skipped" and args.skip_kind not in ABOUT_THE_PULL_REQUEST:
         return standing_gate(plan, args)
     if args.produce_outcome == "skipped":

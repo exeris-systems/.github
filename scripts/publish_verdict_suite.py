@@ -289,10 +289,10 @@ def main() -> int:
         assert "hard-block" not in p["labels_remove"], p
         assert p["labels_remove"] == ["doc-debt"], p
 
-    # Measured on exeris-docs#121. The routine returned CONDITIONAL and marked one finding blocking —
-    # the forbidden-import list contradicting the guard it cites — and the gate, reading `decision`
-    # and nothing else, reported green. The comment rendered the finding as **(blocking)** beside a
-    # check saying the pull request was fine.
+    # A routine returning CONDITIONAL while marking one finding blocking is not a contradiction the
+    # gate may resolve in the decision's favour. Reading `decision` and nothing else, it reports
+    # green and the comment renders the finding as **(blocking)** beside a check saying the pull
+    # request is fine.
     @case("a finding marked blocking blocks, whatever the decision beside it says")
     def _(tmp):
         v = verdict(decision="CONDITIONAL",
@@ -834,10 +834,10 @@ def main() -> int:
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
-    # The fail-open measured on #40. The publication applied `hard-block` from a BLOCKED verdict,
-    # the label event started a run whose ACTOR was the bot, and that run reported green on a head
-    # carrying a BLOCKED verdict. Being the last run for the check name, its green was the one the
-    # pull request showed, and the pull request read as mergeable.
+    # The publication applies `hard-block` from a BLOCKED verdict; that label event starts a run
+    # whose ACTOR is the bot. If such a run reports green on a head carrying a BLOCKED verdict, it
+    # is the last run for the check name, so its green is the one the pull request shows — and the
+    # pull request reads as mergeable.
     @case("a run the bot's own label change started cannot green a BLOCKED verdict")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
@@ -855,10 +855,9 @@ def main() -> int:
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
-    # Measured on exeris-docs#123. One run found the L1 gates red, published `decision=NONE` — the
-    # marker the publication writes when NO review ran — and was cancelled; the run that replaced it
-    # read that marker back as a standing verdict and went green on a pull request nothing had
-    # reviewed. The publication's own record of its silence was being taken for a pass.
+    # `decision=NONE` is the marker the publication writes when NO review ran. A run that publishes
+    # it and is then cancelled leaves the run replacing it to read that marker back as a standing
+    # verdict — the publication's own record of its silence, taken for a pass.
     @case("a NONE marker is the publication's silence, not a verdict that passes")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
@@ -1138,8 +1137,7 @@ def main() -> int:
 
     # A notice is a statement about the pull request, not a log line. The branches that conclude
     # green WITHOUT a verdict used to write nothing, so the notice an earlier run left stood beside
-    # a green check still naming the gate it waited on — measured on exeris-ai-execution#1, where
-    # `docs-lint` was named as failing forty minutes after it passed.
+    # a green check still naming the gate it waited on, long after that gate passed.
     @case("a green with nothing to review restates the notice that named a failing gate")
     def _(tmp):
         p = run(root, tmp, relevant="false", head_sha="b" * 40,
@@ -1228,8 +1226,8 @@ def main() -> int:
 
     # A run killed by `concurrency` is not evidence about the pull request, and the run that killed
     # it reports the same check name a minute later. `!cancelled()` on the publish job does not keep
-    # it out: the caller enters the called workflow through a job carrying `always()`. Measured on
-    # exeris-docs#121 — gates cancelled at 05:34:03, publish job started 05:34:42.
+    # it out: the caller enters the called workflow through a job carrying `always()`, so inside the
+    # called workflow nothing was cancelled and the guard is false.
     @case("a cancelled run stays red and still puts the review request back")
     def _(tmp):
         all_cancelled = {"docs-lint": "cancelled", "commit-lint": "cancelled",
@@ -1299,8 +1297,7 @@ def main() -> int:
     # A notice that sends a person to read a log for something it could have said is a correct
     # message and a useless one. The refusal has a signature — workflow touched, no verdict, and no
     # execution log, because the runner stopped before writing one — and all three are asked for
-    # together. Measured on `.github`#57, whose model step lasted five seconds and whose
-    # `l2-execution-57` artefact was never uploaded.
+    # together. A refused run lasts seconds and uploads no artefact at all.
     @case("a refusal by the runner is named, and names the way through")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, workflow_touching="true", head_sha="a" * 40)
