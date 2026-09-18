@@ -21,7 +21,7 @@ on:
       java-version: { type: string, default: "25" }
       java-distribution: { type: string, default: "temurin" }
       source-root:  { type: string, default: "src/main/java", description: "Source root inside each gated module" }
-      trivial-accessors: { type: string, default: "documented", description: "javadoc-conventions.md rule 1: 'documented' (default) requires a doc comment on every public member; 'exempt' drops it for single-line bodies — a fluent builder setter. Named for the policy, not for the Checkstyle property that implements it, so the predicate can change without touching callers." }
+      trivial-accessors: { type: string, default: "documented", description: "javadoc-conventions.md rule 1: 'documented' (default) requires a doc comment on every public member; 'exempt' drops it for single-line bodies — a fluent builder setter — in BOTH halves, Checkstyle and doclint, which is what makes it an exemption rather than a decoration. Named for the policy, not for the properties that implement it, so the predicate can change without touching callers." }
       extra-maven-args: { type: string, default: "" }
 permissions:
   contents: read
@@ -86,13 +86,70 @@ jobs:
             exempt)     v="1"  ;;
             *) echo "::error::trivial-accessors must be 'documented' or 'exempt', got '${{ inputs.trivial-accessors }}'"; exit 1 ;;
           esac
-          echo "exeris.trivialAccessors=$v" > "$RUNNER_TEMP/checkstyle.properties"
+          # One caller-facing knob, four settings, because the policy has to reach two engines and a
+          # policy stated to one of them is not in force: `exempt` in Checkstyle alone leaves doclint
+          # reporting the same accessor as `warning: no comment`, under failOnWarnings, on every
+          # gated module. Measured in java/checkstyle-javadoc.xml.
+          #
+          # doclint has no per-member predicate: `missing` is the only group that reports an
+          # undocumented accessor, so the exemption costs the whole group. That group is also the
+          # only coverage for public fields and enum constants, and doclint's default visibility is
+          # protected where Checkstyle's scope is public. The properties below buy all of that back
+          # in Checkstyle, so `exempt` subtracts the accessors and nothing else.
+          #
+          # WHICH members are accessors is not decided here. `MissingJavadocMethod.minLineCount`
+          # cannot decide it: an abstract method has no body, so a body of zero lines is under any
+          # threshold, and on `exeris-kernel-spi` that predicate releases 377 abstract contract
+          # methods against 29 getters. Checkstyle stays strict and
+          # `scripts/javadoc_trivial_members.py` decides by body shape.
+          if [ "$v" = "1" ]; then
+            scope="protected"; access="public, protected"; members="error"
+            doclint="all,-missing"
+          else
+            scope="public";    access="public";            members="ignore"
+            doclint="all"
+          fi
+          {
+            echo "exeris.javadocScope=$scope"
+            echo "exeris.javadocAccessModifiers=$access"
+            echo "exeris.memberDocSeverity=$members"
+          } > "$RUNNER_TEMP/checkstyle.properties"
+          echo "doclint=$doclint" >> "$GITHUB_OUTPUT"
+          # Empty on the default policy, deliberately: `-Ddoclint=all` would override a gated pom that
+          # configures doclint for a reason of its own, and this step has no business doing that to a
+          # repository that asked for nothing.
+          if [ "$v" = "1" ]; then
+            echo "maven-doclint=-Ddoclint=$doclint" >> "$GITHUB_OUTPUT"
+          else
+            echo "maven-doclint=" >> "$GITHUB_OUTPUT"
+          fi
           if [ "$v" = "1" ]; then
             echo "### Javadoc gate: trivial accessors are **exempt**" >> "$GITHUB_STEP_SUMMARY"
-            echo "This repository has opted out of the Checkstyle half of \`javadoc-conventions.md\` rule 1 for single-line method bodies. Doclint and the repository's own completeness test carry that coverage here." >> "$GITHUB_STEP_SUMMARY"
+            echo "A method whose body is a single line needs no doc comment here — \`javadoc-conventions.md\` rule 1's one exemption. It is applied to **both** halves: Checkstyle skips those methods, and javadoc runs \`-Xdoclint:$doclint\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing else is dropped. Checkstyle picks up what \`missing\` stops reporting: its missing-doc scope moves to \`protected\` (doclint's default visibility) and \`JavadocVariable\` switches on for public and protected fields and enum constants." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Javadoc gate: doc comments required on every public member (rule 1, unmodified)." >> "$GITHUB_STEP_SUMMARY"
           fi
+      # `-Ddoclint` reaches the plugin only where the module's pom does not configure `doclint`
+      # itself: measured on two throwaway poms against maven-javadoc-plugin 3.11.2, one with no
+      # `<doclint>` and one with `<doclint>all</doclint>`, the flag took the first from 5 `no comment`
+      # warnings to 0 and left the second at 5. A gated pom that hardcodes the value therefore keeps
+      # the strict policy on its whole-module half whatever this input says, and the caller is told
+      # rather than left to wonder why the exemption did not arrive. Not an error: hardcoding it is a
+      # legitimate choice, and the two can coexist for as long as the repository means them to.
+      - name: Warn where a gated pom overrides the doclint policy
+        if: ${{ !cancelled() && inputs.trivial-accessors == 'exempt' && inputs.modules != '' }}
+        run: |
+          set -uo pipefail
+          IFS=',' read -ra mods <<< "${{ inputs.modules }}"
+          for module in "${mods[@]}"; do
+            module="$(echo "$module" | tr -d '[:space:]')"; [ -n "$module" ] || continue
+            [ -f "$module/pom.xml" ] || continue
+            if grep -q '<doclint>' "$module/pom.xml"; then
+              echo "::warning file=$module/pom.xml::$module hardcodes <doclint> in its pom, so -Ddoclint cannot reach it and the trivial-accessor exemption does not apply to this module's whole-module javadoc run. Parameterise it, or drop the module from 'modules'."
+              echo "- \`$module\` hardcodes \`<doclint>\` — the exemption does not reach its javadoc half." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
       # Install first, and skip Checkstyle while doing it. Two reasons, both learned the hard way on
       # exeris-kernel. A repository whose Checkstyle plugin takes a reactor module as a plugin
       # DEPENDENCY (for the ruleset) cannot resolve it from the reactor — plugin dependencies come
@@ -116,8 +173,8 @@ jobs:
       # step, because `!cancelled()` alone does not say WHICH earlier step failed, and with a failed
       # install these steps die on a missing artifact rather than on a Javadoc finding.
       - name: Javadoc (failOnWarnings) on fully gated modules
-        if: ${{ !cancelled() && steps.reactor.outcome == 'success' && inputs.modules != '' }}
-        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests -Dcheckstyle.skip=true javadoc:javadoc ${{ inputs.extra-maven-args }}
+        if: ${{ !cancelled() && steps.policy.outcome == 'success' && steps.reactor.outcome == 'success' && inputs.modules != '' }}
+        run: ${{ steps.mvn.outputs.cmd }} -B -ntp -pl "${{ inputs.modules }}" -DskipTests -Dcheckstyle.skip=true ${{ steps.policy.outputs.maven-doclint }} javadoc:javadoc ${{ inputs.extra-maven-args }}
 
       - name: Changed Java files in diff-gated modules
         id: targets
@@ -142,7 +199,9 @@ jobs:
       # Direct `javadoc`, not the Maven plugin: the plugin's unit is a module and rule 11's unit is a
       # file. The flags reproduce what the `javadoc-gate` profile configures, because the two halves
       # have to agree on what a finding is:
-      #   -Xdoclint:all              <doclint>all</doclint>
+      #   -Xdoclint:<policy>         <doclint>all</doclint>, less `missing` when the caller takes
+      #                              rule 1's trivial-accessor exemption — the `policy` step above
+      #                              decides, so both halves drop the group together or neither does
       #   warnings counted as errors <failOnWarnings>true</failOnWarnings>; javadoc has no -Werror,
       #                              so the log is counted rather than the exit code
       #   -tag apiNote/implSpec/implNote  the profile's <tags>. Without them javadoc reports every
@@ -153,7 +212,7 @@ jobs:
       # -Xmaxwarns lifts javadoc's default cap of 100, which otherwise truncates the worklist at the
       # point where it stops being a worklist.
       - name: Javadoc on changed files only
-        if: ${{ !cancelled() && steps.reactor.outcome == 'success' && steps.targets.outputs.any == 'true' }}
+        if: ${{ !cancelled() && steps.policy.outcome == 'success' && steps.reactor.outcome == 'success' && steps.targets.outputs.any == 'true' }}
         run: |
           set -uo pipefail
           failed=0
@@ -162,7 +221,7 @@ jobs:
             ${{ steps.mvn.outputs.cmd }} -q -B -ntp -pl "$module" -DskipTests -Dcheckstyle.skip=true \
               -Dmdep.outputFile="$RUNNER_TEMP/cp.txt" dependency:build-classpath
             echo "::group::javadoc — $module ($(wc -l < "$n.files") changed file(s))"
-            javadoc -Xdoclint:all -Xmaxwarns 10000 -Xmaxerrs 10000 -quiet \
+            javadoc -Xdoclint:${{ steps.policy.outputs.doclint }} -Xmaxwarns 10000 -Xmaxerrs 10000 -quiet \
               -tag 'apiNote:a:API Note:' \
               -tag 'implSpec:a:Implementation Requirements:' \
               -tag 'implNote:a:Implementation Note:' \
@@ -211,7 +270,20 @@ jobs:
             echo "::group::checkstyle — $module"
             java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main \
               -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" \
-              -p "$RUNNER_TEMP/checkstyle.properties" "$src" || failed=1
+              -p "$RUNNER_TEMP/checkstyle.properties" "$src" > "$RUNNER_TEMP/cs-$module.txt" 2>&1
+            cs_status=$?
+            # A non-zero status with no finding in the report is the engine refusing the config, not
+            # a Javadoc finding — and the filter, which counts findings, would call that a clean run.
+            if [ "$cs_status" -ne 0 ] && ! grep -q '^\[ERROR\]' "$RUNNER_TEMP/cs-$module.txt"; then
+              cat "$RUNNER_TEMP/cs-$module.txt"
+              echo "::error::$module — Checkstyle exited $cs_status without reporting a finding; the ruleset or the engine failed"
+              failed=1
+            else
+              python3 "$GITHUB_WORKSPACE/.guardrails/scripts/javadoc_trivial_members.py" \
+                --policy "${{ inputs.trivial-accessors }}" \
+                --report "$RUNNER_TEMP/cs-$module.txt" \
+                --summary "$GITHUB_STEP_SUMMARY" || failed=1
+            fi
             echo "::endgroup::"
           done
           exit $failed
@@ -226,7 +298,18 @@ jobs:
             echo "::group::checkstyle — $module (${#files[@]} changed file(s))"
             java -cp "$(cat "$RUNNER_TEMP/cs-cp.txt")" com.puppycrawl.tools.checkstyle.Main \
               -c "$GITHUB_WORKSPACE/.guardrails/java/checkstyle-javadoc.xml" \
-              -p "$RUNNER_TEMP/checkstyle.properties" "${files[@]}" || failed=1
+              -p "$RUNNER_TEMP/checkstyle.properties" "${files[@]}" > "$RUNNER_TEMP/cs-diff-$(basename "$n").txt" 2>&1
+            cs_status=$?
+            if [ "$cs_status" -ne 0 ] && ! grep -q '^\[ERROR\]' "$RUNNER_TEMP/cs-diff-$(basename "$n").txt"; then
+              cat "$RUNNER_TEMP/cs-diff-$(basename "$n").txt"
+              echo "::error::$module — Checkstyle exited $cs_status without reporting a finding; the ruleset or the engine failed"
+              failed=1
+            else
+              python3 "$GITHUB_WORKSPACE/.guardrails/scripts/javadoc_trivial_members.py" \
+                --policy "${{ inputs.trivial-accessors }}" \
+                --report "$RUNNER_TEMP/cs-diff-$(basename "$n").txt" \
+                --summary "$GITHUB_STEP_SUMMARY" || failed=1
+            fi
             echo "::endgroup::"
           done
           exit $failed
