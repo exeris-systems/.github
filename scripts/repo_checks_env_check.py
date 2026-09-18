@@ -13,9 +13,17 @@ command green, having installed first. It had been that way since `repo-checks` 
 review had seen it, because every pull request in between changed the entry workflow and was never
 reviewed at all.
 
-What this compares: for every script `repo-checks` runs that a CI step also runs, the packages that
-step's job installs before it must be installed by `repo-checks` too. Not the reverse — `repo-checks`
-installing more than a job needs is its own business.
+What this compares, in two halves, because the first alone was not enough. The PACKAGES: for every
+script `repo-checks` runs that a CI step also runs, the packages that step's job installs before it
+must be installed by `repo-checks` too — not the reverse, since installing more than a job needs is
+its own business. And the INTERPRETER: the job that runs `repo-checks` must set Python up, as every
+job compared against it does.
+
+The second half exists because the first passed while the environments still disagreed. The names
+matched; the runner image's system `python3` already carried an older `jsonschema`, `pip install`
+reported it satisfied and installed nothing, and 57 of 129 cases failed on a keyword argument that
+arrived in 4.18. A list of package names is not an environment, and this file was named as though
+it were.
 
 Usage: repo_checks_env_check.py [--root .]
 """
@@ -65,6 +73,28 @@ def main() -> int:
     reviewer_scripts = scripts(checks)
     reviewer_has = packages(checks)
 
+    # THE INTERPRETER, asked of the routine rather than of this repository's own workflow:
+    # `repo-checks` runs inside `docs-review.yml`'s produce job, and a caller cannot put a step
+    # there. Read from the routine as it ships, for the reason `gate_vocabulary_check.py` reads the
+    # mapping that ships — a guarantee is worth what the file says, not what a comment claims.
+    routine = os.path.join(root, ".github", "workflows", "docs-review.yml")
+    bad_interp: list[str] = []
+    if os.path.exists(routine):
+        with open(routine, encoding="utf-8") as fh:
+            produce = (yaml.safe_load(fh).get("jobs") or {}).get("produce") or {}
+        steps = produce.get("steps") or []
+        sets_up = next((i for i, st in enumerate(steps)
+                        if "setup-python" in str(st.get("uses") or "")), None)
+        runs_checks = next((i for i, st in enumerate(steps)
+                            if "own checks" in str(st.get("name") or "")), None)
+        if runs_checks is None:
+            bad_interp.append("docs-review.yml's produce job has no step running `repo-checks`")
+        elif sets_up is None or sets_up > runs_checks:
+            bad_interp.append(
+                "docs-review.yml's produce job runs `repo-checks` without setting Python up first, "
+                "so a caller's `pip install` goes to the runner image's system interpreter and "
+                "reports an older package satisfied instead of resolving the one a job resolves")
+
     # What each job installs, and which of the reviewer's scripts it runs. A job installs for all of
     # its steps: `pip install` in one step and the script in the next is the ordinary shape, and is
     # exactly the arrangement `repo-checks` has to match.
@@ -81,12 +111,13 @@ def main() -> int:
                            f"`{name}` installs before running it — the reviewer is handed a failure "
                            f"that CI does not have, as this repository's own gate")
 
+    bad = bad + bad_interp
     for said in sorted(set(bad)):
         print(f"::error::repo_checks_env_check: {said}")
     if bad:
         return 1
-    print(f"repo_checks_env_check: {len(reviewer_scripts)} script(s) in repo-checks, "
-          f"each in the environment its job tests it in")
+    print(f"repo_checks_env_check: {len(reviewer_scripts)} script(s) in repo-checks, a managed "
+          f"interpreter under them, each in the environment its job tests it in")
     return 0
 
 
