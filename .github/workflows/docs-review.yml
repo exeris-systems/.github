@@ -423,10 +423,28 @@ jobs:
         with:
           name: l2-verdict-${{ github.event.pull_request.number }}
           path: verdict.json
+          # Seven, unlike the execution log below. A verdict is the review, and the review is
+          # published as a comment on the pull request the moment this run ends -- there is nothing
+          # in it a reader cannot already see.
           if-no-files-found: ignore
           retention-days: 7
       # Separate, because §C.14 wants the execution log as its own artefact with its own digest when
       # the capture step arrives, and because it is the only way the verdict keeps its own path.
+      #
+      # ONE DAY, WHICH IS THE FLOOR AND NOT A CHOICE OF CONVENIENCE. This artefact is the only thing
+      # here that is not metadata: it carries the assistant's and the user's turns, the review's own
+      # reasoning and whatever file content the model read, plus the token usage and cost of the run.
+      # `exeris-ai-execution/inbox/README.md` closes the public inbox to that material "in any form"
+      # (ADR-087 §H.37) -- and while it lives as an artefact it sits on a PUBLIC repository, refused
+      # to anonymous callers but readable by any signed-in GitHub account.
+      #
+      # It cannot be shorter. `upload-artifact` will not take less than a day, and the artefact
+      # cannot be skipped: the model runs in this job, this job may hold no write scope at all
+      # (ADR-087's review-time assertion makes granting one a HARD BLOCK), so the log has to reach
+      # the publish job somehow and an artefact is the mechanism. Below a day there is only deletion
+      # after the capture step has stored it, which costs `actions: write` on every reviewed
+      # repository -- the right to delete ANY artefact there, granted by every caller. That decision
+      # waits for a capture step that exists; this one does not wait for anything.
       - name: Keep the runner's execution log, if it exposed one
         if: ${{ !cancelled() && steps.review.outputs.execution_file != '' }}
         uses: actions/upload-artifact@v7
@@ -434,7 +452,7 @@ jobs:
           name: l2-execution-${{ github.event.pull_request.number }}
           path: ${{ steps.review.outputs.execution_file }}
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
 
   publish:
     needs: produce
