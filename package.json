@@ -1,0 +1,7 @@
+{
+  "name": "exeris-guardrails",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Anchors this checkout as its own Node project. Nothing is published from here and there is no runtime. A caller checks this repository out as .guardrails/ inside its own workspace, and without a package.json here both Node and npm walk UP to the caller's root: the caller's `type` field then decided how this repository's CommonJS config was parsed, and `npm install --working-directory .guardrails` landed in the caller's node_modules and dependency list.",
+  "license": "UNLICENSED"
+}

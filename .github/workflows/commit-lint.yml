@@ -16,6 +16,16 @@ jobs:
         with: { repository: exeris-systems/.github, path: .guardrails }
       - uses: actions/setup-node@v7
         with: { node-version: 24 }
+      # `working-directory: .guardrails` only means what it says because that directory carries a
+      # `package.json`. Without one, npm walks UP looking for a project root, finds the CALLER's,
+      # and installs into the caller's `node_modules` while writing `@commitlint/*` into the
+      # caller's dependency list. The same walk decided how `commitlint.config.js` was parsed: a
+      # caller declaring `"type": "module"` made this repository's CommonJS config load as ESM and
+      # `commit-lint` died on `module.exports`, in every such caller and only in those.
+      #
+      # Only a caller with a root `package.json` is affected, which is why the anchor can be absent
+      # for a long time without anything saying so. `scripts/commitlint_anchor_repro.sh` builds both
+      # states and prints what differs.
       - run: npm install --no-audit --no-fund @commitlint/cli@19 @commitlint/config-conventional@19
         working-directory: .guardrails
       # Advisory, not a gate. Every repository here squash-merges, so the only message that
