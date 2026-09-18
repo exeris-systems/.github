@@ -111,7 +111,8 @@ jobs:
         python3 scripts/repo_checks_env_check_suite.py;
         python3 scripts/label_map_check.py;
         python3 scripts/caller_permissions_check.py;
-        python3 scripts/comment_history_suite.py
+        python3 scripts/comment_history_suite.py;
+        python3 scripts/gate_vocabulary_check_suite.py
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
@@ -184,6 +185,9 @@ jobs:
       - name: The gate results speak the verdict's vocabulary
         if: ${{ !cancelled() }}
         run: python scripts/gate_vocabulary_check.py --root .
+      - name: The vendored base is found, not named
+        if: ${{ !cancelled() }}
+        run: python scripts/gate_vocabulary_check_suite.py
       # The half the suite above cannot reach: it drives the planner with `--workflow-touching`
       # already computed, so the shell that computes it was cited as covered and was not. A wrong
       # `true` there is a fail-open — it is what lets `l2-human-reviewed` green a check with no
