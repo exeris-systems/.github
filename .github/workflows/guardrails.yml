@@ -109,6 +109,7 @@ jobs:
         python3 scripts/principal_check.py --root .;
         python3 scripts/repo_checks_env_check.py --root .;
         python3 scripts/repo_checks_env_check_suite.py;
+        python3 scripts/artifact_guard_check.py --root .;
         python3 scripts/label_map_check.py;
         python3 scripts/caller_permissions_check.py;
         python3 scripts/comment_history_suite.py;
@@ -220,3 +221,11 @@ jobs:
       - name: The environment comparison, one case per way of getting it wrong
         if: ${{ !cancelled() }}
         run: python scripts/repo_checks_env_check_suite.py
+      # An artefact name and the guard that reads it live in two files. Each is correct alone and
+      # the pair decides whether a skipped producing job leaves the publish half fetching something
+      # nobody uploaded, so the pair is what this reads.
+      - name: An artefact name is conditional where it is handed over
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet pyyaml
+          python scripts/artifact_guard_check.py --root .

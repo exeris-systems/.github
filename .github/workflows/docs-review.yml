@@ -193,6 +193,10 @@ jobs:
       # for any other producer that calls it.
       relevant: 'true'
       verdict-written: ${{ steps.wrote.outputs.yes }}
+      # A JOB output, because a caller can only gate on one. The execution log's existence lived in
+      # a STEP output, so the publish half was handed an artefact name whatever happened here and
+      # its `!= ''` guard could not be false. A guard whose condition cannot fail is not a guard.
+      execution-written: ${{ steps.review.outputs.execution_file != '' }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
@@ -503,7 +507,9 @@ jobs:
       verdict-artifact: >-
         ${{ needs.produce.outputs.verdict-written == 'true'
             && format('l2-verdict-{0}', github.event.pull_request.number) || '' }}
-      execution-artifact: l2-execution-${{ github.event.pull_request.number }}
+      execution-artifact: >-
+        ${{ needs.produce.outputs.execution-written == 'true'
+            && format('l2-execution-{0}', github.event.pull_request.number) || '' }}
       expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
