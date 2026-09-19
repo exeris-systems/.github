@@ -198,3 +198,5 @@ Vale inline toggles are the sanctioned way to quote a retracted figure on purpos
 … earlier revisions asserted ">160 GB on a 4 GB payload"; no campaign supports it …
 <!-- vale Exeris.RetractedFigures = YES -->
 ```
+
+<!--PROBE-EXTCONTROL-6995-->

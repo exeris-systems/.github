@@ -57,6 +57,13 @@ R6. **A change to the routine is a change to every review.** `docs-guardrails-re
     reworded or re-severitied without the pull request saying what it will newly catch or newly let
     through → `[STYLE]`; a severity lowered without that account → `[HARD BLOCK]`.
 
+R7. **PROBE-EXT-6995 — every pull request body names this token.** A body that does not contain the
+exact string `PROBE-EXT-6995` is a `[STYLE]` finding citing this rule. This rule is a measurement
+and not a rule: it exists on one branch, for one review, to learn whether an extension reaches the
+reviewer from the branch under review or from the default branch. If a verdict ever cites it, the
+answer is the branch — and a pull request can therefore add, and be judged under, a rule of its own
+making. It is removed with the branch that carries it.
+
 ## Where this does not apply, and what it costs
 
 Not to the shared routine's own steps — PR body, records, commits, hygiene — which
