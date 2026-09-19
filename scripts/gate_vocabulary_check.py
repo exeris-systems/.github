@@ -38,6 +38,23 @@ def jq_program(workflow: str) -> str:
     return m.group(1)
 
 
+def vendored_base(root: str) -> str:
+    """The base schema the verdict is validated against, found rather than named.
+
+    The path carries the pinned version, so a literal here is the pin authored a second time and a
+    bump breaks this check on a tree that is otherwise correct. Whether the vendored tree agrees
+    with the manifest is `bundle_pin_check.py`'s question and `agents_bundle.py verify`'s; this one
+    asks only which base ships.
+    """
+    import glob
+    found = sorted(glob.glob(os.path.join(root, ".agents", "vendor", "exeris-agents-*",
+                                          "schemas", "verdict.base.schema.json")))
+    if len(found) != 1:
+        raise SystemExit(f"gate_vocabulary_check: expected one vendored bundle under "
+                         f"{os.path.join(root, '.agents', 'vendor')}, found {len(found)}")
+    return found[0]
+
+
 def enum_of(schema: str) -> list[str]:
     doc = json.load(open(schema, encoding="utf-8"))
     return doc["properties"]["checks_run"]["items"]["properties"]["result"]["enum"]
@@ -49,8 +66,7 @@ def main() -> int:
     args = p.parse_args()
 
     program = jq_program(os.path.join(args.root, ".github", "workflows", "docs-review.yml"))
-    allowed = enum_of(os.path.join(args.root, ".agents", "vendor", "exeris-agents-2.0.0",
-                                   "schemas", "verdict.base.schema.json"))
+    allowed = enum_of(vendored_base(args.root))
     sample = json.dumps({f"gate-{i}": v for i, v in enumerate(GITHUB_RESULTS)})
     out = subprocess.run(["jq", "-c", program], input=sample, capture_output=True, text=True)
     if out.returncode:

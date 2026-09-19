@@ -3,7 +3,7 @@
   "title": "Review verdict (.github)",
   "description": "The bundle's shape, narrowed to the one reviewing role this repository runs and to the pull-request scope vocabulary of ADR-085 §E.16. The three-state `decision`, the `findings` shape and the `checks_run` contract are the base's; the vocabulary here is local, and `tag` is added on a finding. §E.16's classes carry spaces, which the base permits: it bounds `scope_class` by length and nothing else, so a class reaches the verdict spelled the way the pull-request body spells it.\n\n`agent` is the role, not the routine: `docs-guardrails-review.md` is a document a runner is handed, and the same role would still be the author if that file were split or renamed. The four `unevaluatedProperties: false` — the root, a finding, a check entry, a handoff — are this file's because the base declares none; the base's own `description` says why the closers belong here, and `agents_file_check.py` names any object that ends up without one.",
   "allOf": [
-    { "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json" },
+    { "$ref": "../vendor/exeris-agents-2.1.0/schemas/verdict.base.schema.json" },
     {
       "properties": {
         "agent": {
@@ -22,7 +22,7 @@
         "findings": {
           "items": {
             "allOf": [
-              { "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json#/properties/findings/items" },
+              { "$ref": "../vendor/exeris-agents-2.1.0/schemas/verdict.base.schema.json#/properties/findings/items" },
               {
                 "properties": {
                   "tag": {
@@ -45,13 +45,13 @@
         },
         "checks_run": {
           "items": {
-            "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json#/properties/checks_run/items",
+            "$ref": "../vendor/exeris-agents-2.1.0/schemas/verdict.base.schema.json#/properties/checks_run/items",
             "unevaluatedProperties": false
           }
         },
         "handoffs": {
           "items": {
-            "$ref": "../vendor/exeris-agents-2.0.0/schemas/verdict.base.schema.json#/properties/handoffs/items",
+            "$ref": "../vendor/exeris-agents-2.1.0/schemas/verdict.base.schema.json#/properties/handoffs/items",
             "unevaluatedProperties": false
           }
         }
