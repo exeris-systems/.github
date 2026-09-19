@@ -124,6 +124,21 @@ def main() -> int:
     planner = os.path.join(root, "scripts", "publish_verdict.py")
     with open(planner, encoding="utf-8") as fh:
         code = fh.read()
+    # 5. A BOT'S OWN EVENT STARTS NO REVIEW. The runner refuses a non-human actor, so a review job
+    # entered under one cannot do the work it exists for. The condition belongs to the caller, which
+    # owns whether the workflow runs at all, and the example is what every adopting repository
+    # copies -- the two disagreeing means new repositories inherit the version without it.
+    for caller in ("guardrails.yml", "caller-example/guardrails.yml"):
+        path = (os.path.join(root, ".github", "workflows", caller) if "/" not in caller
+                else os.path.join(root, caller))
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            job = ((yaml.safe_load(fh).get("jobs") or {}).get("docs-review") or {})
+        rule(f"{SENDER_TYPE} == {HUMAN}" in " ".join(str(job.get("if", "")).split()),
+             f"{caller} runs the review job on a bot's own event; the runner refuses a non-human "
+             f"actor, so that run spends a runner and reports a check it cannot earn")
+
     green_set = re.search(r"ABOUT_THE_PULL_REQUEST\s*=\s*frozenset\(\{([^}]*)\}\)", code)
     rule(green_set is not None and "bot-authored" not in green_set.group(1)
          and "draft-or-bot" not in green_set.group(1),
