@@ -308,6 +308,19 @@ def emit(text: str) -> None:
         print(text)
 
 
+def current_labels(args) -> set[str]:
+    """The labels on the pull request as the event carried them.
+
+    From a file, one per line. A label name may contain a comma — `area: kernel, core` is a legal
+    label — and a comma-joined string turns one into two that exist nowhere.
+    """
+    path = getattr(args, "current_labels_file", "")
+    if not (path and os.path.exists(path)):
+        return set()
+    with open(path, encoding="utf-8") as fh:
+        return {line.rstrip("\n") for line in fh if line.strip()}
+
+
 def comments(comments_json: str) -> list[dict]:
     """The comment dump, as entries carrying who wrote them."""
     try:
@@ -1007,12 +1020,19 @@ def cmd_plan(args) -> int:
         # was replaced, the run that replaced it reports the same check name, and there is nothing
         # here for a reader. The check still goes red — a cancelled run is not evidence of a green
         # one, and §B.8's fail-closed half does not soften because the cause was concurrency.
-        # The readiness trigger fires once and was being consumed even when it produced nothing: a
-        # run that WAS ready but lost its gates left the pull request with no review and no way back
-        # to one except a human re-applying the label. The request is re-applied here, so the next
-        # run with green gates performs the review the lost one was asked for. It is removed again
-        # only when a review has actually run, which is the branch that removes it.
-        if args.skip_kind == "ready" and args.review_label:
+        # THE REQUEST IS PUT BACK, NEVER INVENTED. A readiness trigger fires once and a run that
+        # was ready but lost its gates consumes it, leaving the pull request with no review and no
+        # way back to one, so the label goes on again here and comes off only when a review has
+        # actually run.
+        #
+        # Only when it was there. `ready` also means `opened`, `reopened` and `ready_for_review`,
+        # where no label was ever applied and there is nothing to restore: adding one then is the
+        # bot asking for a review nobody requested. That request cannot be honoured either — the
+        # label change starts a run whose actor is the bot, and the runner refuses a non-human
+        # actor whatever this workflow allows — so it leaves the pull request carrying a request
+        # no run can take.
+        if (args.skip_kind == "ready" and args.review_label
+                and args.review_label in current_labels(args)):
             plan["labels_add"] = [args.review_label]
         plan["agent"] = args.expect_agent or "unknown"
         # Nothing a READER sees. The label above is the request being put back, which the next run
@@ -1131,13 +1151,7 @@ def cmd_plan(args) -> int:
 
     with open(args.labels_map, encoding="utf-8") as fh:
         mapping = json.load(fh)
-    # From a file, one per line. A label name may contain a comma — `area: kernel, core` is a legal
-    # label — and the comma-joined string turned one into two labels that exist nowhere. The apply
-    # step already takes this care with spaces; this is the same care one step earlier.
-    current: set[str] = set()
-    if args.current_labels_file and os.path.exists(args.current_labels_file):
-        with open(args.current_labels_file, encoding="utf-8") as fh:
-            current = {line.rstrip("\n") for line in fh if line.strip()}
+    current = current_labels(args)
     standing = {}
     if args.comments and os.path.exists(args.comments):
         with open(args.comments, encoding="utf-8") as fh:
