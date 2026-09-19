@@ -788,6 +788,7 @@ def main() -> int:
     @case("a ready run that lost its gates asks for the review again")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                current="needs-l2-review",
                 l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
                     "pr-body-check": "cancelled"})
         assert p["conclusion"] == "red", p
@@ -1233,7 +1234,7 @@ def main() -> int:
         all_cancelled = {"docs-lint": "cancelled", "commit-lint": "cancelled",
                          "pr-body-check": "cancelled"}
         p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=all_cancelled,
-                head_sha="b" * 40)
+                current="needs-l2-review", head_sha="b" * 40)
         # Silent, but not green: a run that was replaced is not evidence of a passing one.
         assert p["conclusion"] == "red" and p["comment"] == "", p
         assert p["labels_add"] == ["needs-l2-review"], p
@@ -1242,7 +1243,8 @@ def main() -> int:
     @case("one broken gate among cancelled ones is still worth saying")
     def _(tmp):
         mixed = {"docs-lint": "failure", "commit-lint": "cancelled", "pr-body-check": "success"}
-        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=mixed, head_sha="b" * 40)
+        p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=mixed,
+                current="needs-l2-review", head_sha="b" * 40)
         assert p["conclusion"] == "red", p
         assert "did not pass" in p["comment"] and "`docs-lint`" in p["comment"], p["comment"][:250]
         assert "cancelled" in p["comment"] and "`commit-lint`" in p["comment"], p["comment"][:250]
@@ -1430,6 +1432,24 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="draft-or-bot", head_sha="e" * 40)
         assert p["conclusion"] == "red", p
+
+    # `ready` is also what `opened`, `reopened` and `ready_for_review` produce, where no label was
+    # ever applied. Putting one on then is the bot requesting a review nobody asked for — and one no
+    # run can take, because the label change starts a run whose actor is the bot and the runner
+    # refuses a non-human actor whatever the workflow allows.
+    @case("a ready run with no request to lose does not invent one")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
+                    "pr-body-check": "cancelled"})
+        assert p["labels_add"] == [], p
+        assert p["conclusion"] == "red", p
+
+    @case("and a broken gate does not invent one either")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
+                l1={"docs-lint": "failure", "commit-lint": "success", "pr-body-check": "success"})
+        assert p["labels_add"] == [], p
 
     failures = 0
     for name, fn in cases:
