@@ -312,6 +312,38 @@ jobs:
       # the mapping is three cases, and an instruction that says `verbatim` is either true or it is
       # a trap. `cancelled`, `skipped` and an absent result all mean the gate reported nothing,
       # which is exactly what `not-run` is for.
+      # WHAT THE REVIEWER MAY READ FROM THE BRANCH, and what it may not. Two facts, both derived
+      # from the pull request rather than stated as a rule the model has to remember.
+      #
+      # THE EXTENSION AT THE BASE. The shared routine is fetched from the organisation repository's
+      # default branch so a pull request cannot rewrite the rules it is judged by. A repository's
+      # own extension was read from the reviewed checkout, which is the branch: a pull request could
+      # add a rule and be judged under it, and -- the direction that matters -- remove one and be
+      # judged without it. It is taken at the base commit for the same reason the routine is taken
+      # at `main`, and a pull request that adds an extension is not judged by it, which is the same
+      # cost that decision already carries.
+      #
+      # RESTORED PATHS. `.claude/agents/**` reaches this checkout from the base whatever the pull
+      # request does to it. A reviewer reading those files sees content the change does not contain,
+      # and a finding about them describes the checkout rather than the diff -- which is how a
+      # bundle bump, the one change that touches both a vendor tree and the profiles naming it,
+      # earns a blocking finding that is true of nothing. Naming the paths is cheaper than asking
+      # the model to remember a rule, and it is per-run rather than general.
+      - name: The rules this pull request cannot edit, and the files it cannot show
+        env:
+          ROUTINE: ${{ inputs.repo-routine }}
+        run: |
+          set -euo pipefail
+          base=$(jq -r '.base.sha' pull-request.json)
+          if [ -n "${ROUTINE:-}" ] && git show "$base:$ROUTINE" > repo-routine.base.md 2>/dev/null; then
+            echo "::notice::the repository extension is read at $base, not from this branch"
+          else
+            rm -f repo-routine.base.md
+            [ -n "${ROUTINE:-}" ] && echo "::notice::$ROUTINE does not exist at $base; the reviewer gets no extension"
+          fi
+          jq -r '.files[].path | select(startswith(".claude/agents/"))' pull-request.json \
+            > restored-paths.txt || : > restored-paths.txt
+          echo "::notice::$(wc -l < restored-paths.txt) changed path(s) the checkout does not reflect"
       - name: The L1 gate results, in the verdict's vocabulary
         id: gates
         env:
@@ -400,7 +432,18 @@ jobs:
             read that section before you read the extension. Where a value below is `(none)`,
             there is nothing to apply and this routine stands alone.
 
-            REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && inputs.repo-routine || '(none)' }}
+            The extension below is this repository's file AS THE BASE COMMIT HAS IT, not as this
+            pull request leaves it. A pull request does not get to write the rules it is judged by,
+            which is the same reason the routine itself comes from the organisation repository's
+            default branch. A pull request that changes the extension is reviewed under the old one
+            and takes effect for the next.
+
+            FILES THIS CHECKOUT DOES NOT REFLECT: the paths in `restored-paths.txt`, if any, are
+            changed by this pull request and restored to their base content before you see them.
+            Their content here is not the change. Report nothing about them: you cannot see what
+            they became, and what you can see is not what the author wrote.
+
+            REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && 'repo-routine.base.md' || '(none)' }}
             REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}
 
             Report nothing you have not checked against the repository: the routine asks whether
