@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-17
+last-verified: 2026-09-22
 ---
 
 # Organisation rulesets
@@ -17,7 +17,7 @@ sentence in `AGENTS.md`.
 
 | File | Targets | What it says |
 |:--|:--|:--|
-| `exeris-code-base.json` | every repository's default branch, except the two inbox repositories (`exeris-ai-execution`, `-enterprise`), which carry ADR-086 §G.33's validator as their own required check | no deletion, no force-push, **every change through a pull request**, **no bypass actors — the founder included**, stale approvals dismissed on push, the most recent push must be approved by someone other than its pusher |
+| `exeris-code-base.json` | every repository's default branch, except the three data repositories: the two inboxes (`exeris-ai-execution`, `-enterprise`), which carry ADR-086 §G.33's validator as their own required check, and `exeris-ai-execution-streams`, whose `main` the pen commits streams to directly (ADR-087 §A.1, §C.13) | no deletion, no force-push, **every change through a pull request**, **no bypass actors — the founder included**, stale approvals dismissed on push; approval of the most recent push by someone other than its pusher is one of the three switches below |
 | `exeris-code-verdict.json` | only the repositories whose `guardrails.yml` sets `publish: true` | the required check `docs-review / publish / verdict` (ADR-087 §B.8), pinned to the GitHub Actions integration so another App cannot report a check by that name |
 
 Why two and not one: a required status check that no workflow reports leaves a pull request unable
@@ -26,14 +26,18 @@ check exists only where it is switched on, and the ruleset that requires it list
 repositories. **Turning `publish: true` on in a repository and adding it to
 `exeris-code-verdict.json`'s `include` is one change**, in that order.
 
-## The two switches for the second maintainer
+## The three switches for the second maintainer
 
-Both live in `exeris-code-base.json`, both are off while the organisation has one member who can
-review, and flipping them is the whole of what changes on the day there is a second
+All three live in `exeris-code-base.json`, all three are off while the organisation has one member
+who can review, and flipping them is the whole of what changes on the day there is a second
 (RFC-2026-09-17, *Independent* levels; `review-policy.json` in the harness carries the level):
 
 - `required_approving_review_count`: `0` → `1`
 - `require_code_owner_review`: `false` → `true` once `CODEOWNERS` has more than one row
+- `require_last_push_approval`: `false` → `true`. It is not free of an approval count: applied with
+  the count at `0`, it refuses every merge with "new changes require approval from someone other
+  than the last pusher", which in a one-member organisation is every pull request. RFC-2026-09-17's
+  S1.e expected it on from day one; the measurement says it belongs with the other two.
 
 Until then the human-verification rule for App-authored pull requests lives in the required check
 (`scripts/publish_verdict.py`, author-conditional), which is where a rule that depends on the
@@ -59,12 +63,14 @@ gh api repos/exeris-systems/<repo>/commits/<head-sha>/check-runs --jq '.check_ru
 
 ## Things this file does not decide
 
-- Whether `require_last_push_approval` has any effect while `required_approving_review_count` is
-  `0`. Expected not; it is kept because it costs nothing and is the rule that stops an agent riding
-  a commit in behind a review once approvals are required. The check compares the reviewed SHA with
-  head regardless (ADR-087 §B.8, staleness).
 - Whether an App's approving review counts toward `required_approving_review_count` (RFC-2026-09-17
   Q7, S1.a). Expected not; it is measured on a throwaway repository under these same files.
 - A repository that still receives direct pushes to its default branch goes red on the next push
   under `exeris-code-base.json`. That is the rule working; the remedy is a pull request, not an
-  exclusion — an exclusion is a bypass under another name.
+  exclusion — an exclusion is a bypass under another name. The three data repositories are not that
+  case: none of them holds code, each is written by one App identity under ADR-087 §A.1 and read by
+  a person before anything depends on it, and each carries its own required check in place of this
+  file's — the inbox validator on the two inboxes (ADR-086 §G.33), the index-digest verification on
+  the streams repository. A stream is committed to `main` directly because a pull request would
+  leave the row's reference to it dangling until merged (ADR-087 §C.13); that is the sanctioned shape
+  of the pen, and it is the only one.
