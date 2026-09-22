@@ -747,6 +747,10 @@ jobs:
       capture-checkout-sha: ${{ needs.produce.outputs.checkout-sha }}
       capture-head-sha: ${{ needs.produce.outputs.head-sha }}
       capture-review-started-at: ${{ needs.produce.outputs.review-started-at }}
+      # Whether this run becomes a row, and the pen it is written with (ADR-087 §C.13): passed
+      # only once the callee declares them on main, for the reason the capture-* lines above give.
+      capture-artifact-id: ${{ needs.produce.outputs.artifact-id }}
+      capture: ${{ inputs.capture }}
       # And whether anything is made of them. Handed straight through, because the decision is the
       # caller's: this workflow neither turns capture on for a repository that did not ask nor off
       # for one that did.
@@ -803,3 +807,5 @@ jobs:
     secrets:
       exeris_bot_app_id: ${{ secrets.exeris_bot_app_id }}
       exeris_bot_private_key: ${{ secrets.exeris_bot_private_key }}
+      exeris_inbox_app_id: ${{ secrets.exeris_inbox_app_id }}
+      exeris_inbox_private_key: ${{ secrets.exeris_inbox_private_key }}
