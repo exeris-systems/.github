@@ -17,7 +17,7 @@ sentence in `AGENTS.md`.
 
 | File | Targets | What it says |
 |:--|:--|:--|
-| `exeris-code-base.json` | every repository's default branch, except the two inbox repositories (`exeris-ai-execution`, `-enterprise`), which carry ADR-086 §G.33's validator as their own required check | no deletion, no force-push, **every change through a pull request**, **no bypass actors — the founder included**, stale approvals dismissed on push, the most recent push must be approved by someone other than its pusher |
+| `exeris-code-base.json` | every repository's default branch, except the three data repositories: the two inboxes (`exeris-ai-execution`, `-enterprise`), which carry ADR-086 §G.33's validator as their own required check, and `exeris-ai-execution-streams`, whose `main` the pen commits streams to directly (ADR-087 §A.1, §C.13) | no deletion, no force-push, **every change through a pull request**, **no bypass actors — the founder included**, stale approvals dismissed on push, the most recent push must be approved by someone other than its pusher |
 | `exeris-code-verdict.json` | only the repositories whose `guardrails.yml` sets `publish: true` | the required check `docs-review / publish / verdict` (ADR-087 §B.8), pinned to the GitHub Actions integration so another App cannot report a check by that name |
 
 Why two and not one: a required status check that no workflow reports leaves a pull request unable

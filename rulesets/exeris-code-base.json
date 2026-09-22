@@ -4,16 +4,31 @@
   "enforcement": "active",
   "bypass_actors": [],
   "conditions": {
-    "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] },
+    "ref_name": {
+      "include": [
+        "~DEFAULT_BRANCH"
+      ],
+      "exclude": []
+    },
     "repository_name": {
-      "include": ["~ALL"],
-      "exclude": ["exeris-ai-execution", "exeris-ai-execution-enterprise"],
+      "include": [
+        "~ALL"
+      ],
+      "exclude": [
+        "exeris-ai-execution",
+        "exeris-ai-execution-enterprise",
+        "exeris-ai-execution-streams"
+      ],
       "protected": false
     }
   },
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
     {
       "type": "pull_request",
       "parameters": {
@@ -22,7 +37,11 @@
         "require_code_owner_review": false,
         "require_last_push_approval": true,
         "required_review_thread_resolution": false,
-        "allowed_merge_methods": ["merge", "squash", "rebase"]
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ]
       }
     }
   ]
