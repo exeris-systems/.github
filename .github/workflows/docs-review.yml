@@ -186,6 +186,16 @@ jobs:
        github.event.action == 'reopened' ||
        github.event.action == 'ready_for_review' ||
        contains(github.event.pull_request.labels.*.name, inputs.review-label))
+    # THE ALLOW-LIST IN ONE PLACE, because two consumers read it and a second copy is a second
+    # answer. It is what the runner is launched with AND it is half of `execution.tool_surface`,
+    # the digest that says which powers two rows were compared under; a surface hashed from a
+    # literal beside the launch agrees with the launch only for as long as nobody edits one of them.
+    #
+    # The list is what reading a pull request takes and nothing else. Widening it widens what the
+    # shared review may do in every repository that calls this workflow, and it moves the digest,
+    # which is a fence.
+    env:
+      ALLOWED_TOOLS: "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*)"
     outputs:
       # Constant, and kept rather than dropped: `publish_verdict.py` reads it and its `false`
       # branch is a green without a verdict. A produce job that runs now always runs the model, so
@@ -197,6 +207,25 @@ jobs:
       # a STEP output, so the publish half was handed an artefact name whatever happened here and
       # its `!= ''` guard could not be false. A guard whose condition cannot fail is not a guard.
       execution-written: ${{ steps.review.outputs.execution_file != '' }}
+      # WHAT THE RUN WAS, AS DIGESTS. The model runs in this job and this job holds no write scope,
+      # so the prompt it was handed, the routine it ran, the agent file it read and the allow-list
+      # it ran under exist nowhere once it ends. These carry their identities out and nothing else:
+      # every one is a hash, a commit SHA, a version or a timestamp, and no line of the text itself
+      # crosses the job boundary.
+      #
+      # Each is empty where the step could not read what it hashes, and empty is the honest answer
+      # rather than a plausible one: a consumer reading an empty value knows it did not get that
+      # component, where a hash over a component nobody read is indistinguishable from one that was.
+      prompt-sha256: ${{ steps.surface.outputs.prompt-sha256 }}
+      routine-sha256: ${{ steps.surface.outputs.routine-sha256 }}
+      routine-sha: ${{ steps.surface.outputs.routine-sha }}
+      agents-md-sha256: ${{ steps.surface.outputs.agents-md-sha256 }}
+      system-prompt-sha256: ${{ steps.surface.outputs.system-prompt-sha256 }}
+      tool-surface: ${{ steps.surface.outputs.tool-surface }}
+      bundle-version: ${{ steps.surface.outputs.bundle-version }}
+      checkout-sha: ${{ steps.surface.outputs.checkout-sha }}
+      head-sha: ${{ steps.surface.outputs.head-sha }}
+      review-started-at: ${{ steps.surface.outputs.review-started-at }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
@@ -360,6 +389,109 @@ jobs:
             echo "checks_run=$(cat gates.json)" >> "$GITHUB_OUTPUT"
             rm -f gates.json
           fi
+      # THE PROMPT IS RENDERED ONCE, AND THE HASH IS OVER WHAT WAS RENDERED. Written inline on the
+      # action it left no artefact of itself: the only way to say afterwards what the runner read
+      # was to re-render the template from the workflow file and the inputs and trust that the two
+      # renderings agree. A hash over a restatement that is not the prompt is worse than no hash,
+      # because it is indistinguishable from one that is.
+      #
+      # So the text is rendered here, into a file, and the action is handed the same string through
+      # a step output. The substitutions are the workflow's own and unchanged; what moved is where
+      # they are spent.
+      #
+      # THE HEREDOC DELIMITER IS QUOTED, so this shell expands nothing inside the body. The `${{ }}`
+      # values are substituted before the shell starts, and each is a number, a repository name, a
+      # literal chosen by an expression, or one line of `jq -c` output — none of which can open or
+      # close a heredoc. The quoting is what keeps a backtick or a `$` in the prompt's own prose
+      # from being read as a command.
+      #
+      # The file keeps a trailing newline and the step output does not, because a heredoc-delimited
+      # output ends at its delimiter. The hash cannot see that difference: the contract normalises
+      # every component to exactly one trailing newline before concatenating, so the file this
+      # hashes and the string the action receives are one component either way.
+      - name: The prompt, rendered once
+        id: prompt
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/review-prompt.txt" <<'RENDERED_PROMPT'
+          Review pull request ${{ github.event.pull_request.number }} in
+          ${{ github.repository }} against the documentation and hygiene review routine in
+          `.guardrails/docs-guardrails-review.md`. Read that file first and follow it exactly:
+          its steps, its severity tags, and its output format.
+
+          The L1 gates have already run and their results are below. Do not try to fetch them —
+          this runner's harness denies network calls, and a review that reports them as `not-run`
+          because it could not read a page is a review defeated by its own sandbox. Put these
+          verbatim into `checks_run`, and do not restate in prose what a gate already reported:
+          review the substance those gates cannot judge.
+
+          L1 GATE RESULTS, already in the shape and the vocabulary `checks_run` takes —
+          copy them in as they are:
+
+          ${{ steps.gates.outputs.checks_run }}
+
+          The pull request itself is in `pull-request.json` in the root of the checkout: title,
+          body, author, labels, base and head, and every changed file with its status. Read it —
+          it is the whole of what a `gh` call would have told you, and you have no GitHub access
+          to make one with. The diff is the checkout: `git diff` against the base SHA that file
+          names.
+
+          Some of this routine's steps are scoped to file types — doc type discipline, record
+          integrity, Javadoc and TSDoc prose. Those apply to the files in this diff that have
+          them and to no others; where the diff has none, they find nothing and you say nothing
+          about them. That is not a reason to skip the review. Step 1 judges the pull request's
+          BODY against its diff and Step 5 judges its commits and agent files, and both apply to
+          every pull request whatever it changes — the routine is Step 1b of the review router,
+          whose heading reads "Docs & hygiene review (ALL PRs)".
+
+          This repository may extend the routine with rules of its own. The routine's
+          `## Repository extension` section says how far that goes and what it may not touch;
+          read that section before you read the extension. Where a value below is `(none)`,
+          there is nothing to apply and this routine stands alone.
+
+          The extension below is this repository's file AS THE BASE COMMIT HAS IT, not as this
+          pull request leaves it. A pull request does not get to write the rules it is judged by,
+          which is the same reason the routine itself comes from the organisation repository's
+          default branch. A pull request that changes the extension is reviewed under the old one
+          and takes effect for the next.
+
+          FILES THIS CHECKOUT DOES NOT REFLECT: the paths in `restored-paths.txt`, if any, are
+          changed by this pull request and restored to their base content before you see them.
+          Their content here is not the change. Report nothing about them: you cannot see what
+          they became, and what you can see is not what the author wrote.
+
+          REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && 'repo-routine.base.md' || '(none)' }}
+          REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}
+
+          Report nothing you have not checked against the repository: the routine asks whether
+          documentation matches the code, which means opening the code.
+
+          Close as the routine's `## Verdict` section requires: write the verdict object to
+          `verdict.json` in the root of this checkout, and repeat the same object as a fenced
+          `json` block at the end of the review you post. The schema it must satisfy is
+          `.guardrails/.agents/schemas/verdict.schema.json` — read it from there, not from this
+          repository's own `.agents/`, which is a different contract. If you cannot write files,
+          the fenced block alone is the stated fallback and the review is still complete.
+
+          DO NOT POST ANYTHING. You have no tool that can, and that is deliberate: the review you
+          write IS your reply, and the publication step signs it as `exeris-bot`, attaches the
+          marker the required check reads, and adds the provenance footer. A review you post
+          yourself carries none of those and no check can act on it. If every step passes, say so
+          in one line rather than summarising the routine back.
+          RENDERED_PROMPT
+          {
+            echo "text<<RENDERED_PROMPT_OUTPUT"
+            cat "$RUNNER_TEMP/review-prompt.txt"
+            echo "RENDERED_PROMPT_OUTPUT"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::the reviewer's prompt is $(wc -c < "$RUNNER_TEMP/review-prompt.txt") byte(s)"
+      # WHEN THE REVIEW BEGAN, taken here rather than reconstructed afterwards. A row is dated by
+      # the run it describes and a fence is dated too, so a row dated by the workflow's start is
+      # dated by something else that happened the same day. The step before the model is the closest
+      # instant anything in this job can name.
+      - name: When the review began
+        id: started
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Docs and hygiene review
         id: review
         uses: anthropics/claude-code-action@v1
@@ -394,73 +526,88 @@ jobs:
           # in the model's own output is §B.10's stated fallback — which is also the only place the
           # publish half can find a verdict, since a runner that posts writes its verdict into a tool
           # call and reports "Review posted" as its text.
+          #
+          # ONE STRING, READ TWICE. The list is the job's `ALLOWED_TOOLS`, and the surface step
+          # hashes that same variable — so the launch and the digest cannot name different powers.
           claude_args: |
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*)"
-          prompt: |
-            Review pull request ${{ github.event.pull_request.number }} in
-            ${{ github.repository }} against the documentation and hygiene review routine in
-            `.guardrails/docs-guardrails-review.md`. Read that file first and follow it exactly:
-            its steps, its severity tags, and its output format.
-
-            The L1 gates have already run and their results are below. Do not try to fetch them —
-            this runner's harness denies network calls, and a review that reports them as `not-run`
-            because it could not read a page is a review defeated by its own sandbox. Put these
-            verbatim into `checks_run`, and do not restate in prose what a gate already reported:
-            review the substance those gates cannot judge.
-
-            L1 GATE RESULTS, already in the shape and the vocabulary `checks_run` takes —
-            copy them in as they are:
-
-            ${{ steps.gates.outputs.checks_run }}
-
-            The pull request itself is in `pull-request.json` in the root of the checkout: title,
-            body, author, labels, base and head, and every changed file with its status. Read it —
-            it is the whole of what a `gh` call would have told you, and you have no GitHub access
-            to make one with. The diff is the checkout: `git diff` against the base SHA that file
-            names.
-
-            Some of this routine's steps are scoped to file types — doc type discipline, record
-            integrity, Javadoc and TSDoc prose. Those apply to the files in this diff that have
-            them and to no others; where the diff has none, they find nothing and you say nothing
-            about them. That is not a reason to skip the review. Step 1 judges the pull request's
-            BODY against its diff and Step 5 judges its commits and agent files, and both apply to
-            every pull request whatever it changes — the routine is Step 1b of the review router,
-            whose heading reads "Docs & hygiene review (ALL PRs)".
-
-            This repository may extend the routine with rules of its own. The routine's
-            `## Repository extension` section says how far that goes and what it may not touch;
-            read that section before you read the extension. Where a value below is `(none)`,
-            there is nothing to apply and this routine stands alone.
-
-            The extension below is this repository's file AS THE BASE COMMIT HAS IT, not as this
-            pull request leaves it. A pull request does not get to write the rules it is judged by,
-            which is the same reason the routine itself comes from the organisation repository's
-            default branch. A pull request that changes the extension is reviewed under the old one
-            and takes effect for the next.
-
-            FILES THIS CHECKOUT DOES NOT REFLECT: the paths in `restored-paths.txt`, if any, are
-            changed by this pull request and restored to their base content before you see them.
-            Their content here is not the change. Report nothing about them: you cannot see what
-            they became, and what you can see is not what the author wrote.
-
-            REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && 'repo-routine.base.md' || '(none)' }}
-            REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}
-
-            Report nothing you have not checked against the repository: the routine asks whether
-            documentation matches the code, which means opening the code.
-
-            Close as the routine's `## Verdict` section requires: write the verdict object to
-            `verdict.json` in the root of this checkout, and repeat the same object as a fenced
-            `json` block at the end of the review you post. The schema it must satisfy is
-            `.guardrails/.agents/schemas/verdict.schema.json` — read it from there, not from this
-            repository's own `.agents/`, which is a different contract. If you cannot write files,
-            the fenced block alone is the stated fallback and the review is still complete.
-
-            DO NOT POST ANYTHING. You have no tool that can, and that is deliberate: the review you
-            write IS your reply, and the publication step signs it as `exeris-bot`, attaches the
-            marker the required check reads, and adds the provenance footer. A review you post
-            yourself carries none of those and no check can act on it. If every step passes, say so
-            in one line rather than summarising the routine back.
+            --allowedTools "${{ env.ALLOWED_TOOLS }}"
+          prompt: ${{ steps.prompt.outputs.text }}
+      # WHAT THIS RUN WAS, HASHED WHILE IT IS STILL HERE — ADR-087 §C.14, ADR-086 §C.14a.
+      #
+      # `always()`, because a review that crashed is still a review that was given a prompt, a
+      # routine and an allow-list, and those are what this exports. A step that ran only after a
+      # success would export nothing for exactly the runs whose conditions a reader most wants to
+      # compare.
+      #
+      # THE SCRIPT COMES FROM THE ORGANISATION CHECKOUT, not from the reviewed tree. It derives the
+      # identity of the run that judges this pull request, and read from the branch a pull request
+      # could rewrite the derivation that describes it — the same reason the routine itself is
+      # fetched from the default branch.
+      #
+      # NOTHING HERE FAILS THE JOB, and two things hold that rather than one. A component this
+      # cannot read costs the hash over that component and no more: an empty value is written, the
+      # produce job stays whatever the review made it, and a consumer sees a component it did not
+      # get. And the step is `continue-on-error`, because the script it runs comes from another
+      # repository's default branch: a checkout that does not carry it yet, or an interpreter that
+      # refuses it, would otherwise turn `docs-review / produce` red about the exporter rather than
+      # about the pull request — and hand the publishing half a `produce-outcome` of `failure` for
+      # the same reason.
+      #
+      # THE COMPONENTS ARE READ AT THE HEAD COMMIT, not out of the workspace. The workspace holds
+      # the pull request's MERGE tree, base plus branch, and a merge commit is on no branch — so a
+      # component hashed from it is a component no later reader can name. A reconstruction reads
+      # these files at the head commit and the two are then compared component by component; a base
+      # that moved `AGENTS.md` or the settings since the fork point would make the two producers
+      # disagree over a component for a reason that is not canonicalisation drift, and that
+      # comparison is exactly the thing that cannot tell those two apart. `checkout-sha` and
+      # `head-sha` therefore carry one commit and stay two answers: the first names the tree the
+      # components were read at, the second names the pull request's head.
+      - name: The components this run's identity is derived from
+        id: surface
+        if: ${{ always() }}
+        # The paragraph above, enforced rather than described: an exporter that cannot run leaves
+        # the components unexported, which is a state a consumer reads, and never a red job about
+        # the exporter itself.
+        continue-on-error: true
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          STARTED_AT: ${{ steps.started.outputs.at }}
+        run: |
+          set -euo pipefail
+          [ -f .guardrails/scripts/review_surface.py ] || {
+            echo "::notice::the surface script is not on the routine's default branch, so no components are exported"
+            exit 0
+          }
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+            echo "::notice::the head commit is not in this checkout, so no components are exported"
+            exit 0
+          fi
+          # A path the head tree does not carry is left ABSENT rather than written empty. Absent is
+          # a state each of these components has a value for — a repository with no agent file
+          # contributes the empty component, one with no settings declares no permission rules —
+          # and an empty file is a different tree from a tree without the file.
+          surface="$RUNNER_TEMP/surface"
+          rm -rf "$surface"
+          mkdir -p "$surface/.claude" "$surface/.agents/vendor"
+          for path in AGENTS.md .claude/settings.json .agents/manifest.yaml; do
+            git show "$HEAD_SHA:$path" > "$surface/$path" 2>/dev/null || rm -f "$surface/$path"
+          done
+          git ls-tree --name-only "$HEAD_SHA" .agents/vendor/ > "$surface/vendor.txt" 2>/dev/null || true
+          while IFS= read -r entry; do
+            if [ -n "$entry" ]; then mkdir -p "$surface/$entry"; fi
+          done < "$surface/vendor.txt"
+          python3 .guardrails/scripts/review_surface.py \
+            --prompt "$RUNNER_TEMP/review-prompt.txt" \
+            --routine .guardrails/docs-guardrails-review.md \
+            --routine-sha "$(git -C .guardrails rev-parse HEAD)" \
+            --agents-md "$surface/AGENTS.md" \
+            --allowed-tools "$ALLOWED_TOOLS" \
+            --settings "$surface/.claude/settings.json" \
+            --manifest "$surface/.agents/manifest.yaml" \
+            --vendor-dir "$surface/.agents/vendor" \
+            --checkout-sha "$HEAD_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --review-started-at "$STARTED_AT"
       # TWO artefacts, not one with two paths. `upload-artifact@v4` roots an artefact at the least
       # common ancestor of the paths it is given: `verdict.json` sits in the workspace and the
       # runner's execution log in RUNNER_TEMP, so their LCA is `/home/runner/work` and the verdict

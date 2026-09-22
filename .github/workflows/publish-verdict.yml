@@ -130,6 +130,57 @@ on:
         type: string
         default: ""
         description: "Which skip it was, when the producing job was skipped rather than run"
+      # WHAT THE PRODUCING JOB MEASURED ABOUT ITSELF, CARRIED AND NOT CONSUMED. Nothing in this file
+      # reads one of them. They are here because this job outlives the producer and the producer's
+      # own components do not: a capture job added later is handed what the run was, or it is handed
+      # a reconstruction of what the run probably was, and only the first can be checked.
+      #
+      # OPTIONAL, EVERY ONE, and that is a compatibility statement. Callers track this file at
+      # `@main` and pass inputs by name; a required input here would stop their whole guardrails file
+      # parsing on the merge commit. An empty value is the honest reading for a producer that has no
+      # such step, a producing job that was skipped, or a component that could not be read.
+      #
+      # NO TEXT ARRIVES THROUGH THEM. Each is a hash, a commit SHA, a version or a timestamp.
+      capture-prompt-sha256:
+        type: string
+        default: ""
+        description: "Digest of the prompt the producer rendered; carried for the capture job"
+      capture-routine-sha256:
+        type: string
+        default: ""
+        description: "Digest of the routine file the producer ran; carried for the capture job"
+      capture-routine-sha:
+        type: string
+        default: ""
+        description: "The commit the routine was read at; carried for the capture job"
+      capture-agents-md-sha256:
+        type: string
+        default: ""
+        description: "Digest of the reviewed checkout's agent file, empty component included; carried for the capture job"
+      capture-system-prompt-sha256:
+        type: string
+        default: ""
+        description: "Digest over prompt, routine and agent file in the contract's order; carried for the capture job"
+      capture-tool-surface:
+        type: string
+        default: ""
+        description: "Digest of the allow-list and the checkout's permission rules; carried for the capture job"
+      capture-bundle-version:
+        type: string
+        default: ""
+        description: "The `exeris-agents` version the reviewed checkout pins; carried for the capture job"
+      capture-checkout-sha:
+        type: string
+        default: ""
+        description: "The commit the reviewed tree was read at; carried for the capture job"
+      capture-head-sha:
+        type: string
+        default: ""
+        description: "The pull request's head commit as the producer saw it; carried for the capture job"
+      capture-review-started-at:
+        type: string
+        default: ""
+        description: "When the reviewing step began, RFC 3339 UTC; carried for the capture job"
     secrets:
       # OPTIONAL, because ADR-087 Engineering Protocol 1 says items 2-3 "land first … and run under
       # the provider's identity until the Apps exist" — nothing before the Apps needs a token. A
