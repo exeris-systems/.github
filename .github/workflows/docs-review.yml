@@ -706,6 +706,21 @@ jobs:
       mandatory-gates: ${{ inputs.mandatory-gates }}
       l1-results: ${{ inputs.l1-results }}
       review-label: ${{ inputs.review-label }}
+      # What the produce job exported about the run (ADR-087 §C.14, ADR-086 §C.14a): digests,
+      # SHAs, a version and a timestamp, for the capture job to write into a run record. The
+      # callee declares every one of these as optional, so a caller pinned to an older produce
+      # half still resolves; and an input the callee does not declare is a startup failure,
+      # which is why these lines land only once the callee's declaration is on main.
+      capture-prompt-sha256: ${{ needs.produce.outputs.prompt-sha256 }}
+      capture-routine-sha256: ${{ needs.produce.outputs.routine-sha256 }}
+      capture-routine-sha: ${{ needs.produce.outputs.routine-sha }}
+      capture-agents-md-sha256: ${{ needs.produce.outputs.agents-md-sha256 }}
+      capture-system-prompt-sha256: ${{ needs.produce.outputs.system-prompt-sha256 }}
+      capture-tool-surface: ${{ needs.produce.outputs.tool-surface }}
+      capture-bundle-version: ${{ needs.produce.outputs.bundle-version }}
+      capture-checkout-sha: ${{ needs.produce.outputs.checkout-sha }}
+      capture-head-sha: ${{ needs.produce.outputs.head-sha }}
+      capture-review-started-at: ${{ needs.produce.outputs.review-started-at }}
       # Why the producing job did not run, as a value the publish half branches on. `ready` is a
       # sentinel rather than the empty string on purpose: GitHub treats `''` as FALSE, so
       # `(readiness) && ''` falls through to the next `||` and every ready run would report as
