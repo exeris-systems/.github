@@ -102,6 +102,20 @@ on:
         description: >-
           Comma-separated L1 gates whose `not-run` makes the required check red (ADR-087 §B.8).
           Empty means the routine's own list. Name more here in a repository whose caller runs more.
+      capture:
+        type: boolean
+        default: false
+        description: >-
+          Whether this run becomes a row in the execution dataset (ADR-087 §C.13-§C.17): the
+          execution log is committed as a stream, a run record is assembled from what the produce
+          job exported, and the day's rows reach the inbox as one pull request. OFF by default and
+          turned on per repository as its own decision, exactly as publication is — a repository
+          that starts writing rows starts contributing to a dataset, and the rows a producer writes
+          are read by a person before that is asked of anyone else. IT NEEDS `publish: true` TOO:
+          the capture job lives in the publishing half, which this workflow reaches only through
+          its publish job, so with publication off this runs nothing. The capture job reads the
+          repository and the pull request and writes through an App token, so a caller's permission
+          block does not change either way.
     secrets:
       claude_code_oauth_token: { required: true }
       # OPTIONAL, and that is a compatibility statement as much as a design one. `exeris-sdk` and
@@ -115,6 +129,11 @@ on:
       # decides. Publication degrades, the gate does not.
       exeris_bot_app_id: { required: false }
       exeris_bot_private_key: { required: false }
+      # The pen, for the capture job below. Optional for the same reason the voice is: a caller
+      # that passes secrets by name would have its whole file rejected by a new required one, and a
+      # capture with no identity of its own writes nothing rather than writing under another's.
+      exeris_inbox_app_id: { required: false }
+      exeris_inbox_private_key: { required: false }
 permissions:
   contents: read
   pull-requests: read
@@ -226,6 +245,12 @@ jobs:
       checkout-sha: ${{ steps.surface.outputs.checkout-sha }}
       head-sha: ${{ steps.surface.outputs.head-sha }}
       review-started-at: ${{ steps.surface.outputs.review-started-at }}
+      # AND THE ONE THE HOST NAMES RATHER THAN THIS JOB. The upload step is told the artefact's id
+      # as it creates it, and that id is half of a run record's identity and the whole of its
+      # stream's file name. It is carried out with the digests because the only other way to learn
+      # it is the Actions API, and the job that consumes it holds no Actions permission — one it
+      # could not be given without every caller granting it. Empty where no log was uploaded.
+      artifact-id: ${{ steps.execution-log.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
@@ -660,6 +685,7 @@ jobs:
       # repository -- the right to delete ANY artefact there, granted by every caller. That decision
       # waits for a capture step that exists; this one does not wait for anything.
       - name: Keep the runner's execution log, if it exposed one
+        id: execution-log
         if: ${{ !cancelled() && steps.review.outputs.execution_file != '' }}
         uses: actions/upload-artifact@v7
         with:
@@ -721,6 +747,9 @@ jobs:
       capture-checkout-sha: ${{ needs.produce.outputs.checkout-sha }}
       capture-head-sha: ${{ needs.produce.outputs.head-sha }}
       capture-review-started-at: ${{ needs.produce.outputs.review-started-at }}
+      # And whether anything is made of them. Handed straight through, because the decision is the
+      # caller's: this workflow neither turns capture on for a repository that did not ask nor off
+      # for one that did.
       # Why the producing job did not run, as a value the publish half branches on. `ready` is a
       # sentinel rather than the empty string on purpose: GitHub treats `''` as FALSE, so
       # `(readiness) && ''` falls through to the next `||` and every ready run would report as

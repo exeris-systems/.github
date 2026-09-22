@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that caller-example/*.yml grants the union of what its called workflows declare.
+"""Check that caller-example/*.yml agrees with what the workflows it calls declare.
 
 A called workflow can only narrow the caller's permissions. Grant less than one of them declares
 and GitHub does not run that job with less — it rejects the whole file as an invalid workflow,
@@ -61,6 +61,68 @@ def inputs_of(path: str) -> tuple[set[str], set[str]]:
     declared_inputs = ((trigger.get("workflow_call") or {}).get("inputs")) or {}
     required = {k for k, v in declared_inputs.items() if isinstance(v, dict) and v.get("required")}
     return set(declared_inputs), required
+
+
+SECRETS_SECTION = "secrets"
+
+
+def section(mapping: object, name: str) -> object:
+    """The entry of a parsed workflow mapping under `name`, or None where the mapping has none.
+
+    The `secrets:` section of a caller or a callee lists the NAMES of secrets and never a value —
+    a workflow file cannot hold one — so reading the section reads configuration, and what this
+    checker prints about it is a name.
+    """
+    if not isinstance(mapping, dict):
+        return None
+    for key, value in mapping.items():
+        if key == name:
+            return value
+    return None
+
+
+def call_secrets(wf: dict) -> dict:
+    """The `secrets:` a workflow declares for its callers, from an already-parsed workflow."""
+    trigger = wf.get("on") or wf.get(True) or {}
+    return section(trigger.get("workflow_call") or {}, SECRETS_SECTION) or {}
+
+
+def secrets_of(path: str) -> tuple[set[str], set[str]]:
+    """The secrets a called workflow declares, and the subset it requires."""
+    with open(path, encoding="utf-8") as fh:
+        wf = yaml.safe_load(fh) or {}
+    declared_secrets = call_secrets(wf)
+    required = {k for k, v in declared_secrets.items() if isinstance(v, dict) and v.get("required")}
+    return set(declared_secrets), required
+
+
+def check_secrets(path: str, job: str, spec: dict, called: str, bad: list) -> None:
+    """Every `secrets:` key names a secret the called workflow declares, and none it requires is left out.
+
+    A secret is the third way one file here can invalidate another's, and it fails exactly as the
+    other two do: a key the called workflow does not declare is not ignored, GitHub rejects the
+    WHOLE file as an invalid workflow — in the adopting repository, on the first push, with no logs,
+    taking every unrelated gate in that file down with it. The permission union and the `with:` keys
+    were both read here long before this one was, so a secret added ahead of its declaration was
+    invisible until an adopting repository's file was refused.
+
+    `secrets: inherit` names nothing and is checked against nothing: it hands the caller's whole
+    store to the callee, which a caller may always do.
+    """
+    given = section(spec, SECRETS_SECTION)
+    if given is None or given == "inherit":
+        return
+    if not isinstance(given, dict):
+        bad.append(f"{path}: job `{job}` has a `secrets:` that is a {type(given).__name__} rather "
+                   f"than `inherit` or a mapping of secret names to values")
+        return
+    declared, required = secrets_of(called)
+    for key in given:
+        if key not in declared:
+            bad.append(f"{path}: job `{job}` passes `secrets: {key}`, which `{called}` does not "
+                       f"declare — GitHub rejects the whole file")
+    for key in sorted(required - set(given)):
+        bad.append(f"{path}: job `{job}` omits `secrets: {key}`, which `{called}` declares required")
 
 
 def check_with(path: str, job: str, spec: dict, called: str, bad: list) -> None:
@@ -137,25 +199,52 @@ def publishes(wf: dict) -> bool:
     return False
 
 
+# The clause that keeps a close out of the collapse, spelled without spaces and with one kind of
+# quote, so that what is under test is the guard and not a caller's way of writing it.
+CLOSED_GUARD = "github.event.action!='closed'"
+
+
+def flat(expression: object) -> str:
+    return "".join(str(expression).split()).replace('"', "'")
+
+
 def check_cancellation(path: str, wf: dict, bad: list) -> None:
-    """A run the bot's own label removal starts must not cancel the run that removed the label.
+    """Two events a caller's own concurrency group must not point at a run that is still working.
 
-    The publishing job removes the review label as one of its last steps. That removal is an
-    `unlabeled` event, it starts a second run, and an unconditional `cancel-in-progress: true`
-    points that run at the one still publishing. The two overlap to the second, so a run whose every
-    job came out `success` can still be recorded as `cancelled`. A slower review loses the
-    `publish / verdict` job to the cancel, and a cancelled required check blocks a pull request for
-    a reason no human can act on.
+    THE LABEL REMOVAL. The publishing job removes the review label as one of its last steps. That
+    removal is an `unlabeled` event, it starts a second run, and an unconditional
+    `cancel-in-progress: true` points that run at the one still publishing. The two overlap to the
+    second, so a run whose every job came out `success` can still be recorded as `cancelled`. A
+    slower review loses the `publish / verdict` job to the cancel, and a cancelled required check
+    blocks a pull request for a reason no human can act on. Gating on the actor keeps the collapse
+    where it earns its keep, on human pushes, and makes a bot-triggered run queue instead. Only a
+    caller that both publishes and listens to label events can hit this.
 
-    Gating on the actor keeps the collapse where it earns its keep, on human pushes, and makes a
-    bot-triggered run queue instead. Only a caller that both publishes and listens to label events
-    can hit this; a caller with publication off removes no label and is left alone.
+    THE CLOSE. A caller that listens to `closed` puts the merge into the group of the run still
+    working on that pull request, and the human who merges is no `[bot]` — so the actor guard alone
+    evaluates true and the close cancels that run. The judgement job is `needs:` the published
+    verdict, so merging as soon as the required check goes green is precisely when the run is still
+    going. Nothing reports it either: the cancelled run's own reporting is suppressed with it, and
+    the next judgement reads an index with no entry for the pull request and says green. So the
+    close is kept out of the collapse by its own clause, whatever the actor.
     """
     trigger = (wf.get("on") or wf.get(True) or {}).get("pull_request") or {}
-    listens = sorted(set(trigger.get("types") or []) & {"labeled", "unlabeled"})
+    types = set(trigger.get("types") or [])
+    concurrency = wf.get("concurrency")
+    cancel = (concurrency if isinstance(concurrency, dict) else {}).get("cancel-in-progress")
+    if "closed" in types and cancel not in (None, False) and CLOSED_GUARD not in flat(cancel):
+        # As the file spells it: PyYAML answers a boolean in Python's spelling, and a message that
+        # quoted `True` back at a caller would be quoting a line that is not in their file.
+        spelled = "true" if cancel is True else cancel
+        bad.append(f"{path}: is triggered by `closed` and collapses its concurrency group with "
+                   f"`cancel-in-progress: {spelled}`, which a close satisfies — merging cancels the "
+                   f"run still publishing the verdict and judging it, and nothing reports the "
+                   f"cancel. Keep the close out of it: `cancel-in-progress: "
+                   f"${{{{ github.event.action != 'closed' && ... }}}}`")
+    listens = sorted(types & {"labeled", "unlabeled"})
     if not listens or not publishes(wf):
         return
-    if (wf.get("concurrency") or {}).get("cancel-in-progress") is True:
+    if cancel is True:
         bad.append(f"{path}: publishes and is triggered by {', '.join('`%s`' % t for t in listens)}, "
                    f"but sets `cancel-in-progress: true` — the run started by the bot removing the "
                    f"review label cancels the run that was still publishing it. Gate it on the "
@@ -210,6 +299,7 @@ def audit(path: str, wf: dict, bad: list) -> None:
             bad.append(f"{path}: job `{job}` calls `{called}`, which does not exist here")
             continue
         check_with(path, job, spec, called, bad)
+        check_secrets(path, job, spec, called, bad)
         released = as_released((spec or {}).get("uses", ""), called)
         if released is not None:
             trigger = released.get("on") or released.get(True) or {}
@@ -221,6 +311,16 @@ def audit(path: str, wf: dict, bad: list) -> None:
                 bad.append(f"{path}: job `{job}` passes `with: {key}`, which `{called}` does not "
                            f"declare AT `{ref}` — GitHub resolves this call against `{ref}`, not "
                            f"against this branch, so the input must land there first")
+            # The same question for secrets, and it is the one that reached an adopting repository:
+            # a secret declared on the branch proposing it is not declared at the ref the call
+            # resolves against, and the file is refused whole until the declaring half has landed.
+            passed = section(spec, SECRETS_SECTION)
+            if isinstance(passed, dict):
+                for key in sorted(set(passed) - set(call_secrets(released))):
+                    bad.append(f"{path}: job `{job}` passes `secrets: {key}`, which `{called}` does "
+                               f"not declare AT `{ref}` — GitHub resolves this call against "
+                               f"`{ref}`, not against this branch, so the declaration must land "
+                               f"there first")
         for key, value in declared(called).items():
             if RANK.get(value, 0) > RANK.get(need.get(key, "none"), 0):
                 need[key] = value

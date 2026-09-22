@@ -41,7 +41,11 @@ does not run is a gate nobody has tested.
     docs-review.yml      reusable — the L2 review: a `produce` job runs the routine, a `publish`
                          job (opt-in, `publish: true`) posts and gates. ADR-087 §B.5
     publish-verdict.yml  reusable — the publishing half on its own, so more than one producer can
-                         reach it. Posts as `exeris-bot`, labels, and is the required check
+                         reach it. Posts as `exeris-bot`, labels, and is the required check; a
+                         second job (opt-in, `capture: true`) writes the run's row. ADR-087 §C.13
+    judge-review.yml     reusable — the other half of that row: on `pull_request: closed` it reads
+                         what the human did with each finding and appends a judgement record beside
+                         the run, never into it. ADR-087 §C.16
     guardrails.yml       this repository's OWN caller — it runs its gates, and the L2 review, on itself
     labels-sync.yml      applies labels.yml across the organisation
     issue-hygiene.yml    ages `needs-reproducer` / `needs-evidence`
@@ -142,6 +146,39 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    still decides, it is simply not published under the organisation's byline. No permission is added
    either way: every write goes through the App's installation token, so neither job's own
    `GITHUB_TOKEN` holds one.
+5a. **Capture is the second opt-in, and a separate decision.** `capture: true` adds a third job:
+   the runner's execution log is committed to the streams repository as content, one run record is
+   assembled from what the producing job exported about the run, and the day's rows reach
+   `exeris-ai-execution` as one pull request per repository per UTC day (ADR-087 §C.13-§C.17). It
+   decides nothing about the pull request — the required check stays the publishing half's — and it
+   writes through `EXERIS_INBOX_APP_ID` / `EXERIS_INBOX_PRIVATE_KEY`, two more optional secrets,
+   again with no permission added to the caller's block. Turn it on after reading rows a producer
+   has already written: a repository that starts contributing to a dataset should have seen what it
+   will be contributing.
+
+   **It runs inside the publishing half, so it needs `publish: true` as well.** The capture job
+   lives in `publish-verdict.yml`, which the review reaches only through its publish job: with
+   publication off, `capture: true` runs nothing, and nothing in the checks says so.
+5b. **The judgement goes on with capture, and it is the one job that runs on `closed`.** A
+   review-domain row is complete when the review ends and its outcome is `UNKNOWN`: the oracle has
+   not judged yet. `review-disposition` judges when the pull request closes — per finding, from what
+   the human did with it — and its verdict is appended as its own record keyed by the run's id
+   (ADR-087 §C.16). Add `closed` to `on.pull_request.types`, add the `judge` job of
+   `caller-example/guardrails.yml`, and add `if: ${{ github.event.action != 'closed' }}` to every
+   other job in the file: a gate on a pull request that can no longer merge decides nothing, and the
+   review job would otherwise run the model again on a pull request whose review is over. It reads
+   the same two `EXERIS_INBOX_*` secrets and adds `actions: read` to the caller's permission block —
+   the commit a review READ is the reviewing run's own `head_sha`, which the platform states on the
+   Actions API and nowhere else independent of the row being judged. It publishes no check and posts
+   nothing to the pull request.
+
+   **Keep the close out of the concurrency collapse** in the same edit:
+   `cancel-in-progress: ${{ github.event.action != 'closed' && !endsWith(github.actor, '[bot]') }}`.
+   Without that first clause the close joins the group of the run still working on that pull
+   request, and the human who merges is no `[bot]` — so merging as soon as the required check goes
+   green cancels the run that was publishing it and the judgement that follows it. Nothing reports
+   such a cancel: the next judgement reads an index with no entry for the pull request and says,
+   greenly, that there was nothing to judge.
 6. Install the DCO GitHub App on the organisation with `.github/dco.yml` → `require: { members: false }` (org members exempt from the trailer, Spring's model).
 7. Delete the repo's own `PULL_REQUEST_TEMPLATE.md` if it has one — the org default applies.
 8. Community-health defaults (`CODE_OF_CONDUCT.md`, `SECURITY.md`, `SUPPORT.md`) reach every repository without one of its own, from this repository's root. They name two mailboxes and a private reporting channel, so before they are published: `conduct@exeris.eu` and `security@exeris.eu` must deliver, and organisation-level private vulnerability reporting must be on (*Settings → Code security*). A code of conduct whose reporting address bounces is worse than none. Delete a repo's own `SUPPORT.md` or `CODE_OF_CONDUCT.md` only where it says nothing the default does not; `exeris-kernel/SECURITY.md` says more and stays.

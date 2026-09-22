@@ -126,7 +126,10 @@ jobs:
         python3 scripts/caller_permissions_check.py;
         python3 scripts/comment_history_suite.py;
         python3 scripts/gate_vocabulary_check_suite.py;
-        python3 scripts/review_surface_suite.py
+        python3 scripts/review_surface_suite.py;
+        git clone --quiet --depth 1 https://github.com/exeris-systems/exeris-ai-execution "$RUNNER_TEMP/execution";
+        python3 scripts/capture_ci_row_suite.py --execution-root "$RUNNER_TEMP/execution";
+        python3 scripts/judge_review_suite.py --execution-root "$RUNNER_TEMP/execution"
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
@@ -271,3 +274,27 @@ jobs:
       - name: The produce job exports the components it hashed
         if: ${{ !cancelled() }}
         run: python scripts/review_surface_suite.py
+      # The other end of the same handover: what the capture job MAKES of those components, and
+      # every way the contract refuses a row. The derivations are the row contract's and are
+      # imported from its repository rather than copied here, so the suite needs that checkout —
+      # `repo-checks` clones it for the same reason, and the two run the same cases.
+      - name: The row contract and its derivations
+        if: ${{ !cancelled() }}
+        uses: actions/checkout@v7
+        with: { repository: exeris-systems/exeris-ai-execution, ref: main, path: execution }
+      - name: The capture step's rules, one case per way a row is refused
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet jsonschema
+          python scripts/capture_ci_row_suite.py --execution-root execution
+      # The oracle that judges the row after the pull request closes. It never labels and its
+      # verdict is never summarised in one figure with a calibrated one, which is exactly why its
+      # four values are pinned case by case: an oracle nobody can label with is an oracle nobody
+      # notices is wrong, and those values are what a reader of the dataset joins on. `referencing`
+      # beside `jsonschema` because the judgement schema states most of its fields as `$ref`s into
+      # the run record's.
+      - name: The judgement's rules, one case per disposition and per way a record is not filed
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet jsonschema referencing
+          python scripts/judge_review_suite.py --execution-root execution
