@@ -181,6 +181,39 @@ on:
         type: string
         default: ""
         description: "When the reviewing step began, RFC 3339 UTC; carried for the capture job"
+      # AND THE ONE COMPONENT THE HOST NAMES RATHER THAN THE PRODUCER. The upload step is told the
+      # artefact's id when it creates it, and that id is half of a row's identity and the whole of
+      # its stream's file name. It is carried here for the same reason as the digests above: asking
+      # the platform for it afterwards is a call on the Actions API, and the capture job holds no
+      # Actions permission — one it could not be given without every caller granting it.
+      capture-artifact-id:
+        type: string
+        default: ""
+        description: "The id of the execution artefact, as the produce job's upload reported it"
+      # AND THIS IS WHAT CONSUMES THEM — ADR-087 §C.13-§C.17. Off by default, and turned on per
+      # repository as a deliberate caller edit, exactly as publication is: a repository that starts
+      # writing rows starts contributing to a dataset, and that is a decision its maintainer makes
+      # once the rows a producer writes have been read by a human.
+      capture:
+        type: boolean
+        default: false
+        description: >-
+          Whether this run's execution log becomes a stream and a run record. The capture job reads
+          the repository and the pull request — both already granted to the review — and writes
+          through an App token, so turning it on adds no permission to a caller's block.
+      streams-repository:
+        type: string
+        default: "exeris-systems/exeris-ai-execution-streams"
+        description: >-
+          Where the execution log is committed as content. It is private and the inbox is public
+          because a stream carries the run's own text and a row carries only its digest.
+      execution-repository:
+        type: string
+        default: "exeris-systems/exeris-ai-execution"
+        description: >-
+          Where the rows land, and where the row contract and its derivations are read from. One
+          value, so that the tooling a row is assembled by and the inbox it is proposed to cannot
+          be two different versions of the contract.
     secrets:
       # OPTIONAL, because ADR-087 Engineering Protocol 1 says items 2-3 "land first … and run under
       # the provider's identity until the Apps exist" — nothing before the Apps needs a token. A
@@ -192,6 +225,14 @@ on:
       # decides. Publication degrades; the gate does not.
       exeris_bot_app_id: { required: false }
       exeris_bot_private_key: { required: false }
+      # The pen, and optional for the same two reasons the voice is: a caller that passes secrets by
+      # name would have its whole file rejected by a new required one, and a capture without an
+      # identity to write under is a capture that says so and stops rather than one that degrades
+      # into writing under somebody else's. The two Apps are separate because their write scopes
+      # are (ADR-087 §A.1): the voice may talk, the pen may write to the data repositories, and
+      # neither can do the other's job.
+      exeris_inbox_app_id: { required: false }
+      exeris_inbox_private_key: { required: false }
 permissions:
   contents: read
   pull-requests: read
@@ -205,6 +246,15 @@ jobs:
   # never reports, and a pull request waiting on one can never merge.
   verdict:
     runs-on: ubuntu-latest
+    # WHAT THE PLAN DECIDED, CARRIED OUT OF THE JOB. `verdict_source` is the transport that carried
+    # the verdict, which is `execution.verdict_route` on a row and is not constant — a verdict has
+    # arrived as a written file and as a fenced block in the runner's own log on one pull request
+    # within hours. `conclusion` is this job's own answer, recorded beside the row and never
+    # selected on: a row says what a run did, and a capture that wrote rows only for green reviews
+    # would be a dataset of the runs that went well.
+    outputs:
+      verdict-source: ${{ steps.outcome.outputs.verdict-source }}
+      conclusion: ${{ steps.outcome.outputs.conclusion }}
     # The caller's own `concurrency` cancels superseded RUNS, and `if: always()` deliberately lets a
     # cancelled run reach this job — so without a group here two pushes in quick succession edit one
     # comment and one label set at the same time. Queued rather than cancelled: the later write is
@@ -446,6 +496,22 @@ jobs:
             --override-by-type "$OVERRIDE_BY_TYPE" \
             --workflow-touching "$WORKFLOW_TOUCHING" \
             --current-labels-file current-labels.txt
+      # Read from the plan rather than recomputed, because the plan is the one place these are
+      # decided. A job that could not reach the planner exports nothing, and a consumer reading an
+      # empty value knows it did not get the answer — which is distinguishable from an answer.
+      - name: What the plan decided, for a job that runs after this one
+        id: outcome
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ -f plan.json ]; then
+            {
+              echo "verdict-source=$(jq -r '.verdict_source // ""' plan.json)"
+              echo "conclusion=$(jq -r '.conclusion // ""' plan.json)"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::publish_verdict: no plan was written, so nothing about this review is exported"
+          fi
       # The only step that writes, and it writes as `exeris-bot` — the organisation's byline, never
       # a claim that the bot reviewed anything (§A.3).
       - name: Publish the review and apply the labels
@@ -512,3 +578,470 @@ jobs:
       - name: The required check
         if: ${{ !cancelled() }}
         run: python .guardrails/scripts/publish_verdict.py gate --plan plan.json
+
+  # ONE ROW PER L2 RUN, WRITTEN WHERE THE RUN HAPPENED — ADR-087 §C.13-§C.17.
+  #
+  # The row contract has two producers. The other one reconstructs a run's components afterwards
+  # from what the host still holds, and says so in every row's `instrument.fence`. This one is
+  # handed them: the producing job hashed the prompt, the routine, the agent file and the allow-list
+  # while it still had them, and carried out the digests. Nothing here renders a prompt or reads a
+  # workflow file, and the two producers' rows are compared component by component — a disagreement
+  # is what retires the other one's fences, and a producer that reconstructed as well would have
+  # nothing to compare.
+  #
+  # IT DECIDES NOTHING ABOUT THE PULL REQUEST. The required check is the job above; this one writes
+  # a record. A capture that failed a pull request over what a dataset holds would make the dataset
+  # a gate, which is the one thing ADR-086 §A.2 says it must never become.
+  #
+  # SO ITS COLOUR MEANS ONE THING: green where there was nothing to write — no execution log, no
+  # identity to write under, a component the exports did not carry, a repository whose inbox does
+  # not exist — and red only where there WAS something to write and the write did not happen. A row
+  # the inbox's own rules refuse is neither: it is reported, as an artefact and as one issue in the
+  # source repository, which is where a producer defect is fixed (§C.15).
+  capture:
+    needs: verdict
+    # `!cancelled()` rather than `success()`: a review that ended BLOCKED is still a review that
+    # happened, and a row records what a run did rather than what it concluded. A cancelled run has
+    # nothing to record.
+    if: ${{ !cancelled() && inputs.capture }}
+    runs-on: ubuntu-latest
+    # ONE CAPTURE AT A TIME PER REVIEWED REPOSITORY. The day's rows from one repository share a
+    # branch and a pull request in the inbox, so two captures running together would race on both.
+    # `cancel-in-progress: false` serialises them; it does not promise that every member survives —
+    # a group holds one running member and one waiting one, and a third joining displaces the
+    # waiting one. So the group is an optimisation and NOT the guarantee: each write below is made
+    # safe on its own, by replaying it against what is actually on the remote rather than by being
+    # alone.
+    concurrency:
+      group: inbox-${{ github.repository }}
+      cancel-in-progress: false
+    # READ, AND NOTHING THIS JOB'S CALLER DOES NOT ALREADY GRANT THE REVIEW. Two reads are made with
+    # this token — the reviewed repository, to decide which inbox a row belongs to, and the pull
+    # request, for its scope class and its author — and nothing else. Every write below — the
+    # stream, the rows, the inbox pull request, the issue a refusal files — goes through an App
+    # installation token minted for the step that makes it. A caller's permission block therefore
+    # does not grow when capture is turned on, which is what `caller_permissions_check.py` reads it
+    # for.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # The assembly comes from the organisation's default branch, never from the reviewed tree: it
+      # decides what a row about this pull request says, and read from the branch a pull request
+      # could write its own measurement.
+      - name: Fetch the contract (exeris-systems/.github@main)
+        uses: actions/checkout@v7
+        with: { repository: exeris-systems/.github, ref: main, path: .guardrails }
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
+      # The row is checked against the record schema here, before it is proposed anywhere, which is
+      # the half of the inbox's gate that needs a Draft 2020-12 validator.
+      - run: pip install --quiet jsonschema
+      # Guarded on the name, not on the file: a produce job that was skipped uploads nothing, and an
+      # empty name handed to the download is a step that fails about the wrong thing.
+      - name: The runner's execution log, if the produce job uploaded one
+        if: ${{ inputs.execution-artifact != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.execution-artifact }}
+          path: execution-log
+        continue-on-error: true
+      - name: Is there a run to capture?
+        id: stream
+        run: |
+          set -euo pipefail
+          # `find` on a missing directory exits non-zero, which under `pipefail` would end this step
+          # on exactly the path the notice below exists for.
+          log=""
+          if [ -d execution-log ]; then
+            log=$(find execution-log -maxdepth 2 -type f | head -1 || true)
+          fi
+          if [ -z "$log" ]; then
+            echo "::notice::capture: this run exposed no execution log, so there is no stream and no row. The review is unaffected — the required check is the publish job's."
+          fi
+          echo "log=$log" >> "$GITHUB_OUTPUT"
+      - name: Is there an identity to write with?
+        id: identity
+        env:
+          APP_ID: ${{ secrets.exeris_inbox_app_id }}
+          # The voice's, asked here because the `secrets` context is not readable from a step's
+          # `if:` — the publishing half asks its own question in a step for the same reason.
+          VOICE_APP_ID: ${{ secrets.exeris_bot_app_id }}
+          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
+          STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VOICE_APP_ID" ]; then echo "voice=true" >> "$GITHUB_OUTPUT";
+          else echo "voice=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -z "$APP_ID" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::capture: no exeris_inbox_app_id was passed, so no stream and no row are written. Pass exeris_inbox_app_id and exeris_inbox_private_key from the caller to turn capture on; a capture with no identity of its own writes nothing rather than writing under another."
+            exit 0
+          fi
+          echo "have=true" >> "$GITHUB_OUTPUT"
+          # The token is minted for BOTH data repositories, because one identity writes the stream
+          # and the row and the reference between them has to resolve: a row whose stream was
+          # committed by somebody else is a reference nobody can verify. The App names them as bare
+          # repository names beside its owner, which is the shape the minting action takes.
+          {
+            echo "repositories<<EOF"
+            echo "${EXECUTION_REPOSITORY##*/}"
+            echo "${STREAMS_REPOSITORY##*/}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Mint the exeris-inbox token
+        id: inbox
+        if: ${{ steps.identity.outputs.have == 'true' && steps.stream.outputs.log != '' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.exeris_inbox_app_id }}
+          private-key: ${{ secrets.exeris_inbox_private_key }}
+          owner: exeris-systems
+          repositories: ${{ steps.identity.outputs.repositories }}
+          # The two scopes this job spends and nothing else. The pen holds only these on the data
+          # repositories today, so this changes nothing now — it is here so that widening the App
+          # later does not silently widen a job that runs beside a model's own output.
+          permission-contents: write
+          permission-pull-requests: write
+      # `fetch-depth: 0`, because this checkout is pushed from: a day's branch is fetched onto it
+      # and a commit is pushed back, and a shallow history is refused by the receiving end. The
+      # repository holds records and tooling, so the whole history is small.
+      - name: The row contract and its derivations
+        if: ${{ steps.inbox.outputs.token != '' }}
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.execution-repository }}
+          ref: main
+          path: execution
+          fetch-depth: 0
+          token: ${{ steps.inbox.outputs.token }}
+      # PHASE ONE: what the row would be, before anything is written. Every reason a row is not
+      # written is decided here, so a run that will never yield one commits no stream — and the
+      # stream's own digest and event count come out of the same reading the row will carry.
+      - name: What this run would become
+        id: decide
+        if: ${{ steps.inbox.outputs.token != '' }}
+        env:
+          # The job's own token, which holds the two read scopes above and nothing more. It makes
+          # exactly two calls — the repository and the pull request — both covered by what a caller
+          # already grants the review, so turning capture on adds nothing to a caller's block.
+          # Every write below uses an App token instead.
+          GH_TOKEN: ${{ github.token }}
+          LOG: ${{ steps.stream.outputs.log }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT: ${{ inputs.execution-artifact }}
+          ARTIFACT_ID: ${{ inputs.capture-artifact-id }}
+          VERDICT_SOURCE: ${{ needs.verdict.outputs.verdict-source }}
+          STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
+          SYSTEM_PROMPT_SHA256: ${{ inputs.capture-system-prompt-sha256 }}
+          PROMPT_SHA256: ${{ inputs.capture-prompt-sha256 }}
+          ROUTINE_SHA256: ${{ inputs.capture-routine-sha256 }}
+          ROUTINE_SHA: ${{ inputs.capture-routine-sha }}
+          AGENTS_MD_SHA256: ${{ inputs.capture-agents-md-sha256 }}
+          TOOL_SURFACE: ${{ inputs.capture-tool-surface }}
+          BUNDLE_VERSION: ${{ inputs.capture-bundle-version }}
+          CHECKOUT_SHA: ${{ inputs.capture-checkout-sha }}
+          CAPTURE_HEAD_SHA: ${{ inputs.capture-head-sha }}
+          REVIEW_STARTED_AT: ${{ inputs.capture-review-started-at }}
+        run: |
+          set -euo pipefail
+          python .guardrails/scripts/capture_ci_row.py \
+            --execution-root execution \
+            --log "$LOG" \
+            --repository "$REPO" \
+            --pull-request "$PR" \
+            --event-head-sha "$HEAD_SHA" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --execution-artifact "$ARTIFACT" \
+            --artifact-id "$ARTIFACT_ID" \
+            --verdict-source "$VERDICT_SOURCE" \
+            --streams-repository "$STREAMS_REPOSITORY" \
+            --prompt-sha256 "$PROMPT_SHA256" \
+            --routine-sha256 "$ROUTINE_SHA256" \
+            --routine-sha "$ROUTINE_SHA" \
+            --agents-md-sha256 "$AGENTS_MD_SHA256" \
+            --system-prompt-sha256 "$SYSTEM_PROMPT_SHA256" \
+            --tool-surface "$TOOL_SURFACE" \
+            --bundle-version "$BUNDLE_VERSION" \
+            --checkout-sha "$CHECKOUT_SHA" \
+            --head-sha "$CAPTURE_HEAD_SHA" \
+            --review-started-at "$REVIEW_STARTED_AT" \
+            --out capture-decision.json
+          {
+            echo "reason=$(jq -r '.reason // ""' capture-decision.json)"
+            echo "run-id=$(jq -r '.run_id // ""' capture-decision.json)"
+            echo "date=$(jq -r '.date // ""' capture-decision.json)"
+            echo "branch=$(jq -r '.branch // ""' capture-decision.json)"
+            echo "stream-path=$(jq -r '.stream.path // ""' capture-decision.json)"
+          } >> "$GITHUB_OUTPUT"
+          reason=$(jq -r '.reason // ""' capture-decision.json)
+          if [ -n "$reason" ]; then
+            echo "::notice::capture: no row — $reason: $(jq -r '.detail' capture-decision.json)"
+          fi
+      # A STREAM IS CONTENT, NOT A ROW, and it goes to `main` directly (§C.13). A pull request there
+      # would leave every row's `execution.event_stream.ref` dangling until somebody merged it, and
+      # the row's digest is verifiable only against a commit that exists.
+      - name: Commit the stream to the streams repository
+        id: stream-commit
+        if: ${{ steps.decide.outputs.reason == '' && steps.decide.outputs.stream-path != '' }}
+        env:
+          GH_TOKEN: ${{ steps.inbox.outputs.token }}
+          STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
+          LOG: ${{ steps.stream.outputs.log }}
+        run: |
+          set -euo pipefail
+          # The App's own numeric id, which is the address the host attributes a commit by this
+          # identity to. Asked of the host rather than written down: an id is the host's to assign,
+          # and a hard-coded one attributes the commit to nobody the moment it is wrong.
+          uid=$(gh api /users/exeris-inbox%5Bbot%5D --jq .id)
+          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${STREAMS_REPOSITORY}.git" streams
+          # WRITTEN TO A FILE BECAUSE IT IS REPLAYED. Two captures append to one `index.json`, which
+          # is one insertion each at one place in one array — a conflict every time, not a rare one,
+          # since the concurrency group is per reviewed repository and two repositories capturing at
+          # once is the ordinary case. So a rejected push is answered by discarding this clone's
+          # commit, taking what is actually on the remote, and deriving the append again from it.
+          cat > append-stream.py <<'PY'
+          import json, os, shutil, sys
+          log, decision_path, clone = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(decision_path, encoding="utf-8") as fh:
+              entry = json.load(fh)["stream"]
+          target = os.path.join(clone, entry["path"])
+          os.makedirs(os.path.dirname(target), exist_ok=True)
+          # A stream already there is the same run captured twice, and content is not rewritten:
+          # identical bytes are a no-op, and different bytes under one name are refused rather than
+          # overwritten, because the first copy is the evidence the row's digest was taken over.
+          if os.path.exists(target):
+              with open(target, "rb") as fh, open(log, "rb") as held:
+                  if fh.read() != held.read():
+                      raise SystemExit(f"::error::capture: {entry['path']} already holds other "
+                                       f"bytes; a stream is content and is never rewritten")
+          else:
+              shutil.copyfile(log, target)
+          index_path = os.path.join(clone, "index.json")
+          with open(index_path, encoding="utf-8") as fh:
+              index = json.load(fh)
+          if not any(e.get("path") == entry["path"] for e in index):
+              index.append(entry)
+          with open(index_path, "w", encoding="utf-8") as fh:
+              json.dump(index, fh, indent=2, ensure_ascii=False)
+              fh.write("\n")
+          PY
+          message="chore(streams): the execution log of $(jq -r .run_id capture-decision.json)"
+          pushed=no
+          for _attempt in 1 2 3; do
+            # The append is re-derived from the index as it is on the remote at this moment, so a
+            # capture that lost the race loses its commit and not its entry: nothing it wrote is
+            # carried forward, and everything it wanted written is derived again.
+            git -C streams fetch --quiet origin main
+            git -C streams reset --quiet --hard origin/main
+            python append-stream.py "$LOG" capture-decision.json streams
+            git -C streams add -A
+            # Nothing to add is the same run captured twice: the stream and its entry are already
+            # on `main`, and the commit a row will reference is the one holding them.
+            if [ -z "$(git -C streams status --porcelain)" ]; then pushed=yes; break; fi
+            git -C streams -c user.name="exeris-inbox[bot]" \
+                -c "user.email=${uid}+exeris-inbox[bot]@users.noreply.github.com" \
+                commit -qm "$message"
+            if git -C streams push --quiet origin HEAD:main; then pushed=yes; break; fi
+          done
+          # RED, and deliberately. A stream that was not pushed is a commit no row can reference,
+          # and this job reports green whenever it has nothing to write — so a green here would
+          # be indistinguishable from a run that had nothing to capture.
+          if [ "$pushed" != "yes" ]; then
+            echo "::error::capture: the stream could not be pushed, so no row is written — a row references its stream at a commit, and the commit has to exist"
+            exit 1
+          fi
+          echo "commit=$(git -C streams rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "email=${uid}+exeris-inbox[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+      # PHASE TWO: the row, now that the commit its reference names exists. The same script, the
+      # same decisions, one more fact.
+      - name: Assemble the row and put it through the inbox's own rules
+        id: assemble
+        if: ${{ steps.stream-commit.outputs.commit != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOG: ${{ steps.stream.outputs.log }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT: ${{ inputs.execution-artifact }}
+          ARTIFACT_ID: ${{ inputs.capture-artifact-id }}
+          VERDICT_SOURCE: ${{ needs.verdict.outputs.verdict-source }}
+          STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
+          STREAM_COMMIT: ${{ steps.stream-commit.outputs.commit }}
+          BRANCH: ${{ steps.decide.outputs.branch }}
+          EMAIL: ${{ steps.stream-commit.outputs.email }}
+          SYSTEM_PROMPT_SHA256: ${{ inputs.capture-system-prompt-sha256 }}
+          PROMPT_SHA256: ${{ inputs.capture-prompt-sha256 }}
+          ROUTINE_SHA256: ${{ inputs.capture-routine-sha256 }}
+          ROUTINE_SHA: ${{ inputs.capture-routine-sha }}
+          AGENTS_MD_SHA256: ${{ inputs.capture-agents-md-sha256 }}
+          TOOL_SURFACE: ${{ inputs.capture-tool-surface }}
+          BUNDLE_VERSION: ${{ inputs.capture-bundle-version }}
+          CHECKOUT_SHA: ${{ inputs.capture-checkout-sha }}
+          CAPTURE_HEAD_SHA: ${{ inputs.capture-head-sha }}
+          REVIEW_STARTED_AT: ${{ inputs.capture-review-started-at }}
+        run: |
+          set -euo pipefail
+          assemble() {
+            python .guardrails/scripts/capture_ci_row.py \
+              --execution-root execution \
+              --log "$LOG" \
+              --repository "$REPO" \
+              --pull-request "$PR" \
+              --event-head-sha "$HEAD_SHA" \
+              --workflow-run-id "$GITHUB_RUN_ID" \
+              --execution-artifact "$ARTIFACT" \
+              --artifact-id "$ARTIFACT_ID" \
+              --verdict-source "$VERDICT_SOURCE" \
+              --streams-repository "$STREAMS_REPOSITORY" \
+              --stream-commit "$STREAM_COMMIT" \
+              --inbox-root execution \
+              --prompt-sha256 "$PROMPT_SHA256" \
+              --routine-sha256 "$ROUTINE_SHA256" \
+              --routine-sha "$ROUTINE_SHA" \
+              --agents-md-sha256 "$AGENTS_MD_SHA256" \
+              --system-prompt-sha256 "$SYSTEM_PROMPT_SHA256" \
+              --tool-surface "$TOOL_SURFACE" \
+              --bundle-version "$BUNDLE_VERSION" \
+              --checkout-sha "$CHECKOUT_SHA" \
+              --head-sha "$CAPTURE_HEAD_SHA" \
+              --review-started-at "$REVIEW_STARTED_AT" \
+              --row row.json \
+              --commit-message capture-commit-message.txt \
+              --pull-request-body capture-pull-request-body.md \
+              --issue-body capture-issue-body.md \
+              --out capture-decision.json
+          }
+          # THE ROW IS DERIVED AGAINST THE BRANCH AS IT IS, EVERY ATTEMPT. The day's branch is
+          # shared: one branch per repository per day collects that day's rows, and a branch created
+          # afresh on the second run of the day would open a second pull request for the same batch.
+          # A push that loses the race is therefore answered by fetching the branch, discarding this
+          # attempt and assembling again onto it, so that `write_row`'s two answers — identical
+          # bytes are a skip, different bytes under one name are refused — are decided against what
+          # the branch actually holds rather than against what it held when this job started.
+          pushed=no
+          for _attempt in 1 2 3; do
+            git -C execution fetch --quiet origin "$BRANCH" || true
+            if git -C execution rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
+              git -C execution checkout --quiet -B "$BRANCH" "origin/$BRANCH"
+            else
+              git -C execution checkout --quiet -B "$BRANCH" origin/main
+            fi
+            git -C execution reset --quiet --hard HEAD
+            git -C execution clean --quiet -fd
+            assemble
+            # Anything but a new row has nothing of this run's to push: a refusal is reported as an
+            # artefact and an issue, and a skip is this run captured twice.
+            if [ "$(jq -r '.state // ""' capture-decision.json)" != "new" ]; then pushed=yes; break; fi
+            git -C execution add -A
+            if [ -z "$(git -C execution status --porcelain)" ]; then pushed=yes; break; fi
+            git -C execution -c user.name="exeris-inbox[bot]" -c "user.email=$EMAIL" \
+                commit -q -F "$GITHUB_WORKSPACE/capture-commit-message.txt"
+            if git -C execution push --quiet origin "HEAD:refs/heads/$BRANCH"; then
+              pushed=yes; break
+            fi
+          done
+          # RED, for the reason the stream's push is red: the stream is committed by now, so a row
+          # that did not reach the branch is something this job had to write and did not.
+          if [ "$pushed" != "yes" ]; then
+            echo "::error::capture: the day's branch could not be pushed, so the run's row is not in the inbox"
+            exit 1
+          fi
+          {
+            echo "state=$(jq -r '.state // ""' capture-decision.json)"
+            echo "reason=$(jq -r '.reason // ""' capture-decision.json)"
+          } >> "$GITHUB_OUTPUT"
+      # A REFUSED ROW IS KEPT AND REPORTED, NEVER REPAIRED HERE (§C.15). The artefact is the row as
+      # it was assembled, so the defect can be read rather than guessed at from a message.
+      - name: Keep the refused row where it can be read
+        if: ${{ steps.assemble.outputs.state == 'refused' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: l2-row-${{ github.event.pull_request.number }}-invalid
+          path: row.json
+          if-no-files-found: ignore
+          retention-days: 90
+      # The voice, not the pen: an issue is speech, and the App that writes rows holds no
+      # `issues` scope at all (§A.1). Minted again here, with the one scope this step spends.
+      - name: Mint the exeris-bot token
+        id: voice
+        if: ${{ steps.assemble.outputs.state == 'refused' && steps.identity.outputs.voice == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.exeris_bot_app_id }}
+          private-key: ${{ secrets.exeris_bot_private_key }}
+          permission-issues: write
+      - name: File one issue in the source repository, keyed so a re-run files none
+        if: ${{ steps.voice.outputs.token != '' }}
+        env:
+          GH_TOKEN: ${{ steps.voice.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          key=$(jq -r .issue_key capture-decision.json)
+          # The open issues, read and filtered here rather than through the search index: search is
+          # eventually consistent, and an idempotence test that has not indexed yet files a second
+          # issue every run. `pull_request == null` because the issues endpoint lists both.
+          open=$(gh api "repos/$REPO/issues?state=open&per_page=100" --paginate \
+                 | jq -s 'add // []' \
+                 | jq --arg k "$key" '[.[] | select(.pull_request == null)
+                                          | select((.body // "") | contains($k))] | length')
+          if [ "$open" -gt 0 ]; then
+            echo "::notice::capture: an open issue already carries the key $key, so none was filed"
+            exit 0
+          fi
+          gh api -X POST "repos/$REPO/issues" \
+            -f "title=capture: the run record of pull request #${PR} was refused by the inbox's rules" \
+            -F body=@capture-issue-body.md \
+            -f "labels[]=triage" --silent
+      # The rows reach the inbox as a pull request, never as a push (§C.15): the inbox validator is
+      # the required check on it, and merge is a person's. The rows themselves are already on the
+      # branch — the step above pushes them, because a push that loses a race has to be re-derived
+      # against the branch it lost to and only the step that assembles can do that.
+      - name: Open the inbox pull request for the day's rows
+        if: ${{ steps.assemble.outputs.state == 'new' || steps.assemble.outputs.state == 'skip' }}
+        env:
+          GH_TOKEN: ${{ steps.inbox.outputs.token }}
+          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
+          BRANCH: ${{ steps.decide.outputs.branch }}
+        run: |
+          set -euo pipefail
+          # One pull request per repository per day: the branch already carries the day's rows, so a
+          # second pull request for the same branch would be two proposals of one batch.
+          open=$(gh api "repos/$EXECUTION_REPOSITORY/pulls?head=exeris-systems:$BRANCH&state=open" \
+                 --jq 'length')
+          if [ "$open" -gt 0 ]; then
+            echo "::notice::capture: the inbox pull request for $BRANCH is already open"
+            exit 0
+          fi
+          # And a branch with nothing on it is not a batch. A re-run of a capture whose row was
+          # already merged has a branch level with the base, and asking for a pull request over no
+          # commits is an error about the request rather than about the rows.
+          git -C execution fetch --quiet origin main
+          if [ "$(git -C execution rev-list --count origin/main..HEAD)" -eq 0 ]; then
+            echo "::notice::capture: $BRANCH holds no rows the base does not, so no pull request was opened"
+            exit 0
+          fi
+          gh api -X POST "repos/$EXECUTION_REPOSITORY/pulls" \
+            -f "title=$(head -1 "$GITHUB_WORKSPACE/capture-commit-message.txt")" \
+            -f "head=$BRANCH" \
+            -f base=main \
+            -F body=@"$GITHUB_WORKSPACE/capture-pull-request-body.md" --silent
+      - name: What this capture did
+        if: ${{ !cancelled() }}
+        env:
+          CONCLUSION: ${{ needs.verdict.outputs.conclusion }}
+        run: |
+          set -euo pipefail
+          # The verdict's own conclusion, recorded beside the row and selected on nowhere: a capture
+          # that wrote rows only for green reviews would be a dataset of the runs that went well.
+          echo "- the publication concluded **${CONCLUSION:-(nothing)}**" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f capture-decision.json ]; then
+            jq -r '"- row: **" + (.state // "none") + "**"
+                   + (if .reason then " — `" + .reason + "`" else "" end)' \
+               capture-decision.json >> "$GITHUB_STEP_SUMMARY"
+          fi

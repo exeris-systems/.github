@@ -1,0 +1,15 @@
+{
+  "repos/exeris-systems/exeris-ai-execution": {
+    "full_name": "exeris-systems/exeris-ai-execution",
+    "private": false,
+    "visibility": "public"
+  },
+  "repos/exeris-systems/exeris-ai-execution/pulls/7": {
+    "number": 7,
+    "user": {
+      "login": "a-person",
+      "type": "User"
+    },
+    "body": "Motivation: placeholder\n\nModification: placeholder\n\nResult: placeholder\n\n## Classification\n\nScope class: docs-only\nWall impact: none\nGenerated files touched: no\nTCK obligation: n/a\nCompatibility impact: none\nCross-repo impact: none\nADRs referenced: none\nEvidence state: n/a\n\n## Verification\n\nplaceholder\n"
+  }
+}

@@ -2,3 +2,13 @@
 # Python bytecode from running the guardrail scripts locally
 __pycache__/
 *.pyc
+
+# What the capture step writes beside the checkout it reads: the decision, the row, and the texts
+# a commit, a pull request and an issue are made from. They are a run's output, not the
+# repository's, and a stray `.md` among them is a docs-lint failure about a file nobody meant to
+# keep.
+capture-decision.json
+capture-commit-message.txt
+capture-pull-request-body.md
+capture-issue-body.md
+row.json

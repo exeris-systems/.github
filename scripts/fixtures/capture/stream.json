@@ -1,0 +1,39 @@
+[
+  {
+    "type": "system",
+    "subtype": "init",
+    "model": "claude-sonnet-5",
+    "claude_code_version": "2.1.274",
+    "permissionMode": "default",
+    "apiKeySource": "none"
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-5",
+      "content": [
+        {"type": "text", "text": "placeholder assistant text"},
+        {"type": "tool_use", "name": "Read", "input": {"file_path": "placeholder"}}
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "message": {"content": [{"type": "tool_result", "content": "placeholder tool result"}]}
+  },
+  {
+    "type": "result",
+    "subtype": "success",
+    "num_turns": 3,
+    "duration_ms": 123456,
+    "total_cost_usd": 1.56,
+    "permission_denials": [],
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "cache_read_input_tokens": 30,
+      "cache_creation_input_tokens": 40
+    },
+    "result": "placeholder final message"
+  }
+]

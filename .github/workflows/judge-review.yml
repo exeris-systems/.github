@@ -1,0 +1,342 @@
+# Reusable: one judgement record per L2 review run, written when the pull request closes —
+# ADR-087 §C.16, ADR-086 §C.12a and §D.15.
+#
+# THE SECOND RECORD, AND WHY IT IS A SECOND ONE. A review-domain run record is complete when the
+# review ends and its outcome is `UNKNOWN`: everything the row needs exists at that moment, and the
+# oracle has not judged yet. `review-disposition` judges afterwards, from what the human did with
+# the review. Writing that back into the row would be a rewrite of a record the inbox appends to and
+# never rewrites; writing the row only at merge would need the execution artefact to outlive the
+# pull request. Neither is required — the verdict arrives as its own record, keyed by the run's id.
+#
+# WHAT `rest-v1` MEANS. ADR-086 §D.15 defines a finding as *addressed* when its file changed after
+# the review AND its thread was resolved. The host's REST API exposes no thread resolution, and the
+# publication this oracle reads is one comment carrying no threads, so that second half is EMPTY
+# under this version. The oracle applies what it can read and the version is what says which
+# definition was in force; rows either side of an implementation that can read resolution are not
+# one population.
+#
+# IT IS NOT A GATE AND IT REPORTS NOTHING TO THE PULL REQUEST. The pull request is closed: nothing
+# this job concludes can change what merged. So its colour means one thing — green where there was
+# nothing to write (no stream, no identity to write under, a repository whose inbox does not exist)
+# and red only where there WAS something to write and the write did not happen. A record the inbox's
+# own rules refuse is neither: it is reported, as an artefact and as one issue in the source
+# repository, which is where a producer defect is fixed.
+#
+# THE ACTIONS READ IS THE ONE PERMISSION THIS ADDS TO A CALLER. The commit a review read is the run's
+# `head_sha`, and the Actions API is the only place the platform states it independently of the row
+# this judgement is about to be checked against. A producer that took it from that row would agree
+# with the row however wrong the row was, which is the one thing a check must not do.
+name: judge-review
+on:
+  workflow_call:
+    inputs:
+      # The same two repositories the capture job names, with the same defaults and for the same
+      # reason: the tooling a record is assembled by and the inbox it is proposed to cannot be two
+      # different versions of one contract.
+      execution-repository:
+        type: string
+        default: "exeris-systems/exeris-ai-execution"
+        description: >-
+          Where the records land, and where the row contract and its derivations are read from. The
+          run this judges is looked for here, because a judgement whose run is not in the same inbox
+          is refused by the validator's rule 5.
+      streams-repository:
+        type: string
+        default: "exeris-systems/exeris-ai-execution-streams"
+        description: >-
+          Where the execution logs are kept as content. It is private and the inbox is public
+          because a stream carries the run's own text and a record carries only what was made of it.
+    secrets:
+      # OPTIONAL, for the two reasons `publish-verdict.yml` states: a caller that passes secrets by
+      # name would have its whole file rejected at parse time by a new required one, and a producer
+      # with no identity of its own writes nothing rather than writing under somebody else's.
+      #
+      # The pen writes the record; the voice files the issue when one is not filed. They are two
+      # Apps because their write scopes are two (ADR-087 §A.1) — the pen may write to the data
+      # repositories, the voice may talk, and neither can do the other's job.
+      exeris_inbox_app_id: { required: false }
+      exeris_inbox_private_key: { required: false }
+      exeris_bot_app_id: { required: false }
+      exeris_bot_private_key: { required: false }
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+jobs:
+  judge:
+    # The event this record is about. A reusable workflow reads the CALLER's event, so a caller that
+    # wires this job under another trigger gets a job that says so and does nothing, rather than a
+    # judgement dated by an instant no pull request closed at.
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+    runs-on: ubuntu-latest
+    # THE SAME GROUP AS THE CAPTURE JOB'S, because they write to the same branch: one branch per
+    # repository per UTC day collects that day's rows and that day's judgements, and two jobs
+    # appending to it at once race on the same ref. `cancel-in-progress: false` serialises them; it
+    # does not promise that every member survives, so each write below is made safe on its own by
+    # replaying it against what is actually on the remote.
+    concurrency:
+      group: inbox-${{ github.repository }}
+      cancel-in-progress: false
+    # READ, AND THE ONE READ A REVIEW DOES NOT ALREADY GRANT. Three reads are made with this token —
+    # the repository, for the inbox its records belong to; the pull request, for the instant it
+    # closed and the head its history ends at; and the run that produced each stream, for the commit
+    # the review read. Every write below — the records, the inbox pull request, the issue — goes
+    # through an App installation token minted for the step that makes it.
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    steps:
+      # FIRST, BECAUSE IT READS NOTHING BUT `secrets` AND `inputs`. This job ships live in every
+      # adopting repository and runs on every close, while capture — which is what gives it
+      # anything to write — is opt-in. With no identity there is nothing to check out, nothing to
+      # install and nothing to do, so everything below that costs anything is gated on this answer.
+      - name: Is there an identity to write with?
+        id: identity
+        env:
+          APP_ID: ${{ secrets.exeris_inbox_app_id }}
+          # The voice's, asked here because the `secrets` context is not readable from a step's
+          # `if:` — the publishing half asks its own question in a step for the same reason.
+          VOICE_APP_ID: ${{ secrets.exeris_bot_app_id }}
+          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
+          STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VOICE_APP_ID" ]; then echo "voice=true" >> "$GITHUB_OUTPUT";
+          else echo "voice=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -z "$APP_ID" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::judge: no exeris_inbox_app_id was passed, so no judgement is written. Pass exeris_inbox_app_id and exeris_inbox_private_key from the caller to turn this on; a producer with no identity of its own writes nothing rather than writing under another."
+            exit 0
+          fi
+          echo "have=true" >> "$GITHUB_OUTPUT"
+          # Minted for BOTH data repositories: the streams repository is private and the index and
+          # the streams are read from it, and the records are written to the inbox. One identity
+          # reads what it judges and writes the judgement.
+          {
+            echo "repositories<<EOF"
+            echo "${EXECUTION_REPOSITORY##*/}"
+            echo "${STREAMS_REPOSITORY##*/}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      # The assembly comes from the organisation's default branch, never from the closed pull
+      # request's tree: it decides what a record about this pull request says.
+      - name: Fetch the contract (exeris-systems/.github@main)
+        if: ${{ steps.identity.outputs.have == 'true' }}
+        uses: actions/checkout@v7
+        with: { repository: exeris-systems/.github, ref: main, path: .guardrails }
+      - if: ${{ steps.identity.outputs.have == 'true' }}
+        uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
+      # `referencing` beside `jsonschema` because the judgement schema states most of its fields as
+      # `$ref`s into the run record's — one home per shape — and a validator built over the file
+      # alone cannot follow a relative reference in a schema carrying no `$id`.
+      - if: ${{ steps.identity.outputs.have == 'true' }}
+        run: pip install --quiet jsonschema referencing
+      - name: Mint the exeris-inbox token
+        id: inbox
+        if: ${{ steps.identity.outputs.have == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.exeris_inbox_app_id }}
+          private-key: ${{ secrets.exeris_inbox_private_key }}
+          owner: exeris-systems
+          repositories: ${{ steps.identity.outputs.repositories }}
+          # The two scopes this job spends and nothing else.
+          permission-contents: write
+          permission-pull-requests: write
+      # `fetch-depth: 0`, because this checkout is pushed from: a day's branch is fetched onto it
+      # and a commit is pushed back, and a shallow history is refused by the receiving end.
+      - name: The record contract and its derivations
+        if: ${{ steps.inbox.outputs.token != '' }}
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.execution-repository }}
+          ref: main
+          path: execution
+          fetch-depth: 0
+          token: ${{ steps.inbox.outputs.token }}
+      - name: Judge every run that reviewed this pull request
+        id: judge
+        if: ${{ steps.inbox.outputs.token != '' }}
+        env:
+          # The job's own token, which holds the three read scopes above and nothing more. It reads
+          # the reviewed repository; the two DATA repositories are read under the App's token, which
+          # the script is handed through the environment rather than on a command line.
+          GH_TOKEN: ${{ github.token }}
+          EXERIS_INBOX_TOKEN: ${{ steps.inbox.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
+          STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
+        run: |
+          set -euo pipefail
+          judge() {
+            python .guardrails/scripts/judge_review.py \
+              --execution-root execution \
+              --repository "$REPO" \
+              --pull-request "$PR" \
+              --execution-repository "$EXECUTION_REPOSITORY" \
+              --streams-repository "$STREAMS_REPOSITORY" \
+              --unresolved-dir "$GITHUB_WORKSPACE/unresolved-judgements" \
+              --commit-message "$GITHUB_WORKSPACE/judge-commit-message.txt" \
+              --pull-request-body "$GITHUB_WORKSPACE/judge-pull-request-body.md" \
+              --issue-body "$GITHUB_WORKSPACE/judge-issue-body.md" \
+              --out judge-decision.json "$@"
+          }
+          # PHASE ONE: what the records would be, with nothing written. The branch a record lands on
+          # is decided by the instant the pull request closed, which the script reads from the
+          # platform — so it is asked for before the checkout is moved anywhere, and a pull request
+          # that yields no record moves no checkout at all.
+          judge
+          branch=$(jq -r '.branch // ""' judge-decision.json)
+          reason=$(jq -r '.reason // ""' judge-decision.json)
+          # How many records there are to file. A pull request whose every record was kept back —
+          # its run row is not in the inbox — moves no checkout and touches no branch: the artefact
+          # and the issue are the whole of what it produces.
+          filing=$(jq -r '[.judgements[]? | select(.state == "assembled")] | length' \
+                   judge-decision.json)
+          if [ -n "$reason" ]; then
+            echo "::notice::judge: no judgement — $reason: $(jq -r '.detail' judge-decision.json)"
+          fi
+          # THE RECORDS ARE DERIVED AGAINST THE BRANCH AS IT IS, EVERY ATTEMPT. The day's branch is
+          # shared with the capture job and with every other run of this one, so a push that loses
+          # the race is answered by fetching the branch, discarding this attempt and assembling
+          # again onto it — which is what lets `write_judgement`'s two answers, identical bytes are
+          # a skip and different bytes under one name are refused, be decided against what the
+          # branch actually holds rather than against what it held when this job started.
+          pushed=yes
+          if [ -n "$branch" ] && [ "$filing" -gt 0 ]; then
+            pushed=no
+            # The App's own numeric id, which is the address the host attributes a commit by this
+            # identity to. Asked of the host rather than written down: an id is the host's to
+            # assign, and a hard-coded one attributes the commit to nobody the moment it is wrong.
+            uid=$(GH_TOKEN="$EXERIS_INBOX_TOKEN" gh api /users/exeris-inbox%5Bbot%5D --jq .id)
+            for _attempt in 1 2 3; do
+              git -C execution fetch --quiet origin "$branch" || true
+              if git -C execution rev-parse --verify --quiet "origin/$branch" >/dev/null; then
+                git -C execution checkout --quiet -B "$branch" "origin/$branch"
+              else
+                git -C execution checkout --quiet -B "$branch" origin/main
+              fi
+              git -C execution reset --quiet --hard HEAD
+              git -C execution clean --quiet -fd
+              judge --inbox-root execution
+              # Anything but a new record has nothing of this run's to push: a record kept back is
+              # reported as an artefact and an issue, and a skip is this pull request judged twice.
+              if [ "$(jq -r '.written' judge-decision.json)" -eq 0 ]; then pushed=yes; break; fi
+              git -C execution add -A
+              if [ -z "$(git -C execution status --porcelain)" ]; then pushed=yes; break; fi
+              git -C execution -c user.name="exeris-inbox[bot]" \
+                  -c "user.email=${uid}+exeris-inbox[bot]@users.noreply.github.com" \
+                  commit -q -F "$GITHUB_WORKSPACE/judge-commit-message.txt"
+              if git -C execution push --quiet origin "HEAD:refs/heads/$branch"; then
+                pushed=yes; break
+              fi
+            done
+          fi
+          # RED, and deliberately: this job reports green whenever it had nothing to write, so a
+          # green here would be indistinguishable from a pull request nobody reviewed.
+          if [ "$pushed" != "yes" ]; then
+            echo "::error::judge: the day's branch could not be pushed, so the judgements of this pull request are not in the inbox"
+            exit 1
+          fi
+          {
+            echo "branch=$branch"
+            echo "written=$(jq -r '.written' judge-decision.json)"
+            echo "skipped=$(jq -r '.skipped' judge-decision.json)"
+            echo "kept-back=$(jq -r '.kept_back' judge-decision.json)"
+          } >> "$GITHUB_OUTPUT"
+      # A RECORD THAT WAS NOT FILED IS KEPT AND REPORTED, NEVER REPAIRED HERE (§C.15, §C.16). The
+      # artefact is the record as it was assembled, so the defect can be read rather than guessed at
+      # from a message.
+      - name: Keep the records that were not filed where they can be read
+        if: ${{ steps.judge.outputs.kept-back != '' && steps.judge.outputs.kept-back != '0' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: l2-judgement-${{ github.event.pull_request.number }}-unresolved
+          path: unresolved-judgements
+          if-no-files-found: ignore
+          retention-days: 90
+      # The voice, not the pen: an issue is speech, and the App that writes records holds no
+      # `issues` scope at all (§A.1). Minted here, with the one scope this step spends.
+      - name: Mint the exeris-bot token
+        id: voice
+        if: ${{ steps.judge.outputs.kept-back != '' && steps.judge.outputs.kept-back != '0'
+                && steps.identity.outputs.voice == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.exeris_bot_app_id }}
+          private-key: ${{ secrets.exeris_bot_private_key }}
+          permission-issues: write
+      - name: File one issue in the source repository, keyed so a re-run files none
+        if: ${{ steps.voice.outputs.token != '' }}
+        env:
+          GH_TOKEN: ${{ steps.voice.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          key=$(jq -r .issue_key judge-decision.json)
+          # The open issues, read and filtered here rather than through the search index: search is
+          # eventually consistent, and an idempotence test that has not indexed yet files a second
+          # issue every run. `pull_request == null` because the issues endpoint lists both.
+          open=$(gh api "repos/$REPO/issues?state=open&per_page=100" --paginate \
+                 | jq -s 'add // []' \
+                 | jq --arg k "$key" '[.[] | select(.pull_request == null)
+                                          | select((.body // "") | contains($k))] | length')
+          if [ "$open" -gt 0 ]; then
+            echo "::notice::judge: an open issue already carries the key $key, so none was filed"
+            exit 0
+          fi
+          gh api -X POST "repos/$REPO/issues" \
+            -f "title=judgement: the review runs of pull request #${PR} were judged and the records were not filed" \
+            -F body=@"$GITHUB_WORKSPACE/judge-issue-body.md" \
+            -f "labels[]=triage" --silent
+      # The records reach the inbox as a pull request, never as a push (§C.15): the inbox validator
+      # is the required check on it, and merge is a person's. The records themselves are already on
+      # the branch — the step above pushes them, because a push that loses a race has to be
+      # re-derived against the branch it lost to and only the step that assembles can do that.
+      - name: Open the inbox pull request for the day's records
+        if: ${{ (steps.judge.outputs.written != '' && steps.judge.outputs.written != '0')
+                || (steps.judge.outputs.skipped != '' && steps.judge.outputs.skipped != '0') }}
+        env:
+          GH_TOKEN: ${{ steps.inbox.outputs.token }}
+          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
+          BRANCH: ${{ steps.judge.outputs.branch }}
+        run: |
+          set -euo pipefail
+          # One pull request per repository per day, rows and judgements together: the branch
+          # already carries the day's records, so a second pull request for the same branch would be
+          # two proposals of one batch. Whichever producer opened it named it; both subjects are
+          # the same batch in the same grammar.
+          open=$(gh api "repos/$EXECUTION_REPOSITORY/pulls?head=exeris-systems:$BRANCH&state=open" \
+                 --jq 'length')
+          if [ "$open" -gt 0 ]; then
+            echo "::notice::judge: the inbox pull request for $BRANCH is already open"
+            exit 0
+          fi
+          # And a branch with nothing on it is not a batch. A re-run whose records were already
+          # merged has a branch level with the base, and asking for a pull request over no commits
+          # is an error about the request rather than about the records.
+          git -C execution fetch --quiet origin main
+          if [ "$(git -C execution rev-list --count origin/main..HEAD)" -eq 0 ]; then
+            echo "::notice::judge: $BRANCH holds no records the base does not, so no pull request was opened"
+            exit 0
+          fi
+          gh api -X POST "repos/$EXECUTION_REPOSITORY/pulls" \
+            -f "title=$(head -1 "$GITHUB_WORKSPACE/judge-commit-message.txt")" \
+            -f "head=$BRANCH" \
+            -f base=main \
+            -F body=@"$GITHUB_WORKSPACE/judge-pull-request-body.md" --silent
+      - name: What this judgement did
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          if [ -f judge-decision.json ]; then
+            jq -r '"- judgements: **" + (.written | tostring) + "** filed, **"
+                   + (.skipped | tostring) + "** already there, **"
+                   + (.kept_back | tostring) + "** kept back"
+                   + (if .reason then " — `" + .reason + "`" else "" end)' \
+               judge-decision.json >> "$GITHUB_STEP_SUMMARY"
+          fi

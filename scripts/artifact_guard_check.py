@@ -62,7 +62,13 @@ def main() -> int:
 
     # The other half of the same contract: a name the routine may leave empty must be consumed
     # behind a guard, or the empty string is passed to `download-artifact` as a name.
-    steps = (publish.get("jobs", {}).get("verdict", {}).get("steps") or [])
+    #
+    # EVERY JOB IN THE FILE, not the publishing one alone. A second job fetching the same artefact
+    # is a second place the guard has to hold, and a checker that read one job would answer "0
+    # problems" about a file it had covered half of.
+    steps = [step
+             for job in (publish.get("jobs") or {}).values()
+             for step in ((job or {}).get("steps") or [])]
     for key in names:
         ref = f"inputs.{key}"
         users = [s for s in steps if ref in flat(s.get("with") or {})]
