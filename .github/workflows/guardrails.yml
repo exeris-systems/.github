@@ -177,6 +177,14 @@ jobs:
       - name: The label map names only tags and labels that exist
         if: ${{ !cancelled() }}
         run: python scripts/label_map_check.py
+      # `pr_body_check.py` gates the `Owner:` line on who opened the pull request (ADR-085 §J.31,
+      # ai-provenance.md rule 3b), and that branch has no case behind it anywhere else: the
+      # reusable workflow that calls the checker hands it the real event payload, which this job
+      # never has. The suite drives `check()` directly with a body that already satisfies every
+      # other rule, so each case can only exercise the owner branch.
+      - name: The owner line is required of one author and forbidden to every other
+        if: ${{ !cancelled() }}
+        run: python scripts/pr_body_check_suite.py
       # The publish step of ADR-087 §B.5-B.10 decides whether a pull request in any repository may
       # merge, and nothing in this repository's CI can run it end to end: it needs a model, a token
       # and a pull request in a caller. What it can run is every rule the step applies, which is
