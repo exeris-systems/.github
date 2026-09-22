@@ -28,6 +28,11 @@ import yaml
 BASE_COPY = "repo-routine.base.md"
 RESTORED = "restored-paths.txt"
 PROTECTED = ".claude/agents/"
+# The step that renders the prompt, by id. The prompt is hashed as rendered, so it is written once
+# into a step rather than inline on the action; what a reviewer is handed therefore lives in a
+# `run:` and no longer only in a `with:`. A rule that read one place would pass on a prompt that
+# says nothing it requires.
+PROMPT_STEP = "prompt"
 
 
 def main() -> int:
@@ -37,10 +42,14 @@ def main() -> int:
     with open(os.path.join(root, ".github", "workflows", "docs-review.yml"), encoding="utf-8") as fh:
         routine = yaml.safe_load(fh)
     steps = (routine.get("jobs", {}).get("produce", {}).get("steps") or [])
+    renders = [s for s in steps if str(s.get("id") or "") == PROMPT_STEP]
     # Line continuations joined first: a command split over two lines is one command, and a rule
-    # that matches per line would accept a mention where it needs a write.
-    shell = re.sub(r"\\\n\s*", " ", "\n".join(str(s.get("run") or "") for s in steps))
-    prompt = "\n".join(str((s.get("with") or {}).get("prompt") or "") for s in steps)
+    # that matches per line would accept a mention where it needs a write. The rendering step is
+    # left out: its `run:` is the prompt, not a command the job performs on the checkout.
+    shell = re.sub(r"\\\n\s*", " ",
+                   "\n".join(str(s.get("run") or "") for s in steps if s not in renders))
+    prompt = "\n".join([str((s.get("with") or {}).get("prompt") or "") for s in steps]
+                       + [str(s.get("run") or "") for s in renders])
     bad: list[str] = []
 
     def rule(ok: bool, said: str) -> None:

@@ -125,7 +125,8 @@ jobs:
         python3 scripts/label_map_check.py;
         python3 scripts/caller_permissions_check.py;
         python3 scripts/comment_history_suite.py;
-        python3 scripts/gate_vocabulary_check_suite.py
+        python3 scripts/gate_vocabulary_check_suite.py;
+        python3 scripts/review_surface_suite.py
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
@@ -257,3 +258,16 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python scripts/review_inputs_check.py --root .
+      # A run record states which instructions the repository put in front of the model, as one hash
+      # over the prompt, the routine and the agent file. The event stream carries none of the three,
+      # so a row either takes the hash from the job that rendered them or has it reconstructed from
+      # what the host still holds — and the two are worth comparing only while they canonicalise
+      # alike. These cases pin this producer to the digests the other one pins, and pin what a job
+      # output may carry: hashes and commits, never a line of the text that was hashed.
+      #
+      # The producer here canonicalises in its own copy of the derivation, so nothing else holds it
+      # to the other one. Two copies of one canonicalisation agree until one of them is edited, and
+      # this is where that edit is caught.
+      - name: The produce job exports the components it hashed
+        if: ${{ !cancelled() }}
+        run: python scripts/review_surface_suite.py
