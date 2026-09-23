@@ -27,7 +27,7 @@ Usage:
   publish_verdict.py plan  --schema PATH --labels-map PATH --out plan.json
                            [--verdict PATH] [--comments PATH] [--produce-outcome OUTCOME]
                            [--mandatory a,b,c] [--runner NAME] [--routine FILE] [--routine-sha SHA]
-                           [--execution-log PATH] [--current-labels a,b]
+                           [--execution-log PATH] [--current-labels a,b] [--reviews PATH]
   publish_verdict.py gate  --plan plan.json
 """
 from __future__ import annotations
@@ -66,7 +66,10 @@ ABOUT_THE_PULL_REQUEST = frozenset({"fork", "draft"})
 # `draft-or-bot` is deliberately in NEITHER set. A caller pinned before the split still sends it,
 # and an unrecognised kind hands the colour to the standing verdict — which is the safe half of
 # what it used to mean, and red where it used to be wrong.
-SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event", "bot-authored"})
+# `review-event` is a review submitted or dismissed. It changes no diff and never starts the model,
+# so what it can change is only whether a person has reviewed this head, and the standing branch
+# is where that question is asked.
+SAYS_NOTHING_ABOUT_THE_DIFF = frozenset({"not-ready", "bot-event", "bot-authored", "review-event"})
 # THE TWO SETS ARE CONSULTED IN ORDER, not independently: `SAYS_NOTHING_ABOUT_THE_DIFF` is asked
 # first and returns, so a kind in both would have its membership of the second silently dead. Found
 # by a mutation that added `bot-authored` back to the green set and failed nothing at all — the
@@ -741,8 +744,105 @@ def blocking_findings(verdict: dict) -> list[str]:
             for f in (verdict.get("findings") or []) if f.get("blocking") is True]
 
 
-def human_review(args) -> tuple[str, str, str] | None:
-    """A standing human review that still covers this head, or None.
+# How a standing human review was made, carried with the record so that what the pull request is
+# told names the gesture the person actually made.
+BY_LABEL = "label"
+BY_APPROVAL = "approval"
+
+# What takes a person's approval back, as GitHub counts one. A later `CHANGES_REQUESTED` from the
+# same reviewer replaces it, and `DISMISSED` is the approval itself withdrawn. A later `COMMENTED`
+# review is NOT here: GitHub keeps an approval standing through a comment from the person who gave
+# it, and a gate that dropped it there would be red on a pull request GitHub reports as approved.
+WITHDRAWS_APPROVAL = frozenset({"CHANGES_REQUESTED", "DISMISSED"})
+
+
+def reviews(path: str) -> list[dict]:
+    """The pull request's reviews as the API lists them, or none at all.
+
+    A file that is missing or does not parse is NO APPROVALS. An approval can only add a green, so
+    the one reading of a failed fetch that cannot green anything is that nobody approved.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, TypeError, ValueError):
+        return []
+    return [r for r in (payload if isinstance(payload, list) else []) if isinstance(r, dict)]
+
+
+def standing_approvals(path: str, head: str) -> list[tuple[str, str, str, str]]:
+    """Every reviewer whose LATEST word is an approval of this head, as `(login, type, sha, when)`.
+
+    Latest per reviewer, because an approval is a state a person is in rather than an event: one
+    they have since withdrawn is not standing, whatever it said when it was given. On this head and
+    nothing else, because an approval names the commit it was given on and a push leaves it behind,
+    exactly as a push leaves a verdict behind. An approval with no time on it cannot be ordered
+    against a block, so it is not one this gate can weigh.
+    """
+    latest: dict[str, tuple[str, str, str, str]] = {}
+    for r in sorted(reviews(path), key=lambda r: str(r.get("submitted_at") or "")):
+        user = r.get("user") if isinstance(r.get("user"), dict) else {}
+        row = (str(user.get("login") or ""), str(user.get("type") or ""),
+               str(r.get("commit_id") or ""), str(r.get("submitted_at") or ""))
+        if r.get("state") == "APPROVED":
+            latest[row[0]] = row
+        elif r.get("state") in WITHDRAWS_APPROVAL:
+            latest.pop(row[0], None)
+    return [row for row in latest.values() if head and row[2] == head and row[3]]
+
+
+def person_approval(args, dump: str, blocked_at: str | None) -> tuple[str, str, str, str] | None:
+    """The newest standing approval of this head BY A PERSON, as a human review record, or None.
+
+    The same fact `l2-human-reviewed` records, reached through the gesture GitHub already asks of a
+    reviewer, so a person reviewing a pull request they did not open makes one gesture for one fact.
+    The label stays the only door on a person's OWN pull request, which GitHub will not let them
+    approve.
+
+    A `Bot` principal's approval is never one: the identity that opens a pull request cannot be the
+    one that says a person read it. And over a block that stands against this head, an approval
+    counts only once the same person has said something after the block — the condition the label
+    meets before its record is written. The review's own text counts, because the comment dump
+    carries every review's body.
+    """
+    found = None
+    for login, kind, sha, when in standing_approvals(getattr(args, "reviews", ""),
+                                                     args.head_sha or ""):
+        if not human_principal(login, kind):
+            continue
+        if blocked_at and not reason_after(dump, login, blocked_at):
+            continue
+        if found is None or when > found[2]:
+            found = (login, sha, when, BY_APPROVAL)
+    return found
+
+
+def machine_approvals(args) -> list[str]:
+    """The logins that approved this head and are not people, when nobody else has.
+
+    Never counted, and named so the red says why: an approval that is visibly on the pull request
+    and silently ignored reads as a gate that is broken rather than one that refused.
+    """
+    rows = standing_approvals(getattr(args, "reviews", ""), args.head_sha or "")
+    if any(human_principal(login, kind) for login, kind, _, _ in rows):
+        return []
+    return [login for login, _, _, _ in rows]
+
+
+def recorded_override(dump: str, bot_login: str, head: str) -> tuple[str, str, str, str] | None:
+    """The bot's record of `l2-human-reviewed`, when it covers this head."""
+    standing = standing_override(dump, bot_login)
+    if standing and head and standing[1][:7] == head[:7]:
+        return (*standing, BY_LABEL)
+    return None
+
+
+def human_review(args) -> tuple[str, str, str, str] | None:
+    """A standing human review that still covers this head, as `(login, sha, when, how)`, or None.
+
+    Two gestures make one: the bot's record of `l2-human-reviewed`, and an approving review by a
+    person on this head. Both are read here so that every branch asking "has a person reviewed
+    this?" gets the same answer from one place.
 
     NOT scoped to a workflow change. It was, and that was half a rule: the branch that RECORDS an
     override was made universal while this one — the half every later run reads — still refused
@@ -752,25 +852,34 @@ def human_review(args) -> tuple[str, str, str] | None:
     function, which refused the record written a moment earlier. The check went green and back to
     red with nothing pushed.
     """
-    if not (args.comments and os.path.exists(args.comments)):
+    dump = ""
+    if args.comments and os.path.exists(args.comments):
+        with open(args.comments, encoding="utf-8") as fh:
+            dump = fh.read()
+    head = args.head_sha or ""
+    if not head:
         return None
-    with open(args.comments, encoding="utf-8") as fh:
-        dump = fh.read()
-    standing = standing_override(dump, args.bot_login)
-    head = (args.head_sha or "")[:7]
-    if not (standing and head and standing[1][:7] == head):
-        return None
-    # A BLOCK THAT ARRIVED AFTER THE RECORD IS NOT ANSWERED BY IT. The condition belongs to the
-    # moment the override was made — the branch that records one refuses to green a standing block
-    # the person has not answered — and re-deriving it here would ask the same question twice and
-    # risk two answers. What this does ask is whether a block has landed SINCE, which the record
-    # cannot have answered because it did not exist yet. Re-reviews on one commit are ordinary, so
-    # this is not a hypothetical.
-    blocked_at = blocking_standing(dump, args.expect_agent or "unknown", args.bot_login,
-                                   args.head_sha or "")
-    if blocked_at and standing[2] and blocked_at > standing[2]:
-        return None
-    return standing
+    blocked_at = blocking_standing(dump, args.expect_agent or "unknown", args.bot_login, head)
+    for found in (recorded_override(dump, args.bot_login, head),
+                  person_approval(args, dump, blocked_at)):
+        # A BLOCK THAT ARRIVED AFTER THE RECORD IS NOT ANSWERED BY IT. The condition belongs to the
+        # moment the override was made — the branch that records one refuses to green a standing
+        # block the person has not answered — and re-deriving it here would ask the same question
+        # twice and risk two answers. What this does ask is whether a block has landed SINCE, which
+        # the record cannot have answered because it did not exist yet. Re-reviews on one commit
+        # are ordinary, so this is not a hypothetical. An approval is held to the same rule.
+        if found and not (blocked_at and found[2] and blocked_at > found[2]):
+            return found
+    return None
+
+
+def human_said(found: tuple[str, str, str, str]) -> tuple[str, str]:
+    """A standing human review named for the log and for the notice, by the gesture that made it."""
+    login, sha = found[0], found[1][:7]
+    if found[3] == BY_APPROVAL:
+        return f"approved by {login} on {sha}", f"Approved by `{plain(login)}` on `{sha}`."
+    return (f"{login} reviewed this by hand, recorded against {sha}",
+            f"`{plain(login)}` reviewed this change by hand, recorded against `{sha}`.")
 
 
 def restate_notice(plan: dict, args, said: str) -> None:
@@ -825,13 +934,12 @@ def standing_decision(plan: dict, args) -> None:
     head = (args.head_sha or "")[:7]
     by_hand = human_review(args)
     if by_hand:
+        logged, told = human_said(by_hand)
         plan.update(conclusion="green",
-                    reason=(f"{by_hand[0]} reviewed this by hand, recorded against "
-                            f"{by_hand[1][:7]} — a human review outranks this routine's"))
+                    reason=f"{logged} — a human review outranks this routine's")
         # The same restatement: a person reviewing by hand is the current state of this pull
         # request, and the standing notice has no way to learn that on its own.
-        restate_notice(plan, args, f"`{plain(by_hand[0])}` reviewed this change by hand, "
-                                   f"recorded against `{by_hand[1][:7]}`.")
+        restate_notice(plan, args, told)
     elif standing is None:
         plan["reason"] = ("no review has run on this pull request yet — apply the review label "
                           "when it is ready to look at")
@@ -855,6 +963,10 @@ def standing_decision(plan: dict, args) -> None:
     else:
         plan.update(conclusion="green",
                     reason=f"the standing verdict is {standing[0]} and still covers {head}")
+    refused = machine_approvals(args) if plan["conclusion"] != "green" else []
+    if refused:
+        plan["reason"] += (f"; the approval of {head} is by {', '.join(refused)}, which is not a "
+                           f"person, and only a person's approval is a human review")
 
 
 def standing_gate(plan: dict, args) -> int:
@@ -1169,13 +1281,16 @@ def cmd_plan(args) -> int:
     plan["labels_remove"] = remove
     plan["comment"] = compose_comment(verdict, args, unrun, source, args.pin_problem)
     decision = verdict.get("decision")
+    # A BLOCKED verdict published by THIS run is newer than any approval already on the pull
+    # request, so an approval does not answer it — `human_review`'s rule for a block that landed
+    # after the record, applied to the block this run is about to publish.
+    by_hand = human_review(args) if decision == "BLOCKED" else None
     if args.pin_problem:
         # §B.6a's mismatch is about this verdict — it was written against one base and validated
         # against another — so it belongs in this verdict's comment and this verdict's conclusion.
         # A second red step beside the gate would be a red the author cannot tell from BLOCKED.
         plan["reason"] = f"the reviewed repository's bundle pin is not this one's: {args.pin_problem}"
-    elif decision == "BLOCKED" and human_review(args):
-        by_hand = human_review(args)
+    elif by_hand and by_hand[3] == BY_LABEL:
         plan["conclusion"] = "green"
         plan["reason"] = (f"the verdict is BLOCKED and {by_hand[0]} reviewed this by hand against "
                           f"{by_hand[1][:7]} — a human review outranks this routine's")
@@ -1259,7 +1374,7 @@ def main() -> int:
     p.add_argument("--pin-problem", default="",
                    help="what caller_bundle_check.py said, when it said anything (ADR-087 §B.6a)")
     p.add_argument("--skip-kind", default="",
-                   help="why the producing job did not run. `fork` and `draft` are about the pull request and are a green on their own; `bot-authored`, `not-ready`, `bot-event` and anything this file does not recognise — `draft-or-bot` from a caller pinned before the split included — hand the colour to the standing verdict")
+                   help="why the producing job did not run. `fork` and `draft` are about the pull request and are a green on their own; `bot-authored`, `not-ready`, `bot-event`, `review-event` and anything this file does not recognise — `draft-or-bot` from a caller pinned before the split included — hand the colour to the standing verdict")
     p.add_argument("--head-sha", default="",
                    help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
     p.add_argument("--review-label", default="needs-l2-review",
@@ -1276,6 +1391,9 @@ def main() -> int:
     p.add_argument("--workflow-touching", default="false",
                    help="whether this pull request changes a file under .github/workflows/, which "
                         "is the only place the override applies")
+    p.add_argument("--reviews", default="",
+                   help="the pull request's reviews as `pulls/N/reviews` lists them. An approval of "
+                        "the head by a person is a human review; missing or unreadable is none")
     p.add_argument("--bot-login", default="exeris-bot[bot]",
                    help="the only author whose published markers the arbiter reads")
     p.set_defaults(func=cmd_plan)

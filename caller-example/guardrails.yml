@@ -12,6 +12,13 @@ on:
     # pull request whose review is over: its own trigger admits any event while the review label is
     # on the pull request, and closing one that still carries the label is such an event.
     types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled, closed]
+  # A PERSON'S APPROVAL IS A HUMAN REVIEW (ADR-087 §B.8), and it has to reach the required check as
+  # an event of its own: the check is read from the newest run on the head commit, so an approval no
+  # run follows would green nothing until something else happened. `dismissed` because withdrawing
+  # one has to turn the check back. Every job runs on it, because the newest run is the one
+  # the required checks are read from; the model does not start on one.
+  pull_request_review:
+    types: [submitted, dismissed]
 concurrency:
   group: guardrails-${{ github.event.pull_request.number }}
   # Not `true`: when the review publishes it removes the review label, and that removal is an
@@ -25,7 +32,13 @@ concurrency:
   # the run that was publishing it and the judgement job that runs after it. Nothing reports such a
   # cancel: the capture step is suppressed with the run, and the judgement then reads an index with
   # no entry for the pull request and says, greenly, that there was nothing to judge.
-  cancel-in-progress: ${{ github.event.action != 'closed' && !endsWith(github.actor, '[bot]') }}
+  #
+  # AND NOT ON A REVIEW, for the same reason from another side: a review changes no diff, so it has
+  # nothing newer to put in place of the run already working, and approving beside a review that is
+  # still running would otherwise cancel it. It queues instead, and reads the approval when it runs.
+  cancel-in-progress: >-
+    ${{ github.event.action != 'closed' && github.event_name != 'pull_request_review'
+        && !endsWith(github.actor, '[bot]') }}
 # A called workflow can only narrow the caller's permissions, never raise them, so this block must
 # be the UNION of what every job below declares. It is not a wish list and it is not a minimum:
 # omitting a permission one called workflow declares does not run that job with less, it makes the
