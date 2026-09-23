@@ -194,7 +194,13 @@ jobs:
     # label: opening, reopening and marking ready are readiness signals that mean "a person says so"
     # — read literally, so that a harness cannot send one. With a second App in the organisation
     # that is the difference between a policy and a check.
+    #
+    # ONLY A `pull_request` EVENT IS A READINESS SIGNAL. A caller also listens to reviews, because an
+    # approval by a person is a human review the publishing half reads — but a review changes no
+    # diff, and while the request label stands every other clause here would admit one and run the
+    # model again on a tree it has already read.
     if: >-
+      github.event_name == 'pull_request' &&
       github.event.sender.type == 'User' &&
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.fork == false &&
@@ -777,9 +783,16 @@ jobs:
       # `ready` — a review was asked for and produced nothing — on a run that was never allowed to
       # review anything. `bot-event` decides nothing itself and hands the colour to the standing
       # verdict, which is the only honest answer to "a bot touched a label".
+      #
+      # `review-event` is a review submitted or dismissed. The producing job never runs on one, and
+      # it sits above `bot-authored` and `ready` because the event, not the pull request, is what
+      # this run has to say something about: whether a person's approval now covers the head. The
+      # publishing half hands it to the standing verdict and the standing human review, which is
+      # where an approval is read.
       skip-kind: >-
         ${{ github.event.pull_request.head.repo.fork && 'fork'
             || github.event.pull_request.draft && 'draft'
+            || github.event_name == 'pull_request_review' && 'review-event'
             || endsWith(github.event.pull_request.user.login, '[bot]') && 'bot-authored'
             || github.event.sender.type != 'User' && 'bot-event'
             || (github.event.action == 'opened' || github.event.action == 'reopened'
@@ -792,7 +805,9 @@ jobs:
       # Three conditions skip the producing job and the reason named two of them, so a fork was
       # recorded as a draft. The plan is supposed to say which skip it was.
       skip-reason: >-
-        ${{ github.event.sender.type != 'User'
+        ${{ github.event_name == 'pull_request_review'
+            && 'the event was a review, which alters no diff — an approval by a person is read as a human review, and a review starts no run of the model'
+            || github.event.sender.type != 'User'
             && 'the event came from a bot, and a review is read only where a person asked for one — the runner refuses a non-human actor in any case'
             || (github.event.action == 'labeled' || github.event.action == 'unlabeled')
             && 'the event was a label change, which alters no diff — and the publication applies labels, so reviewing on one would have the review trigger itself'

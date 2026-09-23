@@ -8,6 +8,10 @@ name: guardrails
 on:
   pull_request:
     types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled]
+  # A person's approval is a human review, and it reaches the required check only as an event of its
+  # own. Every job runs on it, because the newest run is the one the required checks are read from.
+  pull_request_review:
+    types: [submitted, dismissed]
 concurrency:
   group: guardrails-${{ github.event.pull_request.number }}
   # Not `true`. The publishing half removes the review label when it is done, and that removal is an
@@ -21,7 +25,11 @@ concurrency:
   # So a bot-triggered run never cancels — it queues and runs after, which also serialises the two
   # runs that would otherwise write the same comment. Human pushes still collapse, which is what the
   # setting is for: the cost of a burst is paid by the person making it.
-  cancel-in-progress: ${{ !endsWith(github.actor, '[bot]') }}
+  #
+  # A review never cancels either: it changes no diff, so it has nothing newer to put in place of
+  # the run already working, and approving beside a running review would otherwise kill it.
+  cancel-in-progress: >-
+    ${{ github.event_name != 'pull_request_review' && !endsWith(github.actor, '[bot]') }}
 permissions:
   contents: read
   pull-requests: read

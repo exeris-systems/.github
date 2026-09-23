@@ -96,7 +96,7 @@ on:
         default: ""
         description: >-
           Why the producing job did not run, as a value rather than as prose: `not-ready`,
-          `draft`, `bot-authored`, `fork` or `path-filter`. The publish step answers differently for each,
+          `draft`, `bot-authored`, `review-event`, `fork` or `path-filter`. The publish step answers differently for each,
           and a job result cannot tell them apart.
       head-sha:
         type: string
@@ -315,6 +315,23 @@ jobs:
             gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
               --jq '.[] | {id, source: "review", author: .user.login, author_type: .user.type, created_at: .submitted_at, body}'
           } | jq -s '.' > comments.json
+      # WHO APPROVED WHICH COMMIT, in the shape the API lists it: the reviewer's login and type, the
+      # state, the commit and the time. An approval by a person on the head is a human review, and
+      # the planner decides which ones are. Failing to read them is NO APPROVALS, never an error that
+      # greens anything: the file is written only once the whole listing arrived, and a step that
+      # failed leaves none, which the planner reads as nobody having approved.
+      - name: The approvals on this pull request, by whom and on which commit
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq '.[] | {id, user: {login: .user.login, type: .user.type}, state, commit_id, submitted_at}' \
+            | jq -s '.' > reviews.partial.json
+          mv reviews.partial.json reviews.json
       - name: Is there an identity to publish under?
         id: identity
         env:
@@ -477,6 +494,7 @@ jobs:
             --out plan.json \
             --verdict produced/verdict.json \
             --comments comments.json \
+            --reviews reviews.json \
             --produce-outcome "$OUTCOME" \
             --produce-relevant "$RELEVANT" \
             ${extra[@]+"${extra[@]}"} \
