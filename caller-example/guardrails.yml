@@ -109,22 +109,21 @@ jobs:
   docs-review:
     needs: [docs, commits, pr-body]
     #
-    # AND NOT FOR A BOT'S OWN EVENT. `claude-code-action` refuses a non-human actor, so a run this
-    # job starts under one can never perform the review it exists for: it spends a runner, reports
-    # a check that repeats what the last one said, and leaves a log that reads like a failure. The
-    # publication applies labels, so without this the bot wakes this workflow on its own account
-    # every time it does.
+    # ON EVERY EVENT THAT IS NOT `closed`, A BOT'S INCLUDED. A required check is read from the NEWEST
+    # run of this workflow on the head commit, so a run in which this job is skipped reports no
+    # verdict at all, and the pull request waits on a status that will never arrive — however
+    # green the runs before it were. The publisher applies and removes labels, each removal is an
+    # event, and every such event must therefore carry the verdict job. The model is not woken by
+    # one: the called workflow's producing job refuses a non-human sender on its own, and the
+    # publishing half answers such an event from the standing verdict or the standing human review.
     #
-    # `always()` still stands for every human-initiated event: a review that vanishes from the
-    # checks because its gates went red is the failure mode this file exists to prevent. This is
-    # narrower -- the event, not the outcome -- and the last check-run on the commit keeps standing
-    # when it fires, because a skipped job publishes nothing and replaces nothing.
+    # `always()` stands for the same reason: a review that vanishes from the checks because its
+    # gates went red is the failure mode this file exists to prevent.
     #
     # AND NOT ON `closed`. The condition below admits any event while the review label is on the
     # pull request, and closing one that still carries it is such an event — so without this the
     # model runs again on a pull request whose review is over and whose check decides nothing.
-    if: ${{ always() && github.event.sender.type == 'User'
-            && github.event.action != 'closed' }}
+    if: ${{ always() && github.event.action != 'closed' }}
     uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
     with:
       l1-results: >-
