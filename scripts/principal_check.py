@@ -31,6 +31,7 @@ import yaml
 SENDER_TYPE = "github.event.sender.type"
 SENDER_LOGIN = "github.event.sender.login"
 HUMAN = "'User'"
+REVIEW_EVENT = "'pull_request_review'"
 
 
 def load(root: str, name: str) -> dict:
@@ -41,6 +42,43 @@ def load(root: str, name: str) -> dict:
 def raw(root: str, name: str) -> str:
     with open(os.path.join(root, ".github", "workflows", name), encoding="utf-8") as fh:
         return fh.read()
+
+
+def condition(job: dict) -> str:
+    """A job's `if:` with its whitespace folded, so a rule reads the expression and not its layout."""
+    return " ".join(str((job or {}).get("if", "")).split())
+
+
+def caller_rules(root: str, rule) -> None:
+    """Rules 5 and 5a, asked of this repository's own caller and of the one every repository copies.
+
+    5a. AN APPROVAL IS AN EVENT THE VERDICT JOB MUST FOLLOW, and nothing else need. Listening to
+    reviews is what lets a person's approval green the check without a second gesture; the review
+    job must run on one for the same reason as rule 5, and the L1 gates must not, because a review
+    changes no file they read.
+    """
+    for caller in ("guardrails.yml", "caller-example/guardrails.yml"):
+        path = (os.path.join(root, ".github", "workflows", caller) if "/" not in caller
+                else os.path.join(root, caller))
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            wf = yaml.safe_load(fh) or {}
+        jobs = wf.get("jobs") or {}
+        review = condition(jobs.get("docs-review"))
+        rule(SENDER_TYPE not in review,
+             f"{caller} skips the review job on a bot's event; the newest run then carries no "
+             f"verdict and the required check waits on a status that never arrives")
+        listens = (wf.get("on") or wf.get(True) or {}).get("pull_request_review") or {}
+        rule({"submitted", "dismissed"} <= set(listens.get("types") or []),
+             f"{caller} does not run on a review submitted or dismissed, so an approval greens "
+             f"nothing until some other event follows it")
+        rule(REVIEW_EVENT not in review,
+             f"{caller} skips the review job on a review event, so an approval never reaches the "
+             f"required check")
+        for gate_job in ("docs", "commits", "pr-body"):
+            rule(f"github.event_name != {REVIEW_EVENT}" in condition(jobs.get(gate_job)),
+                 f"{caller}'s `{gate_job}` runs on a review event, which changes no file it reads")
 
 
 def main() -> int:
@@ -72,6 +110,13 @@ def main() -> int:
          f"the produce job's `if:` does not require {SENDER_TYPE} == {HUMAN}, so a bot applying "
          f"the request label starts a review the runner will refuse")
 
+    # 1a. A REVIEW IS NOT A READINESS EVENT. The callers listen to reviews so that an approval
+    # reaches the required check, and while the request label stands every other clause of the
+    # produce job's condition admits one — a review would run the model again on a tree it has read.
+    rule("github.event_name == 'pull_request'" in gate,
+         "the produce job's `if:` does not require github.event_name == 'pull_request', so a "
+         "review submitted while the request label stands runs the model again")
+
     # 2. A BOT EVENT IS NOT A READINESS EVENT. `skip-kind` is an ordered chain of `||`, so the first
     # alternative that is truthy wins. `ready` before `bot-event` classified the publication's own
     # label change as a review that was asked for and produced nothing.
@@ -90,6 +135,14 @@ def main() -> int:
     rule("'draft'" in kind and "'bot-authored'" in kind and "draft-or-bot" not in kind,
          "`skip-kind` does not name `draft` and `bot-authored` as separate kinds — merged, a pull "
          "request a bot opened takes the draft's green and merges having been read by nothing")
+
+    # 2b. A REVIEW EVENT IS ITS OWN KIND, and it is reached before `ready`: otherwise a review on a
+    # pull request carrying the request label reads as a review that was asked for and produced
+    # nothing, where what it carries is whether a person's approval now covers the head.
+    rule("'review-event'" in kind and "'ready'" in kind
+         and kind.index("'review-event'") < kind.index("'ready'"),
+         "`skip-kind` does not reach `review-event` before `ready`, so an approval is classified as "
+         "a review that was asked for and produced nothing")
 
     reason = " ".join(str(hands_over.get("skip-reason", "")).split())
     rule(SENDER_TYPE in reason,
@@ -117,6 +170,19 @@ def main() -> int:
              f"OVERRIDE_BY_TYPE is not read from {SENDER_TYPE}")
         rule("--override-by-type" in str(plan_step.get("run", "")),
              "the planner is not given --override-by-type, so it decides on an empty type")
+        rule("--reviews reviews.json" in str(plan_step.get("run", "")),
+             "the planner is not given --reviews, so a person's approval is never read as a "
+             "human review")
+
+    # 3a. AN APPROVAL IS A DOOR TOO, and it carries its principal's TYPE across. The reviews listing
+    # is reduced before the planner reads it; a reduction that dropped `user.type` would hand the
+    # planner an empty type on every review, which it reads as not a person — safe, and a door that
+    # never opens.
+    fetch = [step for step in publish["jobs"]["verdict"]["steps"]
+             if str(step.get("name", "")).startswith("The approvals on this pull request")]
+    rule(bool(fetch) and "type: .user.type" in str(fetch[0].get("run", "")),
+         "publish-verdict.yml does not carry each review's `user.type` to the planner, so no "
+         "approval can be told apart from an App's")
 
     # 4. The planner's own half of the same rule, read from the file rather than imported: this
     # script runs where `jsonschema` may not be installed, and importing the planner would make a
@@ -131,16 +197,7 @@ def main() -> int:
     # whose last event was the publisher's. Rule 1 is what keeps the model asleep on such an event;
     # the caller only decides whether the verdict job exists, and it must always exist. The example
     # is what every adopting repository copies, so the two are held to the same rule.
-    for caller in ("guardrails.yml", "caller-example/guardrails.yml"):
-        path = (os.path.join(root, ".github", "workflows", caller) if "/" not in caller
-                else os.path.join(root, caller))
-        if not os.path.exists(path):
-            continue
-        with open(path, encoding="utf-8") as fh:
-            job = ((yaml.safe_load(fh).get("jobs") or {}).get("docs-review") or {})
-        rule(SENDER_TYPE not in " ".join(str(job.get("if", "")).split()),
-             f"{caller} skips the review job on a bot's event; the newest run then carries no "
-             f"verdict and the required check waits on a status that never arrives")
+    caller_rules(root, rule)
 
     green_set = re.search(r"ABOUT_THE_PULL_REQUEST\s*=\s*frozenset\(\{([^}]*)\}\)", code)
     rule(green_set is not None and "bot-authored" not in green_set.group(1)
@@ -151,6 +208,9 @@ def main() -> int:
          "publish_verdict.py no longer decides who is a person")
     rule("not human_principal(args.override_by, args.override_by_type)" in code,
          "publish_verdict.py does not ask `human_principal` about the override label")
+    rule("if not human_principal(login, kind):" in code,
+         "publish_verdict.py does not ask `human_principal` about an approving review, so an App's "
+         "approval reads as a person's")
 
     for said in bad:
         print(f"::error::principal_check: {said}")

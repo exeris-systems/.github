@@ -106,11 +106,19 @@ def by_person(body: str, cid: int = 3) -> dict:
             "author_type": "User", "created_at": f"2026-09-15T00:00:{cid:02d}Z", "body": body}
 
 
+def review(state: str = "APPROVED", login: str = "arkstack", kind: str = "User",
+           sha: str = "e" * 40, second: int = 10) -> dict:
+    """One entry of `pulls/N/reviews` as the API lists it. A person approving the head is the
+    ordinary case, so it is the default and every case changes one thing about it."""
+    return {"id": second, "user": {"login": login, "type": kind}, "state": state,
+            "commit_id": sha, "submitted_at": f"2026-09-15T00:00:{second:02d}Z"}
+
+
 def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="success",
         relevant="true", current="", mandatory="", execution_log=None,
         authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
         l1="", skip_kind="", skip_reason="", head_sha="", override_by="",
-        override_by_type="User", workflow_touching="") -> dict:
+        override_by_type="User", workflow_touching="", reviews=None) -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
     args = [sys.executable, PLANNER, "plan",
             "--schema", os.path.join(root, ".agents", "schemas", "verdict.schema.json"),
@@ -134,6 +142,14 @@ def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="succes
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(comments, fh)
         args += ["--comments", path]
+    if reviews is not None:
+        path = os.path.join(tmp, "reviews.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            if isinstance(reviews, str):
+                fh.write(reviews)
+            else:
+                json.dump(reviews, fh)
+        args += ["--reviews", path]
     if mandatory:
         args += ["--mandatory", mandatory]
     if authors:
@@ -1450,6 +1466,143 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
                 l1={"docs-lint": "failure", "commit-lint": "success", "pr-body-check": "success"})
         assert p["labels_add"] == [], p
+
+    # AN APPROVING REVIEW BY A PERSON IS THE HUMAN REVIEW RECORD. On a pull request a bot opened,
+    # GitHub already asks a person for an approval; the label beside it would be a second gesture
+    # for one fact. The event that carries the approval is `review-event`, which starts no review.
+    @case("a person's approval of the head greens a bot's pull request")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40, reviews=[review()])
+        assert p["conclusion"] == "green", p
+        assert "approved by arkstack on eeeeeee" in p["reason"], p["reason"]
+        assert gate(tmp, p) == 0
+
+    @case("and the standing notice says who approved it and on which commit")
+    def _(tmp):
+        notice = marker_line("NONE", sha="e" * 40) + "\n## L2 review — not run\n\nNothing ran."
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="bot-authored", head_sha="e" * 40, reviews=[review()],
+                comments=[by_bot(notice, 2)])
+        assert p["conclusion"] == "green", p
+        assert "Approved by `arkstack` on `eeeeeee`." in p["comment"], p["comment"][:300]
+        assert p["comment"].startswith(marker_line("NONE", sha="e" * 40)), p["comment"][:120]
+
+    # The approval names the commit it was given on, and a push leaves it there.
+    @case("an approval of an older commit does not cover the head")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="f" * 40, reviews=[review(sha="e" * 40)])
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    # The identity that opens a pull request cannot be the one that says a person read it.
+    @case("an App's approval is not a human review, and the red says whose it was")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40,
+                reviews=[review(login="exeris-agent[bot]", kind="Bot")])
+        assert p["conclusion"] == "red", p
+        assert "exeris-agent[bot]" in p["reason"] and "not a person" in p["reason"], p["reason"]
+        assert gate(tmp, p) == 1
+
+    @case("a `[bot]` login approving as `User` is refused the same way")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40,
+                reviews=[review(login="exeris-agent[bot]", kind="User")])
+        assert p["conclusion"] == "red", p
+
+    @case("changes requested after the approval, by the same person, withdraw it")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40,
+                reviews=[review(second=10), review("CHANGES_REQUESTED", second=20)])
+        assert p["conclusion"] == "red", p
+
+    @case("a dismissed approval is withdrawn")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40,
+                reviews=[review(second=10), review("DISMISSED", second=20)])
+        assert p["conclusion"] == "red", p
+
+    # GitHub keeps an approval standing through a later comment from the same reviewer, so the
+    # gate does too: red here would contradict what the pull request itself shows.
+    @case("a comment after the approval leaves it standing")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40,
+                reviews=[review(second=10), review("COMMENTED", second=20)])
+        assert p["conclusion"] == "green", p
+
+    @case("another reviewer's changes requested do not withdraw this person's approval")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40,
+                reviews=[review(second=10), review("CHANGES_REQUESTED", login="mallory", second=20)])
+        assert p["conclusion"] == "green", p
+
+    # Even where the person has since commented: a comment answers a block, and the approval it
+    # would qualify was given before there was a block to answer.
+    @case("a block that lands after the approval is not answered by it")
+    def _(tmp):
+        later = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 30)
+        since = {"id": 40, "source": "issue-comment", "author": "arkstack", "author_type": "User",
+                 "created_at": "2026-09-15T00:00:40Z", "body": "Looking at the block now."}
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40, reviews=[review(second=10)],
+                comments=[later, since])
+        assert p["conclusion"] == "red", p
+        assert gate(tmp, p) == 1
+
+    # The condition the label meets before its record is written, met here by the approval: a
+    # block is answered, not stepped over, and an approval with nothing said is stepping over it.
+    @case("an approval over a standing block says nothing, so it does not lift it")
+    def _(tmp):
+        blocked = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 5)
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40, reviews=[review(second=10)],
+                comments=[blocked])
+        assert p["conclusion"] == "red", p
+
+    @case("and lifts it when the approval says what the block got wrong")
+    def _(tmp):
+        blocked = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 5)
+        said = {"id": 10, "source": "review", "author": "arkstack", "author_type": "User",
+                "created_at": "2026-09-15T00:00:10Z", "body": "The cited rule does not apply here."}
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40, reviews=[review(second=10)],
+                comments=[blocked, said])
+        assert p["conclusion"] == "green", p
+
+    @case("a BLOCKED verdict this run publishes is newer than the approval, so it stands")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(decision="BLOCKED",
+                                               findings=[finding(tag="HARD BLOCK", blocking=True)]),
+                head_sha="e" * 40, l1=GREEN_L1, reviews=[review()])
+        assert p["conclusion"] == "red", p
+
+    @case("no reviews file is no approval, exactly as before approvals were read")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40)
+        assert p["conclusion"] == "red", p
+        assert "no review has run" in p["reason"], p["reason"]
+
+    @case("an unreadable reviews file is no approval, never a green")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40, reviews="{not json")
+        assert p["conclusion"] == "red", p
+
+    @case("the label's record still greens with no approval beside it")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
+                skip_kind="review-event", head_sha="e" * 40, reviews=[],
+                comments=by_bot(override_line("arkstack", "e" * 40)))
+        assert p["conclusion"] == "green", p
+        assert "reviewed this by hand" in p["reason"], p["reason"]
 
     failures = 0
     for name, fn in cases:

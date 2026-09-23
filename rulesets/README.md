@@ -41,7 +41,10 @@ who can review, and flipping them is the whole of what changes on the day there 
 
 Until then the human-verification rule for App-authored pull requests lives in the required check
 (`scripts/publish_verdict.py`, author-conditional), which is where a rule that depends on the
-author can live and a ruleset cannot.
+author can live and a ruleset cannot. Either of two gestures satisfies it, and both are the same
+record: an approving review by a `User` principal on the head commit, or `l2-human-reviewed` — the
+only one open to a person on a pull request of their own, which GitHub does not let them approve.
+An approval by a `Bot` principal never counts, and a push leaves either behind.
 
 ## Apply
 
