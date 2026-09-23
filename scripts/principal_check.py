@@ -76,9 +76,13 @@ def caller_rules(root: str, rule) -> None:
         rule(REVIEW_EVENT not in review,
              f"{caller} skips the review job on a review event, so an approval never reaches the "
              f"required check")
+        # The gates run on a review event too, for the rule the review job obeys: a required check
+        # is read from the newest run, and a gate called as a reusable workflow that is skipped
+        # reports only its caller's job name, never `docs / docs-lint`, so the check it owes waits.
         for gate_job in ("docs", "commits", "pr-body"):
-            rule(f"github.event_name != {REVIEW_EVENT}" in condition(jobs.get(gate_job)),
-                 f"{caller}'s `{gate_job}` runs on a review event, which changes no file it reads")
+            rule(REVIEW_EVENT not in condition(jobs.get(gate_job)),
+                 f"{caller}'s `{gate_job}` is skipped on a review event, so the newest run carries "
+                 f"none of its checks and a required one waits on a status that never arrives")
 
 
 def main() -> int:
