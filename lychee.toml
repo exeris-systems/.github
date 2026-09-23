@@ -4,7 +4,10 @@ no_progress = true
 max_concurrency = 8
 timeout = 20
 max_retries = 2
-accept = ["200..=299", "403"]                 # some vendor docs return 403 to bots
+# 403 and 429 are answers from a server that is there: some vendor docs refuse bots, and a rate
+# limit says the host is up and busy. A link check that fails a pull request because a third
+# party throttled the runner reports the runner, not the link.
+accept = ["200..=299", "403", "429"]
 # 429 is deliberately NOT accepted: it means the check was rate-limited, and accepting it turns a
 # link check into a silent pass. The Link check step passes GITHUB_TOKEN so this should not occur.
 exclude_all_private = true
