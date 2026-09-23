@@ -67,17 +67,16 @@ jobs:
     # the failure mode this file exists to prevent.
     needs: [docs, commits, pr-body]
     #
-    # AND NOT FOR A BOT'S OWN EVENT. `claude-code-action` refuses a non-human actor, so a run this
-    # job starts under one can never perform the review it exists for: it spends a runner, reports
-    # a check that repeats what the last one said, and leaves a log that reads like a failure. The
-    # publication applies labels, so without this the bot wakes this workflow on its own account
-    # every time it does.
+    # ON EVERY EVENT, A BOT'S INCLUDED. A required check is read from the NEWEST run of this
+    # workflow on the head commit, so a run in which this job is skipped reports no verdict at all
+    # and the pull request waits on a status that will never arrive. The publisher's label changes
+    # are events, so each must carry the verdict job. The model is not woken by one: the producing
+    # job refuses a non-human sender on its own, and the publishing half answers such an event from
+    # the standing verdict or the standing human review.
     #
-    # `always()` still stands for every human-initiated event: a review that vanishes from the
-    # checks because its gates went red is the failure mode this file exists to prevent. This is
-    # narrower -- the event, not the outcome -- and the last check-run on the commit keeps standing
-    # when it fires, because a skipped job publishes nothing and replaces nothing.
-    if: ${{ always() && github.event.sender.type == 'User' }}
+    # `always()` stands for every event: a review that vanishes from the checks because its gates
+    # went red is the failure mode this file exists to prevent.
+    if: ${{ always() }}
     uses: ./.github/workflows/docs-review.yml
     with:
       publish: true
