@@ -4,12 +4,17 @@ no_progress = true
 max_concurrency = 8
 timeout = 20
 max_retries = 2
-# 403 and 429 are answers from a server that is there: some vendor docs refuse bots, and a rate
-# limit says the host is up and busy. A link check that fails a pull request because a third
-# party throttled the runner reports the runner, not the link.
-accept = ["200..=299", "403", "429"]
-# 429 is deliberately NOT accepted: it means the check was rate-limited, and accepting it turns a
-# link check into a silent pass. The Link check step passes GITHUB_TOKEN so this should not occur.
+# 403, 429 and 503 are answers from a server that is there: some vendor docs refuse bots, a rate
+# limit says the host is up and busy, and a 503 says it is up and declining right now. A link
+# check that fails a pull request because a third party throttled or shed load on the runner
+# reports the runner, not the link.
+#
+# What that costs, stated rather than left to be discovered: a service that is permanently 503
+# passes this check. The trade is deliberate — a dead host answers nothing at all and still fails,
+# while a live one having a bad minute stops turning every repository's docs gate red at random.
+# `max_retries` above is the first defence and it is not enough on its own: the run that prompted
+# this saw a 503 from github.com survive both retries.
+accept = ["200..=299", "403", "429", "503"]
 exclude_all_private = true
 # Local relative links are the point: check them against the checkout, offline-first.
 offline = false
