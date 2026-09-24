@@ -34,7 +34,11 @@ jobs:
           # The diff half needs the merge base to diff against, and a shallow clone does not have
           # it. The whole half never looks at history, so a repository that gates no module in diff
           # mode keeps the cheap checkout.
-          fetch-depth: ${{ inputs.diff-modules != '' && 0 || 1 }}
+          # `'0'` and `'1'`, quoted. `&&` and `||` yield an OPERAND, not a boolean, and `0` is
+          # falsy — so `<cond> && 0 || 1` returns 1 whichever way the condition goes, and the
+          # full history this half needs was never fetched. A non-empty string is truthy, which
+          # is what makes the left branch reachable at all.
+          fetch-depth: ${{ inputs.diff-modules != '' && '0' || '1' }}
       # The Checkstyle ruleset AND the engine that runs it are part of the bundle, like every other
       # config these gates read. The ruleset used to be named at a path inside one repository, which
       # meant the gate could only run where a copy had been made, and a copy is a thing that drifts.

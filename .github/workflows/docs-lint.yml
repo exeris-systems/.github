@@ -134,9 +134,14 @@ jobs:
         env:
           GUARDRAILS_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           GUARDRAILS_EXCLUDE: ${{ inputs.exclude }}
+        # THE FLAG IS ON THE LEFT OF `&&`, and the negation carries the condition. `&&` and `||`
+        # yield an OPERAND rather than a boolean and `''` is falsy, so `<cond> && '' || '--flag'`
+        # returns the flag whichever way the condition goes — which passed `--no-section-check` on
+        # every run, including every caller that had asked for the check by setting the input true.
+        # Written this way the reachable branch is the non-empty one.
         run: |
           python .guardrails/scripts/frontmatter_check.py --root "${{ inputs.docs-root }}" --mode "${{ inputs.mode }}" \
-            ${{ inputs.section-check && '' || '--no-section-check' }}
+            ${{ !inputs.section-check && '--no-section-check' || '' }}
       - name: ADR registry
         if: ${{ !cancelled() && steps.globs.outcome == 'success' }}
         # A repo may keep its records under docs/adr or at the root; use whichever exists.
