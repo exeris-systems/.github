@@ -190,6 +190,15 @@ on:
         type: string
         default: ""
         description: "The id of the execution artefact, as the produce job's upload reported it"
+      # ONE RUN PER PART, where the review ran as a matrix. A matrix leaves a job output to whichever
+      # leg wrote it last, so the scalar exports above cannot describe more than one run: each leg
+      # uploads its own as `l2-surface-<pr>-<part>` instead, and this names the parts to read. Set,
+      # the capture is one leg per part and the scalar exports are not read; empty, it is the one run
+      # the scalars describe, which is what a producer that predates parts still hands over.
+      capture-parts:
+        type: string
+        default: ""
+        description: "JSON array of the parts the review ran, one captured run each; empty for the scalar exports"
       # AND THIS IS WHAT CONSUMES THEM — ADR-087 §C.13-§C.17. Off by default, and turned on per
       # repository as a deliberate caller edit, exactly as publication is: a repository that starts
       # writing rows starts contributing to a dataset, and that is a decision its maintainer makes
@@ -626,15 +635,28 @@ jobs:
     # nothing to record.
     if: ${{ !cancelled() && inputs.capture }}
     runs-on: ubuntu-latest
-    # ONE CAPTURE AT A TIME PER REVIEWED REPOSITORY. The day's rows from one repository share a
+    # ONE LEG PER PART, ONE AT A TIME. Each part's run is its own row, its own stream and its own
+    # artefact, so a leg is exactly the one-run capture below. `max-parallel: 1` keeps this run's legs
+    # from racing each other on the day's branch; the writes survive a race anyway, the way they do
+    # across repositories. The leg named `""` is the scalar exports' one run.
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        part: ${{ fromJSON(inputs.capture-parts != '' && inputs.capture-parts || '[""]') }}
+    # ONE CAPTURE AT A TIME PER REVIEWED REPOSITORY AND PART. The day's rows from one repository share a
     # branch and a pull request in the inbox, so two captures running together would race on both.
     # `cancel-in-progress: false` serialises them; it does not promise that every member survives —
     # a group holds one running member and one waiting one, and a third joining displaces the
     # waiting one. So the group is an optimisation and NOT the guarantee: each write below is made
     # safe on its own, by replaying it against what is actually on the remote rather than by being
     # alone.
+    #
+    # PER PART, because a group holds one running member and one waiting one: a third leg in the
+    # same group displaces the second while it waits, which leaves that part uncaptured for no
+    # reason about the part.
     concurrency:
-      group: inbox-${{ github.repository }}
+      group: inbox-${{ github.repository }}-${{ matrix.part }}
       cancel-in-progress: false
     # READ, AND NOTHING THIS JOB'S CALLER DOES NOT ALREADY GRANT THE REVIEW. Two reads are made with
     # this token — the reviewed repository, to decide which inbox a row belongs to, and the pull
@@ -660,11 +682,81 @@ jobs:
       - run: pip install --quiet jsonschema
       # Guarded on the name, not on the file: a produce job that was skipped uploads nothing, and an
       # empty name handed to the download is a step that fails about the wrong thing.
-      - name: The runner's execution log, if the produce job uploaded one
-        if: ${{ inputs.execution-artifact != '' }}
+      # WHICH RUN THIS LEG CAPTURES, and every value the steps below read about it. A part's leg
+      # reads what its produce leg uploaded; the scalar leg reads the inputs. Written to the job's
+      # environment once, so no later step can mix one run's artefact with another's digests.
+      - name: The surface of this leg's run, as its produce leg left it
+        if: ${{ matrix.part != '' }}
         uses: actions/download-artifact@v8
         with:
-          name: ${{ inputs.execution-artifact }}
+          name: l2-surface-${{ github.event.pull_request.number }}-${{ matrix.part }}
+          path: surface
+        continue-on-error: true
+      - name: Which run this leg captures
+        id: run
+        env:
+          PART: ${{ matrix.part }}
+          PR: ${{ github.event.pull_request.number }}
+          IN_ARTIFACT: ${{ inputs.execution-artifact }}
+          IN_ARTIFACT_ID: ${{ inputs.capture-artifact-id }}
+          IN_VERDICT_SOURCE: ${{ needs.verdict.outputs.verdict-source }}
+          IN_PROMPT_SHA256: ${{ inputs.capture-prompt-sha256 }}
+          IN_ROUTINE_SHA256: ${{ inputs.capture-routine-sha256 }}
+          IN_ROUTINE_SHA: ${{ inputs.capture-routine-sha }}
+          IN_AGENTS_MD_SHA256: ${{ inputs.capture-agents-md-sha256 }}
+          IN_SYSTEM_PROMPT_SHA256: ${{ inputs.capture-system-prompt-sha256 }}
+          IN_TOOL_SURFACE: ${{ inputs.capture-tool-surface }}
+          IN_BUNDLE_VERSION: ${{ inputs.capture-bundle-version }}
+          IN_CHECKOUT_SHA: ${{ inputs.capture-checkout-sha }}
+          IN_HEAD_SHA: ${{ inputs.capture-head-sha }}
+          IN_REVIEW_STARTED_AT: ${{ inputs.capture-review-started-at }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PART" ]; then
+            {
+              echo "ARTIFACT=$IN_ARTIFACT"
+              echo "ARTIFACT_ID=$IN_ARTIFACT_ID"
+              echo "VERDICT_SOURCE=$IN_VERDICT_SOURCE"
+              echo "PROMPT_SHA256=$IN_PROMPT_SHA256"
+              echo "ROUTINE_SHA256=$IN_ROUTINE_SHA256"
+              echo "ROUTINE_SHA=$IN_ROUTINE_SHA"
+              echo "AGENTS_MD_SHA256=$IN_AGENTS_MD_SHA256"
+              echo "SYSTEM_PROMPT_SHA256=$IN_SYSTEM_PROMPT_SHA256"
+              echo "TOOL_SURFACE=$IN_TOOL_SURFACE"
+              echo "BUNDLE_VERSION=$IN_BUNDLE_VERSION"
+              echo "CHECKOUT_SHA=$IN_CHECKOUT_SHA"
+              echo "CAPTURE_HEAD_SHA=$IN_HEAD_SHA"
+              echo "REVIEW_STARTED_AT=$IN_REVIEW_STARTED_AT"
+            } >> "$GITHUB_ENV"
+            echo "artifact=$IN_ARTIFACT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          doc=surface/surface.json
+          if [ ! -f "$doc" ]; then
+            echo "::notice::capture: the $PART leg left no surface, so it exposed no execution log and there is no row for it"
+            echo "artifact=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A part's verdict reached the published one through the aggregate, which read it out of
+          # this run's execution log — so that is the route this run's verdict took, whatever route
+          # the composed verdict took to the publication.
+          {
+            echo "ARTIFACT=$(jq -r '.artifact // ""' "$doc")"
+            echo "ARTIFACT_ID=$(jq -r '."artifact-id" // ""' "$doc")"
+            echo "VERDICT_SOURCE=execution log"
+            for key in prompt-sha256 routine-sha256 routine-sha agents-md-sha256 system-prompt-sha256 \
+                       tool-surface bundle-version checkout-sha review-started-at; do
+              name=$(tr 'a-z-' 'A-Z_' <<<"$key")
+              echo "$name=$(jq -r --arg k "$key" '.[$k] // ""' "$doc")"
+            done
+            echo "CAPTURE_HEAD_SHA=$(jq -r '."head-sha" // ""' "$doc")"
+          } >> "$GITHUB_ENV"
+          echo "artifact=$(jq -r '.artifact // ""' "$doc")" >> "$GITHUB_OUTPUT"
+      - name: The runner's execution log, if the produce job uploaded one
+        if: ${{ steps.run.outputs.artifact != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.run.outputs.artifact }}
           path: execution-log
         continue-on-error: true
       - name: Is there a run to capture?
@@ -752,20 +844,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ARTIFACT: ${{ inputs.execution-artifact }}
-          ARTIFACT_ID: ${{ inputs.capture-artifact-id }}
-          VERDICT_SOURCE: ${{ needs.verdict.outputs.verdict-source }}
           STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
-          SYSTEM_PROMPT_SHA256: ${{ inputs.capture-system-prompt-sha256 }}
-          PROMPT_SHA256: ${{ inputs.capture-prompt-sha256 }}
-          ROUTINE_SHA256: ${{ inputs.capture-routine-sha256 }}
-          ROUTINE_SHA: ${{ inputs.capture-routine-sha }}
-          AGENTS_MD_SHA256: ${{ inputs.capture-agents-md-sha256 }}
-          TOOL_SURFACE: ${{ inputs.capture-tool-surface }}
-          BUNDLE_VERSION: ${{ inputs.capture-bundle-version }}
-          CHECKOUT_SHA: ${{ inputs.capture-checkout-sha }}
-          CAPTURE_HEAD_SHA: ${{ inputs.capture-head-sha }}
-          REVIEW_STARTED_AT: ${{ inputs.capture-review-started-at }}
         run: |
           set -euo pipefail
           python .guardrails/scripts/capture_ci_row.py \
@@ -887,23 +966,10 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ARTIFACT: ${{ inputs.execution-artifact }}
-          ARTIFACT_ID: ${{ inputs.capture-artifact-id }}
-          VERDICT_SOURCE: ${{ needs.verdict.outputs.verdict-source }}
           STREAMS_REPOSITORY: ${{ inputs.streams-repository }}
           STREAM_COMMIT: ${{ steps.stream-commit.outputs.commit }}
           BRANCH: ${{ steps.decide.outputs.branch }}
           EMAIL: ${{ steps.stream-commit.outputs.email }}
-          SYSTEM_PROMPT_SHA256: ${{ inputs.capture-system-prompt-sha256 }}
-          PROMPT_SHA256: ${{ inputs.capture-prompt-sha256 }}
-          ROUTINE_SHA256: ${{ inputs.capture-routine-sha256 }}
-          ROUTINE_SHA: ${{ inputs.capture-routine-sha }}
-          AGENTS_MD_SHA256: ${{ inputs.capture-agents-md-sha256 }}
-          TOOL_SURFACE: ${{ inputs.capture-tool-surface }}
-          BUNDLE_VERSION: ${{ inputs.capture-bundle-version }}
-          CHECKOUT_SHA: ${{ inputs.capture-checkout-sha }}
-          CAPTURE_HEAD_SHA: ${{ inputs.capture-head-sha }}
-          REVIEW_STARTED_AT: ${{ inputs.capture-review-started-at }}
         run: |
           set -euo pipefail
           assemble() {
@@ -981,7 +1047,7 @@ jobs:
         if: ${{ steps.assemble.outputs.state == 'refused' }}
         uses: actions/upload-artifact@v7
         with:
-          name: l2-row-${{ github.event.pull_request.number }}-invalid
+          name: l2-row-${{ github.event.pull_request.number }}${{ matrix.part != '' && format('-{0}', matrix.part) || '' }}-invalid
           path: row.json
           if-no-files-found: ignore
           retention-days: 90

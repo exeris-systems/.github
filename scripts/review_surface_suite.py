@@ -404,7 +404,7 @@ def _(root):
 # design is built to avoid.
 
 
-@case("the script, the job outputs and the publishing inputs name one list of components")
+@case("the script, the job outputs, the capture and the publishing inputs name one list")
 def _(_root):
     def workflow(name: str) -> dict:
         with open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8") as fh:
@@ -423,9 +423,17 @@ def _(_root):
         got = " ".join(str(outputs[key]).split())
         assert got == want, f"{key} is {got!r}, not {want!r}"
 
+    # The capture job reads each back out of a part's surface as well, where the review ran as a
+    # matrix and the scalar inputs below could describe one leg at most.
+    publish = workflow("publish-verdict.yml")
+    capture = ((publish.get("jobs") or {}).get("capture") or {}).get("steps") or []
+    reader = next((st for st in capture if st.get("id") == "run"), None)
+    assert reader, "the capture job carries no `run` step, so no part's surface is read"
+    unread = [key for key in review_surface.EXPORTED if key not in str(reader.get("run") or "")]
+    assert not unread, f"the capture job reads no {unread} out of a part's surface"
+
     # PyYAML reads the bare key `on` as the boolean True (YAML 1.1), so both spellings are looked
     # up — the same accommodation every other reader of these files makes.
-    publish = workflow("publish-verdict.yml")
     trigger = publish.get("on") or publish.get(True) or {}
     inputs = ((trigger.get("workflow_call") or {}).get("inputs")) or {}
     missing = [CAPTURE_PREFIX + key for key in review_surface.EXPORTED
