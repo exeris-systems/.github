@@ -49,8 +49,7 @@ def in_code_docs(path: str) -> bool:
     """Files whose comments or doc comments the routine judges, and the API goldens."""
     dirs = path.split("/")[:-1]
     return (path.endswith(CODE_SUFFIXES) or "api" in dirs
-            or path.startswith("src/tools/") or "/src/tools/" in path
-            or "generated" in dirs)
+            or "/src/tools/" in "/" + path or "generated" in dirs)
 
 
 SCOPES = {

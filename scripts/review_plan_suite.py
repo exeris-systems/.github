@@ -80,6 +80,18 @@ def _():
         assert parts([f]) == ["pr", "code-docs"], f
 
 
+@case("each scope clause holds on its own, with no other clause to lean on")
+def _():
+    # A stub outside any `adr/` or `standards/` directory is a record by its name alone.
+    assert parts(["ADR-055.link.md"]) == ["pr", "docs", "records"]
+    # A tool's description outside the code suffixes is a documented surface by its directory, at
+    # the root of the repository and inside a package alike.
+    assert parts(["src/tools/list.json"]) == ["pr", "code-docs"]
+    assert parts(["packages/mcp/src/tools/list.json"]) == ["pr", "code-docs"]
+    # And a directory that only ends in the name is not it.
+    assert parts(["notsrc/tools/list.json"]) == ["pr"]
+
+
 @case("a golden written in Markdown is a page and an API surface")
 def _():
     assert parts(["api/sdk.api.md"]) == ["pr", "docs", "code-docs"]
