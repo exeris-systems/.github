@@ -81,11 +81,11 @@ INBOX_VISIBILITY = "public"
 
 EXECUTION_REPO = "exeris-systems/exeris-ai-execution"
 
-# What the produce job names the execution artefact of one pull request: `l2-execution-<pr>`, or
-# `l2-execution-<pr>-<part>` for each part of a review that runs as several. It is what joins a
-# stream in the streams repository to the pull request this event is about, and it is read with
-# `ci_row.pr_number`, the same reading the row's producer applies, so a part's stream joins the pull
-# request its row was filed against.
+# What the produce job names the execution artefact of one pull request: `l2-execution-<pr>-<part>`,
+# the part being `all` for a run of the whole routine, and `l2-execution-<pr>` a stream that names
+# no part. It is what joins a stream in the streams repository to the pull request this event is
+# about, and it is read with `ci_row.pr_number`, the same reading the row's producer applies, so a
+# part's stream joins the pull request its row was filed against.
 ARTIFACT_NAME = "l2-execution-{pull_request}"
 
 # The media type under which the host serves a file it declined to inline. The contents endpoint

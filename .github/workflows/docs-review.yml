@@ -96,6 +96,17 @@ on:
           per-repo review workflows this replaces were quietly doing. It never fails the job: most
           repo-local scripts locate candidates rather than decide, so a non-zero exit is evidence
           for the reviewer to judge.
+      review-in-parts:
+        type: boolean
+        default: false
+        description: >-
+          Whether the routine runs as its parts, one model run each, composed into one verdict. OFF
+          by default, and turned on per repository the way publication and capture were: the run
+          that proves it works is the first one a repository asks for. Off, the routine runs whole,
+          as one leg named `all`. On, a plan reads the changed files and runs `pr` always, `repo`
+          when there is an extension, and each other part only where its files are in the diff.
+          On, no run record is captured: a record per part needs the capture job to read one run
+          per part, which it does not yet.
       mandatory-gates:
         type: string
         default: ""
@@ -141,8 +152,53 @@ permissions:
   id-token: write
 
 jobs:
-  produce:
+  # WHICH PARTS RUN, decided before any model does. Whole, the answer is the one leg `all`; in parts
+  # it is `review_plan.py` over the pull request's files, and every part it does not run is named
+  # with the reason, so the aggregate can say "skipped because" rather than go quiet. No model and
+  # no secret: the plan is CI's to compute, like the gate results the prompt is handed.
+  plan:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+      skipped: ${{ steps.plan.outputs.skipped }}
+    steps:
+      - name: Fetch the review routine (exeris-systems/.github)
+        if: ${{ inputs.review-in-parts }}
+        uses: actions/checkout@v7
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - name: Which parts of the routine this pull request calls for
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_REPO: ${{ github.repository }}
+          IN_PARTS: ${{ inputs.review-in-parts }}
+          ROUTINE: ${{ inputs.repo-routine }}
+        run: |
+          set -euo pipefail
+          if [ "$IN_PARTS" != "true" ]; then
+            echo 'parts=["all"]' >> "$GITHUB_OUTPUT"
+            echo 'skipped={}' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api --paginate "repos/$PR_REPO/pulls/$PR_NUMBER/files" --jq '.[].filename' > files.txt
+          python3 .guardrails/scripts/review_plan.py --files files.txt --repo-routine "$ROUTINE"
+
+  produce:
+    needs: plan
+    runs-on: ubuntu-latest
+    # ONE LEG PER PART, and a leg that fails leaves the others running: a part that produced nothing
+    # is reported by the aggregate as `missing`, which is the answer, where a cancelled sibling
+    # would be a second part missing for a reason that has nothing to do with it.
+    #
+    # The leg's name is what `exeris-ai-execution` reads: the host names a leg `produce (<part>)`,
+    # the reviewing step keeps its name in every leg, and the artefacts carry the part, so a stream
+    # is dated by its own leg and its prompt renders its own part.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
     # Drafts and dependency bumps are not reviewed, matching claude-code-review.yml and
     # pr-conventions.md rule 6.
     # THIS CONDITION IS ALSO WHAT HOLDS §C.14a's TRIGGER CLOSED, and that is worth saying because
@@ -305,11 +361,13 @@ jobs:
       # there as satisfied. A caller cannot close that — it does not own this job — so the split is:
       # this workflow guarantees a managed interpreter with a working `pip`, and `repo-checks` says
       # what to put in it.
+      # Only in the legs that judge the extension: its output is evidence for the repository's own
+      # rules, and running it in every leg would run the same scripts once per part for nobody.
       - uses: actions/setup-python@v7
-        if: ${{ inputs.repo-checks != '' }}
+        if: ${{ inputs.repo-checks != '' && (matrix.part == 'all' || matrix.part == 'repo') }}
         with: { python-version: "3.14" }
       - name: This repository's own checks
-        if: ${{ inputs.repo-checks != '' }}
+        if: ${{ inputs.repo-checks != '' && (matrix.part == 'all' || matrix.part == 'repo') }}
         env:
           # Through the environment, not spliced into `run:`. The value comes from a caller's
           # workflow file rather than from pull-request content, but a command assembled by string
@@ -449,6 +507,19 @@ jobs:
           `.guardrails/docs-guardrails-review.md`. Read that file first and follow it exactly:
           its steps, its severity tags, and its output format.
 
+          PART: ${{ matrix.part }}
+
+          Where PART is `all`, apply the whole routine. Otherwise apply only the part PART names:
+          the routine's `## Part` section of that name, or, for `repo`, the REPOSITORY EXTENSION
+          below and nothing else. The other parts are judged by runs of their own, and a finding
+          about one of them here is a finding reported twice. Every part reads the routine's
+          `## Parts`, `## Repository extension`, `## Output format` and `## Verdict` sections. A
+          part's verdict carries `"part": "<PART>"`; the whole routine's carries no `part`.
+
+          Each finding's `why` is the clause it violates as `<file>#<rule>` and nothing else —
+          `docs-guardrails-review.md#8`, `repo-review-rules.md#R2`. The explanation belongs in
+          `what`; a `why` with prose in it fails the schema and the review is refused.
+
           The L1 gates have already run and their results are below. Do not try to fetch them —
           this runner's harness denies network calls, and a review that reports them as `not-run`
           because it could not read a page is a review defeated by its own sandbox. Put these
@@ -492,6 +563,9 @@ jobs:
 
           REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && 'repo-routine.base.md' || '(none)' }}
           REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}
+
+          The check output is written only for PART `all` and `repo`, the parts that judge the
+          extension; for any other part it is not in this checkout, and that is not a finding.
 
           Report nothing you have not checked against the repository: the routine asks whether
           documentation matches the code, which means opening the code.
@@ -659,7 +733,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: l2-verdict-${{ github.event.pull_request.number }}
+          name: l2-verdict-${{ github.event.pull_request.number }}-${{ matrix.part }}
           path: verdict.json
           # NINETY, against the execution log's one, and the asymmetry is the point. A verdict is
           # the review: it is published as a comment the moment this run ends, so nothing in it is
@@ -694,13 +768,73 @@ jobs:
         if: ${{ !cancelled() && steps.review.outputs.execution_file != '' }}
         uses: actions/upload-artifact@v7
         with:
-          name: l2-execution-${{ github.event.pull_request.number }}
+          name: l2-execution-${{ github.event.pull_request.number }}-${{ matrix.part }}
           path: ${{ steps.review.outputs.execution_file }}
           if-no-files-found: ignore
           retention-days: 1
 
+  # ONE VERDICT FROM THE PARTS, composed where no model runs. Each leg's verdict is in its own
+  # execution log, so this reads the logs the legs uploaded and hands `review_aggregate.py` the plan
+  # that says what was expected: a planned part with no usable verdict is `missing`, and the
+  # publication refuses to pass a check on an incomplete review. Only the composed verdict goes on;
+  # the publish half never sees a single part's log as a verdict source, because a part's PASS is
+  # not the pull request's.
+  aggregate:
+    needs: [plan, produce]
+    if: ${{ !cancelled() && inputs.review-in-parts && needs.produce.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    outputs:
+      written: ${{ steps.compose.outputs.written }}
+      missing: ${{ steps.compose.outputs.missing }}
+      # The `pr` leg's log, for the provenance footer alone: which model and harness ran. Handed on
+      # only when a composed verdict exists, so the publish half can never read a verdict out of it.
+      footer-log: ${{ steps.compose.outputs.footer-log }}
+    steps:
+      - name: Fetch the review routine (exeris-systems/.github)
+        uses: actions/checkout@v7
+        with: { repository: exeris-systems/.github, path: .guardrails }
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
+      - run: pip install --quiet jsonschema referencing
+      # A leg that left no log uploaded no artefact, and a pattern that matches fewer artefacts than
+      # there are parts is the ordinary case of a part going missing, not a failure of this job.
+      - name: The execution logs the legs left
+        uses: actions/download-artifact@v8
+        with:
+          pattern: l2-execution-${{ github.event.pull_request.number }}-*
+          path: logs
+        continue-on-error: true
+      - name: Compose the parts' verdicts into one
+        id: compose
+        env:
+          PARTS: ${{ needs.plan.outputs.parts }}
+          SKIPPED: ${{ needs.plan.outputs.skipped }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          jq -n --argjson parts "$PARTS" --argjson skipped "$SKIPPED" \
+            '{parts: $parts, skipped: $skipped}' > plan.json
+          args=()
+          for part in $(jq -r '.[]' <<<"$PARTS"); do
+            log=$(find "logs/l2-execution-$PR_NUMBER-$part" -type f 2>/dev/null | head -1 || true)
+            if [ -n "$log" ]; then args+=(--log "$part=$log"); fi
+          done
+          python3 .guardrails/scripts/review_aggregate.py --plan plan.json \
+            --schema .guardrails/.agents/schemas/verdict.schema.json --out verdict.json \
+            "${args[@]}"
+          if [ -f verdict.json ] && [ -d "logs/l2-execution-$PR_NUMBER-pr" ]; then
+            echo "footer-log=l2-execution-$PR_NUMBER-pr" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Keep the composed verdict for the publish job
+        if: ${{ steps.compose.outputs.written == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: l2-verdict-${{ github.event.pull_request.number }}
+          path: verdict.json
+          retention-days: 90
+
   publish:
-    needs: produce
+    needs: [produce, aggregate]
     # `inputs.publish` is the staging of ADR-087 Engineering Protocol 1, not a feature flag: items
     # 2-3 land before the Apps and before the experiment, and a caller adopts the gate when there is
     # something known to adopt.
@@ -725,12 +859,24 @@ jobs:
     # own `schema`, and both reviews then publish under one identity and one label map.
     uses: exeris-systems/.github/.github/workflows/publish-verdict.yml@main
     with:
+      # Whole, the one leg's artefacts, as before; in parts, the composed verdict and the `pr` leg's
+      # log for the footer, and nothing else. Every branch ends in `format(...)`, which is never
+      # empty, so no falsy middle operand can fall through into the other mode's name.
+      #
+      # A produce output of a matrix job is whichever leg wrote it last, so in parts nothing here
+      # reads one: the aggregate is the job that knows what exists.
       verdict-artifact: >-
-        ${{ needs.produce.outputs.verdict-written == 'true'
-            && format('l2-verdict-{0}', github.event.pull_request.number) || '' }}
+        ${{ (inputs.review-in-parts && needs.aggregate.outputs.written == 'true'
+             && format('l2-verdict-{0}', github.event.pull_request.number))
+            || (!inputs.review-in-parts && needs.produce.outputs.verdict-written == 'true'
+                && format('l2-verdict-{0}-all', github.event.pull_request.number))
+            || '' }}
       execution-artifact: >-
-        ${{ needs.produce.outputs.execution-written == 'true'
-            && format('l2-execution-{0}', github.event.pull_request.number) || '' }}
+        ${{ (inputs.review-in-parts && needs.aggregate.outputs.footer-log != ''
+             && format('{0}', needs.aggregate.outputs.footer-log))
+            || (!inputs.review-in-parts && needs.produce.outputs.execution-written == 'true'
+                && format('l2-execution-{0}-all', github.event.pull_request.number))
+            || '' }}
       expect-agent: exeris-org-docs-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
@@ -755,7 +901,11 @@ jobs:
       # Whether this run becomes a row, and the pen it is written with (ADR-087 §C.13): passed
       # only once the callee declares them on main, for the reason the capture-* lines above give.
       capture-artifact-id: ${{ needs.produce.outputs.artifact-id }}
-      capture: ${{ inputs.capture }}
+      # Not in parts: the capture job reads one run's exports, and a matrix leaves them to
+      # whichever leg finished last. A row about a run that is not the one it describes is worse
+      # than no row, so a repository that reviews in parts contributes none until capture reads a
+      # run per part.
+      capture: ${{ inputs.capture && !inputs.review-in-parts }}
       # And whether anything is made of them. Handed straight through, because the decision is the
       # caller's: this workflow neither turns capture on for a repository that did not ask nor off
       # for one that did.
