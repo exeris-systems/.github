@@ -78,12 +78,14 @@ class Report:
             for f in sorted(self.findings, key=lambda x: (x.level != "error", x.path, x.line)):
                 summary.append(f"| {f.level} | `{f.path}` | {f.line} | {f.rule} | {f.msg} |")
         text = "\n".join(summary) + "\n"
+        # Stdout always, the step summary as well. A caller that captures the output — `repo-checks`
+        # hands it to the reviewer as the state of the repository — reads stdout, and a passing
+        # check that wrote only to the step summary reaches it as a check that never ran.
+        print(text)
         step = os.environ.get("GITHUB_STEP_SUMMARY")
         if step:
             with open(step, "a", encoding="utf-8") as fh:
                 fh.write(text)
-        else:
-            print(text)
         return 1 if self.errors else 0
 
 
