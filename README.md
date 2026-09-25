@@ -15,9 +15,10 @@ that has none of its own. No adoption step; they are simply in force.
 (`caller-example/guardrails.yml`): documentation lint, commit lint, pull-request body, Javadoc and
 TSDoc. These are mechanical and they run in the adopting repository's CI.
 
-**The L2 review and its publication** (ADR-087). `docs-guardrails-review.md` is the organisation's
+**The review and its publication** (ADR-087). `docs-guardrails-review.md` is the organisation's
 review routine — one copy, checked out and handed to a model verbatim, so changing it changes every
-repository at once. What the review produces is a `verdict`: a JSON object this repository defines a
+repository at once. Its rules are grouped into parts — `pr`, `docs`, `records`, `code-docs`, and a
+repository's own rules as `repo` — and a repository may run it whole or one run per part. What the review produces is a `verdict`: a JSON object this repository defines a
 schema for, composed over the `exeris-agents` bundle vendored under `.agents/`. `docs-review.yml`
 produces it and `publish-verdict.yml` publishes it under the `exeris-bot` identity — posting the
 review, applying the labels of `labels-from-verdict.json`, and being the required check that is red
@@ -25,7 +26,7 @@ when the verdict is absent, invalid, `BLOCKED`, or resting on a gate that did no
 
 **Every change here changes CI for every repository.** The workflows are called `@main`, so a merge
 to `main` is a deployment and there is no staging. The gates in this repository's own
-`.github/workflows/guardrails.yml` run on this repository, including the L2 review: a gate its owner
+`.github/workflows/guardrails.yml` run on this repository, including the review: a gate its owner
 does not run is a gate nobody has tested.
 
 ## Layout
@@ -38,15 +39,17 @@ does not run is a gate nobody has tested.
     pr-body-check.yml    reusable — template headings + classification grammar + trailers
     javadoc-gate.yml     reusable — Javadoc gate: whole-module on `modules`, changed-files on `diff-modules`
     tsdoc-gate.yml       reusable — TS doc comments + API-surface goldens (tsdoc-conventions.md)
-    docs-review.yml      reusable — the L2 review: a `produce` job runs the routine, a `publish`
-                         job (opt-in, `publish: true`) posts and gates. ADR-087 §B.5
+    docs-review.yml      reusable — the review: a `plan` job names the parts to run, `produce` runs
+                         one leg per part (one leg, `all`, when whole), `aggregate` composes the
+                         parts' verdicts, and a `publish` job (opt-in, `publish: true`) posts and
+                         gates. ADR-087 §B.5
     publish-verdict.yml  reusable — the publishing half on its own, so more than one producer can
                          reach it. Posts as `exeris-bot`, labels, and is the required check; a
                          second job (opt-in, `capture: true`) writes the run's row. ADR-087 §C.13
     judge-review.yml     reusable — the other half of that row: on `pull_request: closed` it reads
                          what the human did with each finding and appends a judgement record beside
                          the run, never into it. ADR-087 §C.16
-    guardrails.yml       this repository's OWN caller — it runs its gates, and the L2 review, on itself
+    guardrails.yml       this repository's OWN caller — it runs its gates, and the review in parts, on itself
     labels-sync.yml      applies labels.yml across the organisation
     issue-hygiene.yml    ages `needs-reproducer` / `needs-evidence`
   PULL_REQUEST_TEMPLATE.md
@@ -67,6 +70,10 @@ scripts/
                          verdict, validates it, and writes the labels, the comment and the
                          conclusion the workflow then applies and gates on
   publish_verdict_suite.py  one case per red path ADR-087 §B.8 names, run in this repository's CI
+  review_plan.py         which parts of the routine a pull request's changed files call for, each
+                         part run or skipped with the reason
+  review_aggregate.py    one verdict from the parts' runs: the worst decision, every finding marked
+                         with its part, and a part that left no verdict named `missing`
   bundle_pin_check.py    the vendored bundle is the ref docs-lint.yml resolves
   commitlint_anchor_repro.sh  the report behind `package.json`: builds the caller layout twice,
                          with the anchor and without, and prints what differs. Needs network, so it
@@ -89,7 +96,7 @@ ts/api-extractor.base.json         port target for a library's api-extractor.jso
 ts/scripts/mcp-tool-surface.mjs    tools/list golden for an MCP server — the TS analogue of japicmp
 java/javadoc-plugin-block.xml      port target for gated modules' pom.xml
 caller-example/guardrails.yml      copy into each repo's .github/workflows/
-docs-guardrails-review.md          the [L2] review routine — one copy, read by every repository
+docs-guardrails-review.md          the review routine, grouped into parts — one copy, read by every repository
 pr-review.patch.md                 the router patch that places the routine inside pr-review.md
 labels.yml                         the organisation label taxonomy (issue-conventions.md rule 3)
 labels-from-verdict.json           which verdict field applies which label from labels.yml (§B.7)
@@ -129,7 +136,7 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules.
 
    The rest is per package and opt-in: copy `ts/tsdoc.json` beside the package's `tsconfig.json`; a library that publishes adds `typedoc` (and `@microsoft/api-extractor`), ports `ts/typedoc.base.json` and `ts/api-extractor.base.json`, and sets `typedoc: true` with `api-report: api-extractor`; an MCP server sets `api-report: mcp-tool-surface`. Both stay off until the package commits the config and the golden they read — **the first golden lands in that build's own pull request, reviewed on its own**, because a golden reviewed alongside a feature is a golden nobody reads.
-5. The L2 review comes with the caller's `docs-review` job and needs nothing else to run: it
+5. The review comes with the caller's `docs-review` job and needs nothing else to run: it
    produces a review and posts it, as it did before the split. **Publication is opt-in.** Adding
    `publish: true` turns on the second job, which posts the verdict under the organisation's
    identity, applies the labels of `labels-from-verdict.json`, and becomes a check that is red when
@@ -146,6 +153,18 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    still decides, it is simply not published under the organisation's byline. No permission is added
    either way: every write goes through the App's installation token, so neither job's own
    `GITHUB_TOKEN` holds one.
+
+   Two labels drive it by hand. `needs-review` asks for a review — on a push, the standing verdict
+   covers an older commit and the check goes red until one is asked for — and the publication takes
+   it off once the review has run. `human-reviewed` records that a person reviewed the change, which
+   is how a pull request the runner refuses to read (one changing the caller's own workflow file)
+   gets a green check. Both are refused when a bot applies them.
+
+   **Reviewing in parts is its own opt-in.** `review-in-parts: true` runs `pr` always, `repo` when
+   `repo-routine` is set, and `docs`, `records` and `code-docs` only where their files are in the
+   diff, one model run each, and publishes one verdict with a `Part` column and a line per part. A
+   part that produces nothing makes the check red. It turns capture off, because a run record per
+   part is not written yet, so leave it off in a repository that captures.
 5a. **Capture is the second opt-in, and a separate decision.** `capture: true` adds a third job:
    the runner's execution log is committed to the streams repository as content, one run record is
    assembled from what the producing job exported about the run, and the day's rows reach
