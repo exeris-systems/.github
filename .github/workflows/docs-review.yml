@@ -67,7 +67,7 @@ on:
           them, because the workflow that ran a gate knows what it concluded.
       review-label:
         type: string
-        default: "needs-l2-review"
+        default: "needs-review"
         description: >-
           The label a human applies to ask for a review. A label rather than a comment mention: one
           click instead of writing, an event the caller already receives, and no new permission

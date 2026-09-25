@@ -96,7 +96,7 @@ def override_line(by: str = "arkstack", sha: str = "") -> str:
 # What the publication writes when the gates it waits on were red: the statement the withdrawal
 # below has to take back once they are green.
 NOTICE = (marker_line("NONE", sha="a" * 40)
-          + "\n## L2 review — not run\n\nThe L1 gates this review waits on did not pass: "
+          + "\n## Review — not run\n\nThe L1 gates this review waits on did not pass: "
             "`docs-lint`.\n\nFix those first; the review runs once they are green.\n")
 
 
@@ -215,7 +215,7 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict())
         assert p["conclusion"] == "green", p
         assert p["labels_add"] == [] and p["labels_remove"] == [], p
-        assert "## L2 review — `exeris-org-docs-reviewer` — **PASS**" in p["comment"], p
+        assert "## Review — `exeris-org-docs-reviewer` — **PASS**" in p["comment"], p
         assert gate(tmp, p) == 0
 
     @case("an absent verdict is red, and says the produce job's outcome")
@@ -337,7 +337,7 @@ def main() -> int:
         assert gate(tmp, p) == 0
 
     # And the human path survives it: on a workflow change the routine refuses and marks the refusal
-    # blocking, which is exactly the verdict `l2-human-reviewed` exists to answer.
+    # blocking, which is exactly the verdict `human-reviewed` exists to answer.
     @case("a person's review still answers the blocking refusal on a workflow change")
     def _(tmp):
         v = verdict(decision="BLOCKED",
@@ -474,13 +474,13 @@ def main() -> int:
     @case("another routine's fenced verdict is not published under this routine's name")
     def _(tmp):
         # exeris-kernel's own review, posted after the organisation's, on the same pull request.
-        theirs = ("## L2 review\n\n```json\n"
+        theirs = ("## Review\n\n```json\n"
                   + json.dumps({"agent": "exeris-evaluator", "decision": "BLOCKED",
                                 "scope_class": "runtime hot path",
                                 "findings": [finding(blocking=True)],
                                 "checks_run": [{"check": "docs-lint", "result": "pass"}]})
                   + "\n```\n")
-        mine = ("## L2 review\n\n```json\n"
+        mine = ("## Review\n\n```json\n"
                 + json.dumps(verdict(decision="CONDITIONAL", findings=[finding(tag="DOC DEBT")]))
                 + "\n```\n")
         p = run(root, tmp, verdict_doc=None,
@@ -536,7 +536,7 @@ def main() -> int:
     @case("a PASS does not unblock a pull request another routine is still blocking")
     def _(tmp):
         other = ("<!-- exeris-bot: l2-verdict agent=exeris-evaluator decision=BLOCKED -->\n"
-                 "## L2 review — `exeris-evaluator` — **BLOCKED**")
+                 "## Review — `exeris-evaluator` — **BLOCKED**")
         p = run(root, tmp, verdict_doc=verdict(), current="hard-block",
                 comments=[by_bot(other)])
         assert p["labels_remove"] == [], p
@@ -804,11 +804,11 @@ def main() -> int:
     @case("a ready run that lost its gates asks for the review again")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", skip_kind="ready",
-                current="needs-l2-review",
+                current="needs-review",
                 l1={"docs-lint": "cancelled", "commit-lint": "cancelled",
                     "pr-body-check": "cancelled"})
         assert p["conclusion"] == "red", p
-        assert p["labels_add"] == ["needs-l2-review"], p
+        assert p["labels_add"] == ["needs-review"], p
         assert gate(tmp, p) == 1
 
     # This case used to assert the WORDING of the notice a fully cancelled run published: the reason
@@ -938,7 +938,7 @@ def main() -> int:
         assert p["conclusion"] == "green", p
         assert "arkstack" in p["reason"], p
         assert p["comment"].startswith(f"<!-- exeris-bot: l2-override by=arkstack sha={'e' * 40} -->"), p
-        assert "l2-human-reviewed" in p["labels_remove"], p
+        assert "human-reviewed" in p["labels_remove"], p
         assert gate(tmp, p) == 0
 
     @case("the record, not the label, is what greens the runs that follow")
@@ -995,7 +995,7 @@ def main() -> int:
     @case("a block that lands after the override is not answered by it")
     def _(tmp):
         over = by_bot(override_line("arkstack", "e" * 40), 2)
-        later = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 5)
+        later = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**", 5)
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, skip_kind="not-ready",
                 comments=[over, later])
         assert p["conclusion"] == "red", p
@@ -1009,13 +1009,13 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack")
         assert p["conclusion"] == "green", p
         assert "outranks this routine" in p["comment"], p["comment"][:300]
-        assert "l2-human-reviewed" in p["labels_remove"], p
+        assert "human-reviewed" in p["labels_remove"], p
         assert gate(tmp, p) == 0
 
     # One condition, and it is not a limit on the person: a block is answered, not stepped over.
     @case("the override over a standing block is refused until the person says what it answers")
     def _(tmp):
-        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**"
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
                 comments=[by_bot(blocked, 2)])
         assert p["conclusion"] == "red", p
@@ -1024,7 +1024,7 @@ def main() -> int:
 
     @case("and greens once they have, quoting them")
     def _(tmp):
-        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**"
         answer = {"id": 7, "source": "issue-comment", "author": "arkstack", "author_type": "User",
                   "created_at": "2026-09-15T00:00:09Z",
                   "body": "The cited rule was retired in ADR-085 §M.38; nothing to fix."}
@@ -1037,7 +1037,7 @@ def main() -> int:
     # Before the block there was nothing to answer, so it is not an answer.
     @case("a comment written before the block does not answer it")
     def _(tmp):
-        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**"
         earlier = {"id": 1, "source": "issue-comment", "author": "arkstack", "author_type": "User",
                    "created_at": "2026-09-15T00:00:01Z", "body": "Opening this for review."}
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
@@ -1048,7 +1048,7 @@ def main() -> int:
     # Somebody else's comment is not this person's account of what they did.
     @case("another person's comment does not answer the block for the one overriding")
     def _(tmp):
-        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**"
         other = {"id": 9, "source": "issue-comment", "author": "mallory", "author_type": "User",
                  "created_at": "2026-09-15T00:00:09Z", "body": "Looks fine to me."}
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
@@ -1058,7 +1058,7 @@ def main() -> int:
     # A block against a tree that has moved is not a block against this one.
     @case("a block covering an older commit does not hold the override")
     def _(tmp):
-        stale = marker_line("BLOCKED", sha="a" * 40) + "\n## L2 review — **BLOCKED**"
+        stale = marker_line("BLOCKED", sha="a" * 40) + "\n## Review — **BLOCKED**"
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
                 comments=[by_bot(stale, 2)])
         assert p["conclusion"] == "green", p
@@ -1103,7 +1103,7 @@ def main() -> int:
     OLD = "0f0f0f0f0f0f"
 
     def standing(decision, sha):
-        return [by_bot(marker_line(decision, sha=sha) + "\n## L2 review", 4)]
+        return [by_bot(marker_line(decision, sha=sha) + "\n## Review", 4)]
 
     @case("nobody has asked for a review yet, so there is nothing standing and it is red")
     def _(tmp):
@@ -1181,7 +1181,7 @@ def main() -> int:
             for banned in ("earlier", "no longer", "takes back", "withdraw", "stopped being true",
                            "an earlier run", "previous"):
                 assert banned not in body, (kw, banned, p["comment"][:240])
-            assert "## l2 review — not run" in body, (kw, p["comment"][:120])
+            assert "## review — not run" in body, (kw, p["comment"][:120])
 
     # The withdrawal must not become the fault it removes. Writing a NONE where none stood would
     # hand `standing_gate` something to refuse on the next label event, and a pull request that is
@@ -1197,7 +1197,7 @@ def main() -> int:
     @case("a standing verdict is not a notice, and the restatement leaves it alone")
     def _(tmp):
         for decision in ("PASS", "CONDITIONAL", "BLOCKED"):
-            body = marker_line(decision, sha="a" * 40) + "\n## L2 review — findings"
+            body = marker_line(decision, sha="a" * 40) + "\n## Review — findings"
             p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[by_bot(body)])
             assert p["comment"] == "", (decision, p["comment"][:200])
 
@@ -1250,22 +1250,22 @@ def main() -> int:
         all_cancelled = {"docs-lint": "cancelled", "commit-lint": "cancelled",
                          "pr-body-check": "cancelled"}
         p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=all_cancelled,
-                current="needs-l2-review", head_sha="b" * 40)
+                current="needs-review", head_sha="b" * 40)
         # Silent, but not green: a run that was replaced is not evidence of a passing one.
         assert p["conclusion"] == "red" and p["comment"] == "", p
-        assert p["labels_add"] == ["needs-l2-review"], p
+        assert p["labels_add"] == ["needs-review"], p
         assert gate(tmp, p) == 1
 
     @case("one broken gate among cancelled ones is still worth saying")
     def _(tmp):
         mixed = {"docs-lint": "failure", "commit-lint": "cancelled", "pr-body-check": "success"}
         p = run(root, tmp, outcome="skipped", skip_kind="ready", l1=mixed,
-                current="needs-l2-review", head_sha="b" * 40)
+                current="needs-review", head_sha="b" * 40)
         assert p["conclusion"] == "red", p
         assert "did not pass" in p["comment"] and "`docs-lint`" in p["comment"], p["comment"][:250]
         assert "cancelled" in p["comment"] and "`commit-lint`" in p["comment"], p["comment"][:250]
         # The review was asked for and never happened, so the request is put back.
-        assert p["labels_add"] == ["needs-l2-review"], p
+        assert p["labels_add"] == ["needs-review"], p
 
     @case("gates that simply failed are named, and the run is not treated as replaced")
     def _(tmp):
@@ -1321,7 +1321,7 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=None, workflow_touching="true", head_sha="a" * 40)
         assert p["conclusion"] == "red", p
         assert "enters through" in p["comment"], p["comment"][:300]
-        assert "`l2-human-reviewed`" in p["comment"], p["comment"][:300]
+        assert "`human-reviewed`" in p["comment"], p["comment"][:300]
         assert "look at its log" not in p["comment"], p["comment"][:300]
         assert gate(tmp, p) == 1
 
@@ -1342,7 +1342,7 @@ def main() -> int:
         assert "enters through" not in p["comment"], p["comment"][:300]
         assert "look at its log" in p["comment"], p["comment"][:300]
 
-    # WHO APPLIED THE LABEL. `l2-human-reviewed` is an ordinary label and `pull-requests: write` is
+    # WHO APPLIED THE LABEL. `human-reviewed` is an ordinary label and `pull-requests: write` is
     # all it takes to apply one, so the capability "tell the required check a human reviewed this"
     # was held by every App installed on the organisation. The guard that existed lived in a
     # workflow expression, read a login where GitHub publishes a type, and — refusing — left the
@@ -1359,14 +1359,14 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40,
                 override_by="exeris-bot[bot]", override_by_type="Bot")
-        assert "l2-human-reviewed" in p["labels_remove"], p
+        assert "human-reviewed" in p["labels_remove"], p
 
     # Not red BECAUSE of the label. A bot touching a label is not evidence about the change in
     # either direction, and flipping a sound pull request red on one is the same fault as greening
     # it, pointed the other way — the green-then-red flip this file already carries a case for.
     @case("a refused override leaves a standing PASS green")
     def _(tmp):
-        standing = marker_line("PASS", sha="e" * 40) + "\n## L2 review — **PASS**"
+        standing = marker_line("PASS", sha="e" * 40) + "\n## Review — **PASS**"
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, outcome="skipped",
                 l1=GREEN_L1, skip_kind="not-ready", comments=[by_bot(standing, 2)],
                 override_by="exeris-bot[bot]", override_by_type="Bot")
@@ -1375,7 +1375,7 @@ def main() -> int:
 
     @case("and a standing BLOCKED red, which the refusal does not lift")
     def _(tmp):
-        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**"
         p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, outcome="skipped",
                 l1=GREEN_L1, skip_kind="not-ready", comments=[by_bot(blocked, 2)],
                 override_by="exeris-bot[bot]", override_by_type="Bot")
@@ -1429,14 +1429,14 @@ def main() -> int:
     # point: once something has, the colour follows the review, exactly as it does for a person.
     @case("and it goes green on a standing verdict like anyone else's")
     def _(tmp):
-        standing = marker_line("PASS", sha="e" * 40) + "\n## L2 review — **PASS**"
+        standing = marker_line("PASS", sha="e" * 40) + "\n## Review — **PASS**"
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="bot-authored", head_sha="e" * 40, comments=[by_bot(standing, 2)])
         assert p["conclusion"] == "green", p
 
     @case("a standing block on a bot's pull request is not skipped past")
     def _(tmp):
-        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**"
+        blocked = marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**"
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="bot-authored", head_sha="e" * 40, comments=[by_bot(blocked, 2)])
         assert p["conclusion"] == "red", p
@@ -1480,7 +1480,7 @@ def main() -> int:
 
     @case("and the standing notice says who approved it and on which commit")
     def _(tmp):
-        notice = marker_line("NONE", sha="e" * 40) + "\n## L2 review — not run\n\nNothing ran."
+        notice = marker_line("NONE", sha="e" * 40) + "\n## Review — not run\n\nNothing ran."
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="bot-authored", head_sha="e" * 40, reviews=[review()],
                 comments=[by_bot(notice, 2)])
@@ -1547,7 +1547,7 @@ def main() -> int:
     # would qualify was given before there was a block to answer.
     @case("a block that lands after the approval is not answered by it")
     def _(tmp):
-        later = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 30)
+        later = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**", 30)
         since = {"id": 40, "source": "issue-comment", "author": "arkstack", "author_type": "User",
                  "created_at": "2026-09-15T00:00:40Z", "body": "Looking at the block now."}
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
@@ -1560,7 +1560,7 @@ def main() -> int:
     # block is answered, not stepped over, and an approval with nothing said is stepping over it.
     @case("an approval over a standing block says nothing, so it does not lift it")
     def _(tmp):
-        blocked = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 5)
+        blocked = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**", 5)
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="review-event", head_sha="e" * 40, reviews=[review(second=10)],
                 comments=[blocked])
@@ -1568,7 +1568,7 @@ def main() -> int:
 
     @case("and lifts it when the approval says what the block got wrong")
     def _(tmp):
-        blocked = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## L2 review — **BLOCKED**", 5)
+        blocked = by_bot(marker_line("BLOCKED", sha="e" * 40) + "\n## Review — **BLOCKED**", 5)
         said = {"id": 10, "source": "review", "author": "arkstack", "author_type": "User",
                 "created_at": "2026-09-15T00:00:10Z", "body": "The cited rule does not apply here."}
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
