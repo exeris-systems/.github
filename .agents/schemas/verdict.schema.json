@@ -20,12 +20,13 @@
           ]
         },
         "part": {
-          "description": "The part of `docs-guardrails-review.md` a verdict judged, where the routine runs as parts, one run each. Absent on a verdict of the whole routine. `repo` is the calling repository's own extension; the other four are the routine's `## Part` sections. The same role is the author whatever part it judged, which is why this is a field and not a value of `agent`.",
+          "description": "The part of `docs-guardrails-review.md` a verdict judged, where the routine runs as parts, one run each. Absent on a verdict of the whole routine. `repo` is the calling repository's own extension; the other five are the routine's `## Part` sections. The same role is the author whatever part it judged, which is why this is a field and not a value of `agent`.",
           "enum": [
             "pr",
             "docs",
             "records",
             "code-docs",
+            "code",
             "repo"
           ]
         },
@@ -45,6 +46,7 @@
                   "docs",
                   "records",
                   "code-docs",
+                  "code",
                   "repo"
                 ]
               },
@@ -95,6 +97,7 @@
                       "docs",
                       "records",
                       "code-docs",
+                      "code",
                       "repo"
                     ]
                   }

@@ -30,19 +30,20 @@ The reverse case is the checkout showing less than the branch. `.claude/agents/*
 
 ## Inputs
 - The PR body (template per `pr-conventions.md`) and the squash-commit subject.
-- The diff, restricted to: `docs/**`, `*.md`, `CLAUDE.md`, `.github/**`, `CHANGELOG.md`, `MIGRATION*.md`, `adr-index.md`, Java files whose diff touches `/** … */` blocks.
+- The diff, restricted to: `docs/**`, `*.md`, `CLAUDE.md`, `.github/**`, `CHANGELOG.md`, `MIGRATION*.md`, `adr-index.md`, Java files whose diff touches `/** … */` blocks — and, for the `code` part, the source, script, workflow and build files its heading names.
 - The standards: `exeris-docs/standards/*.md`. Cite rule numbers in findings (`docs-style-guide.md rule 5`).
 
 ## Parts
 
-The steps are grouped into four parts. A part names the files it applies to and judges nothing
+The steps are grouped into five parts. A part names the files it applies to and judges nothing
 else: where the diff has none of them, the part finds nothing and says nothing. The `pr` part is the
 exception, because its subject is the pull request itself, and it applies to every pull request
 whatever it changes. Each rule keeps its number wherever it sits, so a finding cites
 `docs-guardrails-review.md#<n>` whichever part raised it. Two parts may apply to one file — an ADR
-is a page under `docs` and a record under `records` — and each judges it by its own rules. A
-repository's own extension, when it passes one, is a fifth part, `repo`, described under
-`## Repository extension`; like `pr`, it applies to every pull request of that repository.
+is a page under `docs` and a record under `records`, a Java file has comments under `code-docs` and
+behaviour under `code` — and each judges it by its own rules. A repository's own extension, when it
+passes one, is a sixth part, `repo`, described under `## Repository extension`; like `pr`, it
+applies to every pull request of that repository.
 
 ## Part `pr` — the pull request, its commits and its compatibility claim (every pull request)
 
@@ -117,6 +118,18 @@ TypeScript doc comments and goldens:
 20d. `api/*.api.md` or `api/tools.api.json` changed: a `-` line (removed tool/export/`required` input) with *Compatibility impact* `none` → `[HARD BLOCK]`; an added line with `none` → `[STYLE]` (should say `additive`). Golden changed without the `api-surface` label → `[STYLE]`.
 20e. Tool `description` string in `src/tools/**` changed → treat as 20d: it is the public documentation the model reads, and the golden diff must show it.
 20f. Emitter header string changed, or a new emitter with its own header text instead of the shared helper → `[CATEGORY-B]`; a file under `src/app/generated/**` edited without a generator run in the same PR → `[CATEGORY-B]`.
+
+## Part `code` — what the changed code does (source, scripts, workflows and build files: `*.java`, `*.kt`, `*.ts`, `*.tsx`, `*.js`, `*.mjs`, `*.py`, `*.sh`, `*.yml`, `*.yaml`, `pom.xml`, `package.json`, Gradle build files; not generated output)
+
+What every repository's code owes, whatever its own rules add. A repository's invariants — its boundaries, its hot path, its memory model, its modes — are its `repo` part; this part is the review its `repo-routine` would otherwise have to restate. It judges behaviour, not what the comments say about it (`code-docs`), and not whether the body describes the diff (`pr`). Formatting, naming and idiom are the linters' and are not findings here.
+
+A finding here names the line and the input, state or sequence that makes it true, traced through the callers the checkout has. A defect you cannot reach from anything in the repository is a question, and it goes in `suggestions`, not in `findings`.
+
+26. **Correctness.** The change is wrong on an input or path it makes reachable: an unhandled edge case, an error path that swallows the failure or leaks what it acquired, a contract its callers rely on broken, a merge artefact (a duplicated block, an orphaned branch, a conflict marker) → `[HARD BLOCK]`.
+27. **Published surface.** A public type, method, annotation, configuration key, CLI flag, workflow input or wire format removed, renamed, narrowed, or given new behaviour under its old name, with no deprecation path — the old form kept and marked for a release — and no `breaking (ADR-NNN)` in the body → `[CONTRACT]`.
+28. **Build and publication.** A build-file change that alters what consumers receive — a module entering or leaving the published set, a dependency's scope or version reaching them, a plugin or profile a gate depends on disabled, publication metadata removed — and that the body does not name → `[CONTRACT]`. A build that cannot succeed as written (a module that does not exist, a property nothing defines) → `[HARD BLOCK]`.
+29. **Risk.** A secret written into code, a log or an artefact; untrusted input reaching a shell, a query or a path unescaped; a workflow that runs pull-request content with secrets or write scope → `[HARD BLOCK]`. Shared mutable state touched without the guard its neighbours use, or a blocking call or per-call allocation added on a path the repository names hot → `[CONTRACT]`.
+30. **A change in behaviour has a test that fails without it.** None, or one that cannot fail on the defect it names — it asserts nothing the change affects, or it passes against the code before the change → `[CONTRACT]`. A change that alters no behaviour needs none, and saying so is enough.
 
 ## Repository extension
 A calling repository may add to this routine. It may not subtract from it. Two optional inputs carry the extension, and a repository that passes neither gets this routine and nothing else.

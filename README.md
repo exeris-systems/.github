@@ -17,8 +17,9 @@ TSDoc. These are mechanical and they run in the adopting repository's CI.
 
 **The review and its publication** (ADR-087). `docs-guardrails-review.md` is the organisation's
 review routine — one copy, checked out and handed to a model verbatim, so changing it changes every
-repository at once. Its rules are grouped into parts — `pr`, `docs`, `records`, `code-docs`, and a
-repository's own rules as `repo` — and a repository may run it whole or one run per part. What the review produces is a `verdict`: a JSON object this repository defines a
+repository at once. Its rules are grouped into parts — `pr`, `docs`, `records`, `code-docs`,
+`code`, and a repository's own rules as `repo` — and a repository may run it whole or one run per
+part. What the review produces is a `verdict`: a JSON object this repository defines a
 schema for, composed over the `exeris-agents` bundle vendored under `.agents/`. `docs-review.yml`
 produces it and `publish-verdict.yml` publishes it under the `exeris-bot` identity — posting the
 review, applying the labels of `labels-from-verdict.json`, and being the required check that is red
@@ -161,10 +162,10 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    gets a green check. Both are refused when a bot applies them.
 
    **Reviewing in parts is its own opt-in.** `review-in-parts: true` runs `pr` always, `repo` when
-   `repo-routine` is set, and `docs`, `records` and `code-docs` only where their files are in the
-   diff, one model run each, and publishes one verdict with a `Part` column and a line per part. A
-   part that produces nothing makes the check red. With capture on, each part's run is its own run
-   record.
+   `repo-routine` is set, and `docs`, `records`, `code-docs` and `code` only where their files are
+   in the diff, one model run each, and publishes one verdict with a `Part` column and a line per
+   part. A part that produces nothing makes the check red. With capture on, each part's run is its
+   own run record.
 5a. **Capture is the second opt-in, and a separate decision.** `capture: true` adds a third job:
    the runner's execution log is committed to the streams repository as content, one run record is
    assembled from what the producing job exported about the run, and the day's rows reach

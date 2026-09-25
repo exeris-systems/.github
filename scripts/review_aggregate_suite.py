@@ -72,6 +72,7 @@ def log(name, *docs):
 
 PLAN = {"parts": ["pr", "docs", "records"],
         "skipped": {"code-docs": "no Java, TypeScript, Python, YAML or shell file in the diff",
+                    "code": "no source, script, workflow or build file in the diff",
                     "repo": "the repository passes no `repo-routine`"}}
 
 
@@ -92,7 +93,8 @@ def _():
     assert validate(agg) == [], validate(agg)
     assert [f["part"] for f in agg["findings"]] == ["docs", "records"], agg["findings"]
     assert status(agg) == {"pr": "reviewed", "docs": "reviewed", "records": "reviewed",
-                           "code-docs": "skipped", "repo": "skipped"}, agg["parts"]
+                           "code-docs": "skipped", "code": "skipped",
+                           "repo": "skipped"}, agg["parts"]
     assert [p.get("decision") for p in agg["parts"][:3]] == ["PASS", "CONDITIONAL", "BLOCKED"]
 
 
@@ -188,7 +190,7 @@ def _():
                        {"pr": log("n-pr", verdict("pr"))}, validate)
     got = {p["part"]: p for p in agg["parts"]}
     assert set(got) == set(ra.PARTS), got
-    for part in ("records", "code-docs", "repo"):
+    for part in ("records", "code-docs", "code", "repo"):
         assert got[part]["status"] == "missing" and "plan" in got[part]["reason"], got[part]
     assert got["docs"]["status"] == "skipped", got["docs"]
 
