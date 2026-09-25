@@ -36,7 +36,7 @@ if HERE not in sys.path:
 from publish_verdict import execution_verdicts, schema_errors  # noqa: E402
 from review_plan import PARTS  # noqa: E402
 
-AGENT = "exeris-org-docs-reviewer"
+AGENT = "exeris-org-reviewer"
 SEVERITY = {"PASS": 0, "CONDITIONAL": 1, "BLOCKED": 2}
 RESULT_RANK = {"not-run": 0, "pass": 1, "fail": 2}
 

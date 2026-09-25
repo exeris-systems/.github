@@ -15,7 +15,7 @@
 # network and is exercised case by case by `publish_verdict_suite.py` in this repository's own CI.
 #
 # WHICH SCHEMA VALIDATES is fixed here and is NOT an input. `.github`'s composed schema narrows
-# `agent` to `exeris-org-docs-reviewer`, so a verdict from `kernel-pr-review.md` — `agent:
+# `agent` to `exeris-org-reviewer`, so a verdict from `kernel-pr-review.md` — `agent:
 # exeris-evaluator` — will not validate against it, and a repository's own routine therefore cannot
 # publish through this workflow yet. Taking the schema from the reviewed checkout would fix that and
 # would also let a pull request weaken the contract it is judged by, which is the invariant this
@@ -553,10 +553,13 @@ jobs:
             # published; a no-verdict notice replaces only another notice, so a failed run cannot
             # erase findings. Only this bot's own issue comments are candidates: a marker quoted
             # inside a review would otherwise hand a review id to the issue-comment endpoint.
+            # `marker_searches` is the search and the same search under the role's earlier names, so a
+            # comment published before a rename is edited rather than left beside a new one.
             search=$(jq -r '.marker_search // ""' plan.json)
-            existing=$(jq -r --arg m "$search" --arg bot "$BOT_LOGIN" \
-              'map(select(.source == "issue-comment" and .author == $bot
-                          and .body != null and (.body | startswith($m))))
+            existing=$(jq -r --argjson ms "$(jq -c '.marker_searches // [.marker_search // ""]' plan.json)" \
+              --arg bot "$BOT_LOGIN" \
+              'map(select(.source == "issue-comment" and .author == $bot and .body != null
+                          and (.body as $b | any($ms[]; . as $m | $b | startswith($m)))))
                | last | .id // empty' comments.json)
             # What the search was, what it had to choose from, and what it chose. Written because a
             # publication that creates a second comment where it should have updated the first has

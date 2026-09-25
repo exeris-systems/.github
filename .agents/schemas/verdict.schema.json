@@ -8,7 +8,7 @@
       "properties": {
         "agent": {
           "enum": [
-            "exeris-org-docs-reviewer"
+            "exeris-org-reviewer"
           ]
         },
         "scope_class": {
