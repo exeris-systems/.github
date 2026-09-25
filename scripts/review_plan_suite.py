@@ -45,7 +45,7 @@ def parts(files, routine=""):
 def _():
     got = rp.plan(["scripts/x.txt"], "")
     assert got["parts"] == ["pr"], got
-    assert set(got["skipped"]) == {"docs", "records", "code-docs", "repo"}, got
+    assert set(got["skipped"]) == {"docs", "records", "code-docs", "code", "repo"}, got
 
 
 @case("every part is either run or skipped with a reason, never both and never neither")
@@ -74,10 +74,33 @@ def _():
 @case("code, comments and goldens run `code-docs`")
 def _():
     for f in ("core/src/main/java/A.java", "src/index.ts", "scripts/x.py",
-              ".github/workflows/w.yml", "config.yaml", "tools/run.sh",
-              "packages/sdk/api/sdk.api.json", "src/tools/list.ts",
-              "src/app/generated/model.txt"):
+              ".github/workflows/w.yml", "config.yaml", "tools/run.sh", "src/tools/list.ts"):
+        assert parts([f]) == ["pr", "code-docs", "code"], f
+    for f in ("packages/sdk/api/sdk.api.json", "src/app/generated/model.txt"):
         assert parts([f]) == ["pr", "code-docs"], f
+
+
+@case("`code` reaches every language a build runs, which `code-docs` does not")
+def _():
+    for f in ("src/Main.kt", "web/app.tsx", "web/util.js", "web/esm.mjs"):
+        assert parts([f]) == ["pr", "code"], f
+
+
+@case("a build file is code by its name, at the root and in a module alike")
+def _():
+    for f in ("pom.xml", "core/pom.xml", "package.json", "packages/sdk/package.json",
+              "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"):
+        assert parts([f]) == ["pr", "code"], f
+    # A name that only contains a build file's is not one.
+    assert parts(["docs/pom.xml.txt", "my-package.json"]) == ["pr"]
+
+
+@case("generated output is not `code`, whatever its suffix: its generator is the code under review")
+def _():
+    assert parts(["src/app/generated/model.ts"]) == ["pr", "code-docs"]
+    assert parts(["target/generated/Model.java"]) == ["pr", "code-docs"]
+    # A directory that merely contains the word is not generated output.
+    assert "code" in parts(["src/regenerated/Model.java"])
 
 
 @case("each scope clause holds on its own, with no other clause to lean on")
@@ -121,9 +144,10 @@ def _():
         subprocess.run([sys.executable, os.path.join(HERE, "review_plan.py"), "--files", files,
                         "--out", plan_path], check=True, env=env, capture_output=True)
         lines = dict(line.split("=", 1) for line in open(out, encoding="utf-8").read().splitlines())
-        assert json.loads(lines["parts"]) == ["pr", "docs", "code-docs"], lines
+        assert json.loads(lines["parts"]) == ["pr", "docs", "code-docs", "code"], lines
         assert set(json.loads(lines["skipped"])) == {"records", "repo"}, lines
-        assert json.load(open(plan_path, encoding="utf-8"))["parts"] == ["pr", "docs", "code-docs"]
+        assert json.load(open(plan_path, encoding="utf-8"))["parts"] == ["pr", "docs", "code-docs",
+                                                                         "code"]
 
 
 @case("the plan's parts are the routine's `## Part` headings, and `repo` is its extension")

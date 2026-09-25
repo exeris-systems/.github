@@ -28,9 +28,15 @@ import sys
 
 # The order is the order the aggregate reports parts in: the pull request first, then what it
 # changed, then the repository's own rules.
-PARTS = ("pr", "docs", "records", "code-docs", "repo")
+PARTS = ("pr", "docs", "records", "code-docs", "code", "repo")
 
 CODE_SUFFIXES = (".java", ".ts", ".py", ".yml", ".yaml", ".sh")
+
+# What `code` judges is behaviour, so it reaches further than the comments do: every language a
+# build runs, and the build files that decide what consumers receive.
+SOURCE_SUFFIXES = (".java", ".kt", ".ts", ".tsx", ".js", ".mjs", ".py", ".sh", ".yml", ".yaml")
+BUILD_FILES = ("pom.xml", "package.json", "build.gradle", "build.gradle.kts",
+               "settings.gradle", "settings.gradle.kts")
 
 
 def in_docs(path: str) -> bool:
@@ -52,11 +58,20 @@ def in_code_docs(path: str) -> bool:
             or "/src/tools/" in "/" + path or "generated" in dirs)
 
 
+def in_code(path: str) -> bool:
+    """Source, scripts, workflows and build files, and not generated output: a generated file
+    changes because its generator did, and the generator is the code under review."""
+    dirs, base = path.split("/")[:-1], posixpath.basename(path)
+    return (path.endswith(SOURCE_SUFFIXES) or base in BUILD_FILES) and "generated" not in dirs
+
+
 SCOPES = {
     "docs": (in_docs, "no `*.md` and no `.cursorrules` in the diff"),
     "records": (in_records, "no ADR, `adr-index.md`, `*.link.md` or `standards/` file in the diff"),
     "code-docs": (in_code_docs, "no Java, TypeScript, Python, YAML or shell file, API golden or "
                                 "generated output in the diff"),
+    "code": (in_code, "no source, script, workflow or build file outside generated output in the "
+                      "diff"),
 }
 
 

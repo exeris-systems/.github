@@ -299,8 +299,8 @@ jobs:
       # WHICH of the routine's file-scoped steps apply — not WHETHER the routine runs. The routine
       # is Step 1b of the PR-review router and the router's own heading is "Docs & hygiene review
       # (ALL PRs)": its `pr` part judges the pull request BODY against the diff, and its commits.
-      # That needs no `.md` in the diff, and the parts that do — `docs`, `records`, `code-docs` —
-      # already find nothing and say nothing when there is nothing to find.
+      # That needs no `.md` in the diff, and the parts that do — `docs`, `records`, `code-docs`,
+      # `code` — already find nothing and say nothing when there is nothing to find.
       #
       # Gating the whole routine on this list meant a pull request with no documentation in it got no
       # review of its body at all. Measured 2026-09-17: of five pull requests opened that day, three
@@ -514,8 +514,8 @@ jobs:
           to make one with. The diff is the checkout: `git diff` against the base SHA that file
           names.
 
-          The routine's steps are grouped into parts, and each part names the files it applies
-          to: `docs`, `records` and `code-docs` apply to the files in this diff that they name
+          The routine's steps are grouped into parts, and each part names the files it applies to:
+          `docs`, `records`, `code-docs` and `code` apply to the files in this diff that they name
           and to no others; where the diff has none, they find nothing and you say nothing about
           them. That is not a reason to skip the review. The `pr` part judges the pull request's
           BODY against its diff, its commits and its compatibility claim, and it applies to every
