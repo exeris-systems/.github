@@ -6,6 +6,10 @@ can read it — this checker and `ts/eslint.tsdoc.mjs`; Checkstyle cannot, so `j
 carries a regenerated copy, and a copy nothing compares is a copy that drifts. The last two cases
 are that comparison.
 
+One case is about `_common.Report` rather than this checker. This suite already drives `Report`, and
+it runs in both CI and `repo-checks`, so it is where the report's own output contract is held: a
+passing check writes its summary to stdout even where a step summary exists.
+
 Usage: comment_history_suite.py
 """
 from __future__ import annotations
@@ -88,10 +92,44 @@ def run_drift(rep: Report) -> int:
     return failures
 
 
+def run_emit() -> int:
+    """A passing report is on stdout whether or not a step summary is set, and in the summary too."""
+    import contextlib
+    import io
+    import tempfile
+    failures = 0
+    held = os.environ.get("GITHUB_STEP_SUMMARY")
+    with tempfile.TemporaryDirectory() as tmp:
+        for summary in (None, os.path.join(tmp, "summary.md")):
+            if summary:
+                os.environ["GITHUB_STEP_SUMMARY"] = summary
+            else:
+                os.environ.pop("GITHUB_STEP_SUMMARY", None)
+            r = Report(name="emit_case")
+            r.checked = 1
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = r.emit()
+            where = "with a step summary" if summary else "without a step summary"
+            if code != 0 or "## emit_case" not in out.getvalue():
+                failures += 1
+                print(f"::error title=comment_history_suite::Report.emit {where}: a passing report "
+                      f"is not on stdout, so `repo-checks.out` would show the check as never run")
+            if summary and "## emit_case" not in open(summary, encoding="utf-8").read():
+                failures += 1
+                print("::error title=comment_history_suite::Report.emit no longer writes the step "
+                      "summary")
+    if held is None:
+        os.environ.pop("GITHUB_STEP_SUMMARY", None)
+    else:
+        os.environ["GITHUB_STEP_SUMMARY"] = held
+    return failures
+
+
 def main() -> int:
     rep = Report(name="comment_history_suite")
-    failures = run_cases(rep) + run_drift(rep)
-    total = len(CASES) + len(chk.alternatives()) + 3
+    failures = run_cases(rep) + run_drift(rep) + run_emit()
+    total = len(CASES) + len(chk.alternatives()) + 3 + 2
     print(f"comment_history_suite: ran {total} cases, {failures} failures")
     step = os.environ.get("GITHUB_STEP_SUMMARY")
     if step:
