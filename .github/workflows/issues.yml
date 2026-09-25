@@ -3,7 +3,7 @@
 #
 # It was missing, and the consequence was concrete rather than tidy: `.github` defines `labels.yml`
 # and carried almost none of it. `hard-block`, `cross-repo`, `tck-debt`, `phase-gated` and
-# `needs-l2-review` did not exist here, so nobody could apply the label the readiness trigger waits
+# `needs-review` did not exist here, so nobody could apply the label the readiness trigger waits
 # for — and the labels the publication does apply were created implicitly by the issues API in
 # whatever colour it chose, the taxonomy bypassed in the repository that owns it.
 #
@@ -13,7 +13,7 @@ name: issues
 on:
   # The taxonomy syncs when it CHANGES, not only once a week. A label defined in `labels.yml` and
   # not yet created is a label nothing can apply — and the review that tells a reader to apply
-  # `l2-human-reviewed` was written before this trigger existed, so its advice was not actionable
+  # `human-reviewed` was written before this trigger existed, so its advice was not actionable
   # for as long as nobody remembered to dispatch this file by hand. A definition that needs a human
   # to remember it is a definition that drifts.
   #

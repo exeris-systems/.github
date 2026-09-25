@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Every door that asks "is a person doing this?" asks GitHub's own field — ADR-087 §A.3, §B.8.
 
-Two labels decide things no routine may decide for itself. `needs-l2-review` starts a review;
-`l2-human-reviewed` tells the required check that a person read a change the routine cannot. Both
+Two labels decide things no routine may decide for itself. `needs-review` starts a review;
+`human-reviewed` tells the required check that a person read a change the routine cannot. Both
 are ordinary labels: anything holding `pull-requests: write` can apply either, `exeris-bot` among
 them, and a second App in this organisation makes that an ordinary Tuesday rather than a thought
 experiment. Applying them is the capability, and a gate that can hand itself that capability is not

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """`entry_workflow.sh`'s fixture suite — ADR-087's override turns on this answer.
 
-The question decides whether `l2-human-reviewed` may green a required check with no review behind
+The question decides whether `human-reviewed` may green a required check with no review behind
 it, so a wrong `true` is a fail-open. Each case below is a `(workflow ref, repository, changed
 paths)` triple and the answer it must give. They run the real script, because a suite that restates
 the logic tests the restatement.

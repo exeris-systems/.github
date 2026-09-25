@@ -666,7 +666,7 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     decision = verdict.get("decision", "?")
     agent = str(verdict.get("agent", "unknown"))
     out = [marker(agent, str(decision), args.head_sha),
-           f"## L2 review — `{agent}` — **{decision}**", ""]
+           f"## Review — `{agent}` — **{decision}**", ""]
     label = verdict.get("decision_label")
     if label:
         out += [plain(label), ""]
@@ -794,7 +794,7 @@ def standing_approvals(path: str, head: str) -> list[tuple[str, str, str, str]]:
 def person_approval(args, dump: str, blocked_at: str | None) -> tuple[str, str, str, str] | None:
     """The newest standing approval of this head BY A PERSON, as a human review record, or None.
 
-    The same fact `l2-human-reviewed` records, reached through the gesture GitHub already asks of a
+    The same fact `human-reviewed` records, reached through the gesture GitHub already asks of a
     reviewer, so a person reviewing a pull request they did not open makes one gesture for one fact.
     The label stays the only door on a person's OWN pull request, which GitHub will not let them
     approve.
@@ -830,7 +830,7 @@ def machine_approvals(args) -> list[str]:
 
 
 def recorded_override(dump: str, bot_login: str, head: str) -> tuple[str, str, str, str] | None:
-    """The bot's record of `l2-human-reviewed`, when it covers this head."""
+    """The bot's record of `human-reviewed`, when it covers this head."""
     standing = standing_override(dump, bot_login)
     if standing and head and standing[1][:7] == head[:7]:
         return (*standing, BY_LABEL)
@@ -840,7 +840,7 @@ def recorded_override(dump: str, bot_login: str, head: str) -> tuple[str, str, s
 def human_review(args) -> tuple[str, str, str, str] | None:
     """A standing human review that still covers this head, as `(login, sha, when, how)`, or None.
 
-    Two gestures make one: the bot's record of `l2-human-reviewed`, and an approving review by a
+    Two gestures make one: the bot's record of `human-reviewed`, and an approving review by a
     person on this head. Both are read here so that every branch asking "has a person reviewed
     this?" gets the same answer from one place.
 
@@ -909,7 +909,7 @@ def restate_notice(plan: dict, args, said: str) -> None:
         return
     plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
     plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                       + "\n## L2 review — not run\n\n"
+                       + "\n## Review — not run\n\n"
                        + said + " The required check is green.\n")
 
 
@@ -988,7 +988,7 @@ def cmd_plan(args) -> int:
     # override used routinely has stopped being one.
     #
     # The bot records who looked and at which commit; the label is only the request, and it comes
-    # straight back off, exactly as `needs-l2-review` does. What the check reads afterwards is the
+    # straight back off, exactly as `needs-review` does. What the check reads afterwards is the
     # record, not the label — a label anyone can re-apply after a push, while the record carries the
     # commit it was made against and is left behind by the next one.
     # THE LABEL IS A CLAIM THAT A PERSON READ THIS. Anything holding `pull-requests: write` can
@@ -1010,9 +1010,9 @@ def cmd_plan(args) -> int:
         standing_decision(plan, args)
         plan["marker_search"] = "<!-- exeris-bot: l2-override-refused"
         plan["comment"] = (override_refused_marker(plain(args.override_by), args.head_sha or "")
-                           + "\n## L2 review — the override was refused\n\n"
+                           + "\n## Review — the override was refused\n\n"
                            + f"`{plain(args.override_by)}` applied "
-                           + f"`{plain(args.override_label or 'l2-human-reviewed')}`. That label "
+                           + f"`{plain(args.override_label or 'human-reviewed')}`. That label "
                            + "records that a **person** reviewed a change this routine cannot "
                            + f"read, and the principal that applied it is "
                            + f"`{plain(args.override_by_type or 'unknown')}` — not one. No review "
@@ -1057,9 +1057,9 @@ def cmd_plan(args) -> int:
             plan["agent"] = agent_for_block
             plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={agent_for_block} decision=NONE"
             plan["comment"] = (marker(agent_for_block, "NONE", args.head_sha)
-                               + "\n## L2 review — the block still stands\n\n"
+                               + "\n## Review — the block still stands\n\n"
                                + f"`{plain(args.override_by)}` applied "
-                               + f"`{plain(args.override_label or 'l2-human-reviewed')}` while a "
+                               + f"`{plain(args.override_label or 'human-reviewed')}` while a "
                                + "**BLOCKED** verdict stands against this commit. A human review "
                                + "outranks this routine's and can lift that block — but not "
                                + "silently.\n\nComment on this pull request saying what the block "
@@ -1081,7 +1081,7 @@ def cmd_plan(args) -> int:
             quoted = ("\n\nWhat it answers, in their words:\n\n> " + plain(clipped))
         plan["marker_search"] = "<!-- exeris-bot: l2-override"
         plan["comment"] = (override_marker(plain(args.override_by), args.head_sha or "")
-                           + "\n## L2 review — by hand\n\n"
+                           + "\n## Review — by hand\n\n"
                            + f"`{plain(args.override_by)}` reviewed this change themselves and "
                            + f"recorded it against `{head}`. " + why_here + quoted
                            + f"\n\nThe record covers `{head}` and nothing after it — a push leaves "
@@ -1160,7 +1160,7 @@ def cmd_plan(args) -> int:
                 if cancelled and not broke else
                 "Fix those first; the review runs once they are green.\n")
         plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                           + "\n## L2 review — not run\n\nThe L1 gates this review waits on "
+                           + "\n## Review — not run\n\nThe L1 gates this review waits on "
                            + "; ".join(said_md) + ".\n\n" + tail)
         return finish(plan, args)
     # §B.8's one green without a verdict, and the only one. It is decided here rather than in the
@@ -1220,18 +1220,18 @@ def cmd_plan(args) -> int:
         plan["marker_search"] = f"<!-- exeris-bot: l2-verdict agent={plan['agent']} decision=NONE"
         if refused:
             plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                               + "\n## L2 review — not run\n\n"
+                               + "\n## Review — not run\n\n"
                                + "This pull request changes the workflow file this run enters "
                                + "through, and the runner refuses to start on one: its own "
                                + "supply-chain guard, which no caller can configure away. Nothing "
                                + "was reviewed, and the required check is red rather than green so "
                                + "that nobody reads the absence as a pass.\n\n"
                                + "A person reviews the change and applies `"
-                               + plain(args.override_label or "l2-human-reviewed")
+                               + plain(args.override_label or "human-reviewed")
                                + "`. The record covers this commit and nothing after it.\n")
         else:
             plan["comment"] = (marker(plan["agent"], "NONE", args.head_sha)
-                               + "\n## L2 review — no verdict\n\n"
+                               + "\n## Review — no verdict\n\n"
                                + f"The producing job reported `{args.produce_outcome or 'unknown'}` "
                                + f"and {why}.\n\nThe required check is red because nothing was "
                                  "reviewed, not because a review found something. Re-run the job, "
@@ -1253,7 +1253,7 @@ def cmd_plan(args) -> int:
         refused_agent = args.expect_agent or "unknown"
         plan["agent"] = refused_agent
         plan["comment"] = (marker(refused_agent, "INVALID", args.head_sha)
-                           + "\n## L2 review verdict refused\n\nA verdict was produced and it does not "
+                           + "\n## Review verdict refused\n\nA verdict was produced and it does not "
                            "conform to `.agents/schemas/verdict.schema.json`:\n\n"
                            # The validator quotes the instance value it refused, so these
                            # strings are the reviewed repository's words too.
@@ -1377,10 +1377,10 @@ def main() -> int:
                    help="why the producing job did not run. `fork` and `draft` are about the pull request and are a green on their own; `bot-authored`, `not-ready`, `bot-event`, `review-event` and anything this file does not recognise — `draft-or-bot` from a caller pinned before the split included — hand the colour to the standing verdict")
     p.add_argument("--head-sha", default="",
                    help="the pull request head: recorded in the marker when a review runs, and\n                        compared with the standing verdict's commit when one does not")
-    p.add_argument("--review-label", default="needs-l2-review",
+    p.add_argument("--review-label", default="needs-review",
                    help="the label that asks for a review. Re-applied when a ready run lost its "
                         "gates, so the request survives the run that carried it")
-    p.add_argument("--override-label", default="l2-human-reviewed",
+    p.add_argument("--override-label", default="human-reviewed",
                    help="the label a person applies to record that they reviewed a change this "
                         "routine cannot read — one that touches a workflow file")
     p.add_argument("--override-by", default="",

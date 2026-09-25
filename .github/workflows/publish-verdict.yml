@@ -107,11 +107,11 @@ on:
           and a head past it means the review does not describe this pull request.
       review-label:
         type: string
-        default: "needs-l2-review"
+        default: "needs-review"
         description: "The label a human applies to ask for a review; the publication removes it afterwards"
       override-label:
         type: string
-        default: "l2-human-reviewed"
+        default: "human-reviewed"
         description: >-
           The label a person applies to record that THEY reviewed a change this routine cannot read
           — one that touches a workflow file, where `claude-code-action` refuses to start and the
@@ -420,7 +420,7 @@ jobs:
           # file under .github/workflows/", which is what this test asked before.
           #
           # It matters in the direction of the override. `workflow_touching` is what lets
-          # `l2-human-reviewed` green a required check without a review, so a test that is too broad
+          # `human-reviewed` green a required check without a review, so a test that is too broad
           # hands that power to pull requests a review could have judged — the fail-open this
           # narrowing closes.
           # The derivation lives in `scripts/entry_workflow.sh`, driven by
