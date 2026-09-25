@@ -81,9 +81,11 @@ INBOX_VISIBILITY = "public"
 
 EXECUTION_REPO = "exeris-systems/exeris-ai-execution"
 
-# What the produce job names the execution artefact of one pull request. It is what joins a stream
-# in the streams repository to the pull request this event is about, and `ci_row.pr_number` reads
-# the same name from the other end.
+# What the produce job names the execution artefact of one pull request: `l2-execution-<pr>`, or
+# `l2-execution-<pr>-<part>` for each part of a review that runs as several. It is what joins a
+# stream in the streams repository to the pull request this event is about, and it is read with
+# `ci_row.pr_number`, the same reading the row's producer applies, so a part's stream joins the pull
+# request its row was filed against.
 ARTIFACT_NAME = "l2-execution-{pull_request}"
 
 # The media type under which the host serves a file it declined to inline. The contents endpoint
@@ -603,7 +605,7 @@ def judge(args, fetcher, ci_row, tools, token) -> Decision:
                            f"that reviewed this pull request are not established")
     wanted = ARTIFACT_NAME.format(pull_request=args.pull_request)
     entries = [e for e in index if isinstance(e, dict) and e.get("repo") == args.repository
-               and e.get("artifact_name") == wanted]
+               and ci_row.pr_number(e.get("artifact_name")) == args.pull_request]
     if not entries:
         return out.nothing("no-stream",
                            f"the index holds no stream named `{wanted}` from this repository, so no "
