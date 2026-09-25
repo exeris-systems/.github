@@ -141,6 +141,8 @@ jobs:
         python3 scripts/comment_history_suite.py;
         python3 scripts/gate_vocabulary_check_suite.py;
         python3 scripts/review_surface_suite.py;
+        python3 scripts/status_capture_check.py --root .;
+        python3 scripts/status_capture_check_suite.py;
         git clone --quiet --depth 1 https://github.com/exeris-systems/exeris-ai-execution "$RUNNER_TEMP/execution";
         python3 scripts/capture_ci_row_suite.py --execution-root "$RUNNER_TEMP/execution";
         python3 scripts/judge_review_suite.py --execution-root "$RUNNER_TEMP/execution"
@@ -291,6 +293,15 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python scripts/review_inputs_check.py --root .
+      # A step reads a command's status to decide what a failure means — count it, filter it, carry
+      # on — and under the default `bash -e` a failing command ends the step first, so the status it
+      # reads is only ever 0. Nothing shows it until the command fails.
+      - name: A status is read where the command that set it cannot end the step
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet pyyaml
+          python scripts/status_capture_check.py --root .
+          python scripts/status_capture_check_suite.py
       # A run record states which instructions the repository put in front of the model, as one hash
       # over the prompt, the routine and the agent file. The event stream carries none of the three,
       # so a row either takes the hash from the job that rendered them or has it reconstructed from
