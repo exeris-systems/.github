@@ -40,7 +40,9 @@ else: where the diff has none of them, the part finds nothing and says nothing. 
 exception, because its subject is the pull request itself, and it applies to every pull request
 whatever it changes. Each rule keeps its number wherever it sits, so a finding cites
 `docs-guardrails-review.md#<n>` whichever part raised it. Two parts may apply to one file — an ADR
-is a page under `docs` and a record under `records` — and each judges it by its own rules.
+is a page under `docs` and a record under `records` — and each judges it by its own rules. A
+repository's own extension, when it passes one, is a fifth part, `repo`, described under
+`## Repository extension`; like `pr`, it applies to every pull request of that repository.
 
 ## Part `pr` — the pull request, its commits and its compatibility claim (every pull request)
 
@@ -94,7 +96,7 @@ Standards: adr-conventions.md, claims-and-evidence.md.
 14. Cross-repo ADR: stubs present or listed as pending in the same PR → else `[CROSS-REPO]`.
 14a. A performance, footprint, throughput or cost figure inside an ADR or a `standards/` page → `[HARD BLOCK]` (`claims-and-evidence.md` rule 6, ADR-085 §G.26a). The figure is usually a real measurement; the page is the fault, so the fix is to cite the report rather than to defend the number. Two things are not this and are not findings: a threshold in a `Reversed by:` clause, which states what evidence would overturn the decision rather than a property of the system, and a figure in an RFC or a Research document, which is what those are for. Read before this rule existed, ADR-088 carried five such figures past four review rounds — each one caught under some other rule, one per round, because none of them was wrong about sourcing.
 
-## Part `code-docs` — doc comments, comments in code and API goldens (`*.java`, `*.ts`, `*.py`, `*.yml`, `*.sh`, `api/**`, `src/tools/**`, generated output)
+## Part `code-docs` — doc comments, comments in code and API goldens (`*.java`, `*.ts`, `*.py`, `*.yml`, `*.yaml`, `*.sh`, `api/**`, `src/tools/**`, generated output)
 
 Standards: javadoc-conventions.md, tsdoc-conventions.md, comment-conventions.md.
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Review verdict (.github)",
-  "description": "The bundle's shape, narrowed to the one reviewing role this repository runs and to the pull-request scope vocabulary of ADR-085 §E.16. The three-state `decision`, the `findings` shape and the `checks_run` contract are the base's; the vocabulary here is local, and `tag` is added on a finding. §E.16's classes carry spaces, which the base permits: it bounds `scope_class` by length and nothing else, so a class reaches the verdict spelled the way the pull-request body spells it.\n\n`agent` is the role, not the routine: `docs-guardrails-review.md` is a document a runner is handed, and the same role would still be the author if that file were split or renamed. The four `unevaluatedProperties: false` — the root, a finding, a check entry, a handoff — are this file's because the base declares none; the base's own `description` says why the closers belong here, and `agents_file_check.py` names any object that ends up without one.",
+  "description": "The bundle's shape, narrowed to the one reviewing role this repository runs and to the pull-request scope vocabulary of ADR-085 §E.16. The three-state `decision`, the `findings` shape and the `checks_run` contract are the base's; the vocabulary here is local, and `tag` is added on a finding. §E.16's classes carry spaces, which the base permits: it bounds `scope_class` by length and nothing else, so a class reaches the verdict spelled the way the pull-request body spells it.\n\n`agent` is the role, not the routine: `docs-guardrails-review.md` is a document a runner is handed, and the same role would still be the author if that file were split or renamed. The five `unevaluatedProperties: false` — the root, a finding, a check entry, a handoff, a `parts` entry — are this file's because the base declares none; the base's own `description` says why the closers belong here, and `agents_file_check.py` names any object that ends up without one.",
   "allOf": [
     { "$ref": "../vendor/exeris-agents-2.1.0/schemas/verdict.base.schema.json" },
     {
@@ -19,6 +19,57 @@
             "docs-only"
           ]
         },
+        "part": {
+          "description": "The part of `docs-guardrails-review.md` a verdict judged, where the routine runs as parts, one run each. Absent on a verdict of the whole routine. `repo` is the calling repository's own extension; the other four are the routine's `## Part` sections. The same role is the author whatever part it judged, which is why this is a field and not a value of `agent`.",
+          "enum": [
+            "pr",
+            "docs",
+            "records",
+            "code-docs",
+            "repo"
+          ]
+        },
+        "parts": {
+          "description": "What each part of a review that ran as parts came to, on the verdict aggregated from them. `reviewed` carries the part's own decision; `skipped` means the part applied to no file of the pull request and says why; `missing` means the part was to run and produced no verdict that satisfies this schema, and says why. A `missing` part makes the aggregate incomplete: the findings of the parts that did report stand, and the required check does not pass on them.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "part",
+              "status"
+            ],
+            "properties": {
+              "part": {
+                "enum": [
+                  "pr",
+                  "docs",
+                  "records",
+                  "code-docs",
+                  "repo"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "reviewed",
+                  "skipped",
+                  "missing"
+                ]
+              },
+              "decision": {
+                "enum": [
+                  "PASS",
+                  "CONDITIONAL",
+                  "BLOCKED"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 3
+              }
+            },
+            "unevaluatedProperties": false
+          }
+        },
         "findings": {
           "items": {
             "allOf": [
@@ -35,6 +86,16 @@
                       "DOC DEBT",
                       "TCK DEBT",
                       "STYLE"
+                    ]
+                  },
+                  "part": {
+                    "description": "The part whose run raised this finding, on a verdict aggregated from parts.",
+                    "enum": [
+                      "pr",
+                      "docs",
+                      "records",
+                      "code-docs",
+                      "repo"
                     ]
                   }
                 }
