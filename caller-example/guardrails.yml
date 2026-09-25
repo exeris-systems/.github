@@ -186,8 +186,8 @@ jobs:
     #   # with a section per part. `pr` always runs, `repo` runs when `repo-routine` is set, and
     #   # `docs`, `records` and `code-docs` run only where their files are in the diff — a pull
     #   # request that touches no ADR pays for no records review. A part that produces nothing makes
-    #   # the check red rather than quietly shrinking the review. It turns capture off: a run record
-    #   # per part is not written yet, so leave this off in a repository that captures.
+    #   # the check red rather than quietly shrinking the review. With capture on, each part's run
+    #   # is its own run record.
     #   review-in-parts: true
     #   # Which runner produces the verdict. One value is supported today; it is recorded, never
     #   # selected — ADR-087 §B.12.

@@ -395,16 +395,16 @@ def _(root):
     assert printed.values(strict=False) == from_file, (printed.text, from_file)
 
 
-# 7 — the same list in the three files that spell it. `EXPORTED` is the script's, the produce
-# job's `outputs:` block is the workflow's, and `publish-verdict.yml`'s `capture-*` inputs are the
-# publishing half's. Nothing in GitHub compares them: a key renamed or added in one leaves a job
-# output referencing a step output that does not exist, which resolves to the empty string in
-# silence — and an empty value is how this export says "this component was not measured". A
-# component that WAS measured, reported as one that was not, is the single confusion the whole
-# design is built to avoid.
+# 7 — the same list in the four places that spell it. `EXPORTED` is the script's; the produce leg's
+# identity step reads each from the surface step and writes it into the artefact the capture job
+# reads per part; the capture job's run step reads each back out; and `publish-verdict.yml`'s
+# `capture-*` inputs are the one-run path a producer without parts still hands over. Nothing in
+# GitHub compares them: a key renamed or added in one resolves to the empty string in silence —
+# and an empty value is how this export says "this component was not measured". A component that
+# WAS measured, reported as one that was not, is the single confusion the design exists to avoid.
 
 
-@case("the script, the job outputs, the capture and the publishing inputs name one list")
+@case("the script, the leg's identity, the capture and the one-run inputs name one list")
 def _(_root):
     def workflow(name: str) -> dict:
         with open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8") as fh:
@@ -413,23 +413,23 @@ def _(_root):
     produce = (workflow("docs-review.yml").get("jobs") or {}).get("produce") or {}
     steps = produce.get("steps") or []
     assert any(str(step.get("id") or "") == SURFACE_STEP for step in steps), \
-        f"the produce job carries no step with `id: {SURFACE_STEP}`, so every output below is empty"
+        f"the produce job carries no step with `id: {SURFACE_STEP}`, so every value below is empty"
 
-    outputs = produce.get("outputs") or {}
-    absent = [key for key in review_surface.EXPORTED if key not in outputs]
-    assert not absent, f"the produce job declares no output for {absent}"
+    identity = next((st for st in steps if st.get("id") == "identity"), None)
+    assert identity, "the produce job carries no `identity` step, so no leg leaves its surface"
+    env = " ".join(str(v) for v in (identity.get("env") or {}).values())
+    run = str(identity.get("run") or "")
     for key in review_surface.EXPORTED:
-        want = "${{ steps.%s.outputs.%s }}" % (SURFACE_STEP, key)
-        got = " ".join(str(outputs[key]).split())
-        assert got == want, f"{key} is {got!r}, not {want!r}"
+        want = "steps.%s.outputs.%s" % (SURFACE_STEP, key)
+        assert want in env, f"the identity step does not read `{want}`"
+        assert f'"{key}"' in run, f"the identity step writes no `{key}` into the artefact"
 
-    # The capture job reads each back out of a part's surface as well, where the review ran as a
-    # matrix and the scalar inputs below could describe one leg at most.
     publish = workflow("publish-verdict.yml")
     capture = ((publish.get("jobs") or {}).get("capture") or {}).get("steps") or []
     reader = next((st for st in capture if st.get("id") == "run"), None)
     assert reader, "the capture job carries no `run` step, so no part's surface is read"
-    unread = [key for key in review_surface.EXPORTED if key not in str(reader.get("run") or "")]
+    text = str(reader.get("run") or "")
+    unread = [key for key in review_surface.EXPORTED if key not in text]
     assert not unread, f"the capture job reads no {unread} out of a part's surface"
 
     # PyYAML reads the bare key `on` as the boolean True (YAML 1.1), so both spellings are looked
