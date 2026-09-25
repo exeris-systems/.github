@@ -671,20 +671,42 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
     if label:
         out += [plain(label), ""]
     findings = verdict.get("findings") or []
+    # A verdict composed from parts says which part raised each finding, and a reader looking for
+    # the records part's findings finds them in one column rather than by reading every row.
+    by_part = bool(verdict.get("parts"))
     if findings:
-        out += ["| Tag | Where | Finding | Fix |", "|:--|:--|:--|:--|"]
+        columns = (["Part"] if by_part else []) + ["Tag", "Where", "Finding", "Fix"]
+        out += ["| " + " | ".join(columns) + " |", "|" + ":--|" * len(columns)]
         for f in findings:
             tag = plain(f.get("tag"))
             where = plain(f.get("location"))
             blocking = " **(blocking)**" if f.get("blocking") else ""
+            part = f"| {plain(f.get('part'))} " if by_part else ""
             # No backticks around `where`: CommonMark does not decode entities inside a code span,
             # so an escaped `Foo<T>.java` would render as `Foo&lt;T&gt;.java`. Escaped plain text
             # renders as the characters it means.
-            out.append(f"| {tag}{blocking} | {where} | {plain(f.get('what'))} — "
+            out.append(f"{part}| {tag}{blocking} | {where} | {plain(f.get('what'))} — "
                        f"{plain(f.get('why'))} | {plain(f.get('fix'))} |")
         out.append("")
     else:
         out += ["No findings.", ""]
+    parts = [p for p in (verdict.get("parts") or []) if isinstance(p, dict)]
+    if parts:
+        out += ["### Parts", ""]
+        for p in parts:
+            status = p.get("status")
+            if status == "reviewed":
+                said = f"reviewed — **{plain(p.get('decision'))}**"
+            else:
+                said = f"{plain(status)} — {plain(p.get('reason'))}"
+            out.append(f"- `{plain(p.get('part'))}`: {said}")
+        out.append("")
+        missing = missing_parts(verdict)
+        if missing:
+            out += [f"> A part of this review produced no verdict: "
+                    f"{', '.join('`' + plain(m) + '`' for m in missing)}. The findings above are "
+                    f"the other parts' and they stand, but the pull request has not been reviewed "
+                    f"whole, so the required check is red whatever the decision says.", ""]
     # Three fields the schema carries and the comment dropped. A review that writes a non-blocking
     # nit, or names what must be re-checked before merge, or says another role has to look, had all
     # of it discarded between the verdict and the page a human reads — so the reader saw "No
@@ -728,6 +750,17 @@ def compose_comment(verdict: dict, args, unrun: list[str], source: str,
                        f"Verdict read from the {source}.", ""]
     out += [f"- {line}" for line in provenance(args)]
     return "\n".join(out)
+
+
+def missing_parts(verdict: dict) -> list[str]:
+    """Parts a review that ran as parts planned and got no verdict from.
+
+    The aggregate keeps every finding the other parts reported, so the comment has something true
+    to say — but a review missing a part has not judged the pull request, and a PASS composed from
+    the parts that did report is a PASS about less than the pull request.
+    """
+    return [str(p.get("part")) for p in verdict.get("parts") or []
+            if isinstance(p, dict) and p.get("status") == "missing"]
 
 
 def blocking_findings(verdict: dict) -> list[str]:
@@ -1270,6 +1303,11 @@ def cmd_plan(args) -> int:
             standing = standing_verdicts(fh.read(), str(verdict.get("agent", "")),
                                          args.bot_login)
     add, remove = plan_labels(verdict, mapping, current, standing)
+    # A part that did not report cannot say its debt is paid: retiring `doc-debt` because the part
+    # that raises it produced nothing would be a label asserting a review nobody made.
+    incomplete = missing_parts(verdict)
+    if incomplete:
+        remove = []
     plan["standing"] = standing
     # Extends the routine's list, never replaces it. A caller naming its own gate meant to add
     # one; silently dropping the three the routine makes mandatory is the opposite of what a
@@ -1290,6 +1328,10 @@ def cmd_plan(args) -> int:
         # against another — so it belongs in this verdict's comment and this verdict's conclusion.
         # A second red step beside the gate would be a red the author cannot tell from BLOCKED.
         plan["reason"] = f"the reviewed repository's bundle pin is not this one's: {args.pin_problem}"
+    elif incomplete:
+        plan["reason"] = ("the review ran as parts and "
+                          + ", ".join(f"`{m}`" for m in incomplete)
+                          + " produced no verdict, so the pull request has not been reviewed whole")
     elif by_hand and by_hand[3] == BY_LABEL:
         plan["conclusion"] = "green"
         plan["reason"] = (f"the verdict is BLOCKED and {by_hand[0]} reviewed this by hand against "

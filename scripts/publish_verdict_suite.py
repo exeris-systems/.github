@@ -1604,6 +1604,60 @@ def main() -> int:
         assert p["conclusion"] == "green", p
         assert "reviewed this by hand" in p["reason"], p["reason"]
 
+    # A REVIEW THAT RAN AS PARTS. The aggregate carries `parts`, and a part that produced nothing
+    # is `missing`: the verdict of the parts that did report is published, and it does not pass.
+    def parted(*statuses, **over):
+        names = ["pr", "docs", "records", "code-docs", "repo"]
+        parts = []
+        for name, status in zip(names, statuses):
+            entry = {"part": name, "status": status}
+            if status == "reviewed":
+                entry["decision"] = "PASS"
+            else:
+                entry["reason"] = "the plan skipped it" if status == "skipped" else "no log"
+            parts.append(entry)
+        return verdict(parts=parts, **over)
+
+    @case("a review of every planned part is green, and the comment says what each part came to")
+    def _(tmp):
+        v = parted("reviewed", "reviewed", "skipped", "skipped", "skipped",
+                   decision="CONDITIONAL",
+                   findings=[finding(part="docs", tag="STYLE")])
+        p = run(root, tmp, verdict_doc=v)
+        assert p["conclusion"] == "green", p
+        assert "| Part | Tag | Where | Finding | Fix |" in p["comment"], p["comment"]
+        assert "| docs | STYLE |" in p["comment"], p["comment"]
+        assert "- `pr`: reviewed — **PASS**" in p["comment"], p["comment"]
+        assert "- `records`: skipped — the plan skipped it" in p["comment"], p["comment"]
+        # A verdict of the whole routine keeps the table it always had.
+        p = run(root, tmp, verdict_doc=verdict(decision="CONDITIONAL", findings=[finding()]))
+        assert "| Tag | Where | Finding | Fix |" in p["comment"], p["comment"]
+        assert "### Parts" not in p["comment"], p["comment"]
+
+    @case("a part that produced no verdict makes the check red, whatever the others decided")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=parted("reviewed", "missing", "skipped", "skipped",
+                                              "skipped"))
+        assert p["conclusion"] == "red", p
+        assert "`docs`" in p["reason"] and "whole" in p["reason"], p["reason"]
+        assert gate(tmp, p) != 0
+        assert "A part of this review produced no verdict: `docs`" in p["comment"], p["comment"]
+
+    @case("an incomplete review adds what it found and retires nothing it could not have judged")
+    def _(tmp):
+        v = parted("reviewed", "missing", "reviewed", "skipped", "skipped",
+                   decision="CONDITIONAL",
+                   findings=[finding(part="records", tag="CROSS-REPO")])
+        p = run(root, tmp, verdict_doc=v, current="doc-debt|hard-block")
+        assert p["labels_add"] == ["cross-repo"], p
+        assert p["labels_remove"] == [], p
+        # The same review complete retires both, which is what the case above withholds.
+        v = parted("reviewed", "reviewed", "reviewed", "skipped", "skipped",
+                   decision="CONDITIONAL",
+                   findings=[finding(part="records", tag="CROSS-REPO")])
+        p = run(root, tmp, verdict_doc=v, current="doc-debt|hard-block")
+        assert p["labels_remove"] == ["doc-debt", "hard-block"], p
+
     failures = 0
     for name, fn in cases:
         with tempfile.TemporaryDirectory() as tmp:
