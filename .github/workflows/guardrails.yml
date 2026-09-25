@@ -131,6 +131,8 @@ jobs:
         python3 scripts/review_inputs_check.py --root .;
         python3 scripts/label_map_check.py;
         python3 scripts/labels_sync_suite.py;
+        python3 scripts/review_plan_suite.py;
+        python3 scripts/review_aggregate_suite.py;
         python3 scripts/caller_permissions_check.py;
         python3 scripts/comment_history_suite.py;
         python3 scripts/gate_vocabulary_check_suite.py;
@@ -214,6 +216,17 @@ jobs:
           pip install --quiet jsonschema referencing
           python scripts/publish_verdict_suite.py --root .
           python scripts/javadoc_trivial_members_suite.py
+      # The review runs as parts, and two decisions sit between the pull request and the verdict
+      # that gates it: which parts a diff calls for, and how their verdicts become one. A part the
+      # plan drops is a part nobody reviews, and a part the aggregate drops is a finding nobody sees,
+      # so both are held to cases here. The aggregate validates against the real schema, which is
+      # why it needs the packages the publish step's cases do.
+      - name: The review's parts, planned from the diff and composed into one verdict
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet jsonschema referencing
+          python scripts/review_plan_suite.py
+          python scripts/review_aggregate_suite.py
       # The mapping between GitHub's gate vocabulary and the verdict's. They are two files apart
       # and neither knows the other changed; the tell is a refused verdict, which reads as the
       # runner emitting nonsense rather than as this repository drifting from its own schema.
