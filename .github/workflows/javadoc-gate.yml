@@ -261,7 +261,10 @@ jobs:
       - name: Checkstyle Javadoc modules on fully gated modules
         if: ${{ !cancelled() && steps.cs.outcome == 'success' && steps.policy.outcome == 'success' && inputs.modules != '' }}
         run: |
-          set -uo pipefail
+          # `+e`, because the default shell is `bash -e` and Checkstyle exits with its finding count:
+          # under `-e` the step ends on the first module with a finding, before `cs_status` is read
+          # and before the filter below decides which findings count.
+          set +e -uo pipefail
           failed=0
           IFS=',' read -ra mods <<< "${{ inputs.modules }}"
           for module in "${mods[@]}"; do
@@ -294,7 +297,8 @@ jobs:
       - name: Checkstyle Javadoc modules on changed files only
         if: ${{ !cancelled() && steps.cs.outcome == 'success' && steps.policy.outcome == 'success' && steps.targets.outputs.any == 'true' }}
         run: |
-          set -uo pipefail
+          # `+e`, for the reason the step above gives.
+          set +e -uo pipefail
           failed=0
           for mf in "$RUNNER_TEMP"/javadoc-diff/*.module; do
             n="${mf%.module}"; module=$(cat "$mf")
