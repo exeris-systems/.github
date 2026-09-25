@@ -416,6 +416,32 @@ def green(root, ci_row, check):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@case("a part's stream is judged under its pull request, and a longer number's is not")
+def part_stream(root, ci_row, check):
+    here, tmp = world(root, ci_row)
+    try:
+        here.index[0]["artifact_name"] = f"{ARTIFACT_NAME}-docs"
+        here.build()
+        code, decision = here.run()
+        check("the job is not failed by a judgement", code, 0)
+        check("no reason is recorded", decision["reason"], None)
+        check("one record was filed", decision["written"], 1)
+        check("and it names the run of that stream",
+              here.filed()[JUDGEMENT_PATH]["run_id"], RUN_ID)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # A name whose number merely starts with this pull request's belongs to another one.
+    here, tmp = world(root, ci_row)
+    try:
+        here.index[0]["artifact_name"] = f"l2-execution-{PR}0"
+        here.build().compare(CHANGED)
+        _code, decision = here.run()
+        check("another pull request's stream is none of this one's", decision["reason"],
+              "no-stream")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 @case("a pull request closed without merging overrules nothing")
 def unmerged(root, ci_row, check):
     here, tmp = world(root, ci_row)
