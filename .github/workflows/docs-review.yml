@@ -417,15 +417,20 @@ jobs:
       # at `main`, and a pull request that adds an extension is not judged by it, which is the same
       # cost that decision already carries.
       #
-      # RESTORED PATHS. `.claude/agents/**` reaches this checkout from the base whatever the pull
-      # request does to it. A reviewer reading those files sees content the change does not contain,
-      # and a finding about them describes the checkout rather than the diff -- which is how a
-      # bundle bump, the one change that touches both a vendor tree and the profiles naming it,
-      # earns a blocking finding that is true of nothing. Naming the paths is cheaper than asking
-      # the model to remember a rule, and it is per-run rather than general.
+      # RESTORED PATHS. The runner reads its own configuration from the checkout, so before it
+      # starts it restores every path below from the base branch, whatever the pull request did to
+      # them, and keeps what the pull request wrote in `.claude-pr/<path>` without executing it. A
+      # reviewer reading one of those paths sees content the change does not contain, and a
+      # finding about it describes the checkout rather than the diff. Naming the paths is cheaper
+      # than asking the model to remember a rule, and it is per-run rather than general.
       - name: The rules this pull request cannot edit, and the files it cannot show
         env:
           ROUTINE: ${{ inputs.repo-routine }}
+          # The runner's list, `SENSITIVE_PATHS` in claude-code-action's restore-config.ts: each a
+          # path from the root of the checkout, restored whole. `review_inputs_check.py` holds a
+          # copy, and the two must agree.
+          RESTORED_BY_RUNNER: >-
+            .claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md CLAUDE.local.md .husky
         run: |
           set -euo pipefail
           base=$(jq -r '.base.sha' pull-request.json)
@@ -435,8 +440,11 @@ jobs:
             rm -f repo-routine.base.md
             [ -n "${ROUTINE:-}" ] && echo "::notice::$ROUTINE does not exist at $base; the reviewer gets no extension"
           fi
-          jq -r '.files[].path | select(startswith(".claude/agents/"))' pull-request.json \
-            > restored-paths.txt || : > restored-paths.txt
+          jq -r --arg restored "$RESTORED_BY_RUNNER" '($restored | split(" ")) as $roots
+              | .files[].path
+              | select(. as $f
+                  | any($roots[]; . as $r | $f == $r or ($f | startswith($r + "/"))))' \
+            pull-request.json > restored-paths.txt || : > restored-paths.txt
           echo "::notice::$(wc -l < restored-paths.txt) changed path(s) the checkout does not reflect"
       - name: The L1 gate results, in the verdict's vocabulary
         id: gates
@@ -534,9 +542,12 @@ jobs:
           and takes effect for the next.
 
           FILES THIS CHECKOUT DOES NOT REFLECT: the paths in `restored-paths.txt`, if any, are
-          changed by this pull request and restored to their base content before you see them.
-          Their content here is not the change. Report nothing about them: you cannot see what
-          they became, and what you can see is not what the author wrote.
+          changed by this pull request and restored to the base branch's content before you
+          start, because the runner reads them itself. Their content at that path is not the
+          change. What the pull request wrote to each is at `.claude-pr/<path>`, a copy kept for
+          review and never executed: judge the change from that copy. A file there that begins
+          `Snapshot placeholder:` stands for a link the copy did not follow, and says nothing
+          about what the link pointed at.
 
           REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && 'repo-routine.base.md' || '(none)' }}
           REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}

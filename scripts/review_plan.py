@@ -65,6 +65,11 @@ def in_code(path: str) -> bool:
     return (path.endswith(SOURCE_SUFFIXES) or base in BUILD_FILES) and "generated" not in dirs
 
 
+# A bundle vendored whole at a pinned digest. Its content is the bundle repository's to judge, and a
+# pull request carrying it cannot fix a finding about it, so it counts for no part.
+VENDORED = ".agents/vendor/"
+
+
 SCOPES = {
     "docs": (in_docs, "no `*.md` and no `.cursorrules` in the diff"),
     "records": (in_records, "no ADR, `adr-index.md`, `*.link.md` or `standards/` file in the diff"),
@@ -78,6 +83,8 @@ SCOPES = {
 def plan(files: list[str], repo_routine: str) -> dict:
     """`{"parts": [...], "skipped": {part: reason}}`, every part in exactly one of the two."""
     paths = [f.strip().removeprefix("./") for f in files if f.strip()]
+    vendored = [p for p in paths if p.startswith(VENDORED)]
+    paths = [p for p in paths if not p.startswith(VENDORED)]
     run, skipped = [], {}
     for part in PARTS:
         if part == "pr":
@@ -91,6 +98,9 @@ def plan(files: list[str], repo_routine: str) -> dict:
             applies, reason = SCOPES[part]
             if any(applies(p) for p in paths):
                 run.append(part)
+            elif vendored:
+                skipped[part] = (f"{reason}; the {len(vendored)} vendored file(s) under "
+                                 f"`{VENDORED}` are the bundle's, and no part judges them")
             else:
                 skipped[part] = reason
     return {"parts": run, "skipped": skipped}
