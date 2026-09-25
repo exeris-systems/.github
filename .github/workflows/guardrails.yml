@@ -133,6 +133,7 @@ jobs:
         python3 scripts/repo_checks_env_check_suite.py;
         python3 scripts/artifact_guard_check.py --root .;
         python3 scripts/review_inputs_check.py --root .;
+        python3 scripts/review_inputs_check_suite.py;
         python3 scripts/label_map_check.py;
         python3 scripts/labels_sync_suite.py;
         python3 scripts/review_plan_suite.py;
@@ -293,6 +294,7 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python scripts/review_inputs_check.py --root .
+          python scripts/review_inputs_check_suite.py
       # A step reads a command's status to decide what a failure means — count it, filter it, carry
       # on — and under the default `bash -e` a failing command ends the step first, so the status it
       # reads is only ever 0. Nothing shows it until the command fails.
