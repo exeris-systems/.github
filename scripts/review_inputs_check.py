@@ -6,10 +6,12 @@ fetched from the organisation repository's default branch. A repository's own ex
 ordinary file in the reviewed tree, so holding it needs a step: the routine reads the file at the
 base commit and hands the reviewer that copy.
 
-And the reverse case, where the checkout shows LESS than the branch: `.claude/agents/**` arrives at
-its base content whatever the pull request does to it, so a finding about those files describes the
-checkout rather than the change. The paths are named per run, because a model given a list has a
-fact and a model given a rule has something to remember.
+And the reverse case, where the checkout shows LESS than the branch: the runner restores the paths
+it reads itself from the base branch whatever the pull request does to them, so a finding about
+their content in the checkout describes the checkout rather than the change. The paths are named per
+run, because a model given a list has a fact and a model given a rule has something to remember, and
+the prompt sends it to the copy of what the pull request wrote, which the runner keeps under
+`.claude-pr/`.
 
 Both are one fact spread over two places -- a step that derives it and a prompt that spends it --
 and either half alone reads as correct.
@@ -27,7 +29,13 @@ import yaml
 
 BASE_COPY = "repo-routine.base.md"
 RESTORED = "restored-paths.txt"
-PROTECTED = ".claude/agents/"
+SNAPSHOT = ".claude-pr/"
+# `SENSITIVE_PATHS` in claude-code-action's `src/github/operations/restore-config.ts`: the paths the
+# runner restores from the base branch before it starts, each from the root of the checkout and
+# whole. The workflow names them in `RESTORED_BY_RUNNER`; this copy is what it is compared with.
+RUNNER_RESTORES = (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
+                   "CLAUDE.md", "CLAUDE.local.md", ".husky")
+RESTORE_STEP_ENV = "RESTORED_BY_RUNNER"
 # The step that renders the prompt, by id. The prompt is hashed as rendered, so it is written once
 # into a step rather than inline on the action; what a reviewer is handed therefore lives in a
 # `run:` and no longer only in a `with:`. A rule that read one place would pass on a prompt that
@@ -74,10 +82,19 @@ def main() -> int:
 
     # AND THE PATHS THE CHECKOUT CANNOT SHOW. Naming them is the cheap half; a reviewer told only
     # "some files may be stale" has nothing to act on.
-    rule(re.search(re.escape(PROTECTED) + r"[^\n]*>\s*" + re.escape(RESTORED), shell) is not None,
-         f"no step derives `{RESTORED}` from `{PROTECTED}` — the subtree a reviewer receives at "
-         f"base content whatever the pull request does to it")
+    named = [str((s.get("env") or {}).get(RESTORE_STEP_ENV) or "") for s in steps]
+    listed = next((n.split() for n in named if n), [])
+    rule(sorted(listed) == sorted(RUNNER_RESTORES),
+         f"`{RESTORE_STEP_ENV}` names {sorted(listed)}, and the runner restores "
+         f"{sorted(RUNNER_RESTORES)} — a path it restores and the list omits is judged at base "
+         f"content as though it were the change")
+    rule(re.search(re.escape("$" + RESTORE_STEP_ENV) + r".*?>\s*" + re.escape(RESTORED), shell,
+                   re.S) is not None,
+         f"no step derives `{RESTORED}` from `{RESTORE_STEP_ENV}`")
     rule(RESTORED in prompt, f"the prompt does not name `{RESTORED}`")
+    rule(SNAPSHOT in prompt,
+         f"the prompt does not send the reviewer to `{SNAPSHOT}`, where the runner keeps what the "
+         f"pull request wrote to a restored path")
 
     for said in bad:
         print(f"::error::review_inputs_check: {said}")

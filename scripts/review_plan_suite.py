@@ -132,6 +132,23 @@ def _():
     assert "records" not in parts(["adrs/notes.txt", "standard/x.txt"])
 
 
+@case("a vendored bundle counts for no part, and a part it would have run says why it did not")
+def _():
+    got = rp.plan([".agents/vendor/exeris-agents-2.1.0/evals/run.py",
+                   ".agents/vendor/exeris-agents-2.1.0/BUNDLE.md"], "")
+    assert got["parts"] == ["pr"], got
+    for part in ("docs", "code-docs", "code"):
+        assert "2 vendored file(s)" in got["skipped"][part], got["skipped"][part]
+    # Beside a file of its own, the part runs for that file, and the reason is not needed.
+    got = rp.plan([".agents/vendor/exeris-agents-2.1.0/evals/run.py", "scripts/x.py"], "")
+    assert got["parts"] == ["pr", "code-docs", "code"], got
+    # Only the vendor tree: `.agents/` itself, and a directory merely named `vendor`, are judged.
+    assert rp.plan([".agents/manifest.yaml"], "")["parts"] == ["pr", "code-docs", "code"]
+    assert rp.plan(["third_party/vendor/lib.py"], "")["parts"] == ["pr", "code-docs", "code"]
+    # With nothing vendored, a skip reason carries no note about vendoring.
+    assert "vendored" not in rp.plan(["x.txt"], "")["skipped"]["docs"]
+
+
 @case("the command line writes the matrix and the reasons to GITHUB_OUTPUT")
 def _():
     with tempfile.TemporaryDirectory() as tmp:
