@@ -163,8 +163,8 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    **Reviewing in parts is its own opt-in.** `review-in-parts: true` runs `pr` always, `repo` when
    `repo-routine` is set, and `docs`, `records` and `code-docs` only where their files are in the
    diff, one model run each, and publishes one verdict with a `Part` column and a line per part. A
-   part that produces nothing makes the check red. It turns capture off, because a run record per
-   part is not written yet, so leave it off in a repository that captures.
+   part that produces nothing makes the check red. With capture on, each part's run is its own run
+   record.
 5a. **Capture is the second opt-in, and a separate decision.** `capture: true` adds a third job:
    the runner's execution log is committed to the streams repository as content, one run record is
    assembled from what the producing job exported about the run, and the day's rows reach

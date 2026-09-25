@@ -105,8 +105,7 @@ on:
           that proves it works is the first one a repository asks for. Off, the routine runs whole,
           as one leg named `all`. On, a plan reads the changed files and runs `pr` always, `repo`
           when there is an extension, and each other part only where its files are in the diff.
-          On, no run record is captured: a record per part needs the capture job to read one run
-          per part, which it does not yet.
+          With capture on, each part's run is its own run record.
       mandatory-gates:
         type: string
         default: ""
@@ -288,31 +287,9 @@ jobs:
       # a STEP output, so the publish half was handed an artefact name whatever happened here and
       # its `!= ''` guard could not be false. A guard whose condition cannot fail is not a guard.
       execution-written: ${{ steps.review.outputs.execution_file != '' }}
-      # WHAT THE RUN WAS, AS DIGESTS. The model runs in this job and this job holds no write scope,
-      # so the prompt it was handed, the routine it ran, the agent file it read and the allow-list
-      # it ran under exist nowhere once it ends. These carry their identities out and nothing else:
-      # every one is a hash, a commit SHA, a version or a timestamp, and no line of the text itself
-      # crosses the job boundary.
-      #
-      # Each is empty where the step could not read what it hashes, and empty is the honest answer
-      # rather than a plausible one: a consumer reading an empty value knows it did not get that
-      # component, where a hash over a component nobody read is indistinguishable from one that was.
-      prompt-sha256: ${{ steps.surface.outputs.prompt-sha256 }}
-      routine-sha256: ${{ steps.surface.outputs.routine-sha256 }}
-      routine-sha: ${{ steps.surface.outputs.routine-sha }}
-      agents-md-sha256: ${{ steps.surface.outputs.agents-md-sha256 }}
-      system-prompt-sha256: ${{ steps.surface.outputs.system-prompt-sha256 }}
-      tool-surface: ${{ steps.surface.outputs.tool-surface }}
-      bundle-version: ${{ steps.surface.outputs.bundle-version }}
-      checkout-sha: ${{ steps.surface.outputs.checkout-sha }}
-      head-sha: ${{ steps.surface.outputs.head-sha }}
-      review-started-at: ${{ steps.surface.outputs.review-started-at }}
-      # AND THE ONE THE HOST NAMES RATHER THAN THIS JOB. The upload step is told the artefact's id
-      # as it creates it, and that id is half of a run record's identity and the whole of its
-      # stream's file name. It is carried out with the digests because the only other way to learn
-      # it is the Actions API, and the job that consumes it holds no Actions permission — one it
-      # could not be given without every caller granting it. Empty where no log was uploaded.
-      artifact-id: ${{ steps.execution-log.outputs.artifact-id }}
+      # What the run WAS — its digests, SHAs, version, start and the id of its execution log — is not
+      # a job output: a matrix leaves an output to whichever leg wrote it last, so it could describe
+      # one run at most. Each leg uploads its own as `l2-surface-<pr>-<part>`, below.
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
@@ -772,6 +749,54 @@ jobs:
           path: ${{ steps.review.outputs.execution_file }}
           if-no-files-found: ignore
           retention-days: 1
+      # WHAT THIS LEG'S RUN WAS, AS DIGESTS, for the capture of this leg. The model runs here and
+      # this job holds no write scope, so the prompt it was handed, the routine it ran, the agent
+      # file it read and the allow-list it ran under exist nowhere once it ends. This carries their
+      # identities out and nothing else: every value is a hash, a commit SHA, a version, a timestamp
+      # or the host's id for the execution log — no line of the text itself crosses the job boundary.
+      #
+      # An ARTEFACT rather than job outputs, because this job is a matrix and an output is whichever
+      # leg wrote it last. Each is empty where the surface step could not read what it hashes, which
+      # is the honest reading: a consumer knows it did not get that component. Only a leg that kept
+      # an execution log leaves one, because a run with no stream is a run with no row.
+      - name: The identity of this leg's run, for its capture
+        id: identity
+        if: ${{ !cancelled() && steps.execution-log.outputs.artifact-id != '' }}
+        env:
+          ARTIFACT: l2-execution-${{ github.event.pull_request.number }}-${{ matrix.part }}
+          ARTIFACT_ID: ${{ steps.execution-log.outputs.artifact-id }}
+          PROMPT_SHA256: ${{ steps.surface.outputs.prompt-sha256 }}
+          ROUTINE_SHA256: ${{ steps.surface.outputs.routine-sha256 }}
+          ROUTINE_SHA: ${{ steps.surface.outputs.routine-sha }}
+          AGENTS_MD_SHA256: ${{ steps.surface.outputs.agents-md-sha256 }}
+          SYSTEM_PROMPT_SHA256: ${{ steps.surface.outputs.system-prompt-sha256 }}
+          TOOL_SURFACE: ${{ steps.surface.outputs.tool-surface }}
+          BUNDLE_VERSION: ${{ steps.surface.outputs.bundle-version }}
+          CHECKOUT_SHA: ${{ steps.surface.outputs.checkout-sha }}
+          SURFACE_HEAD_SHA: ${{ steps.surface.outputs.head-sha }}
+          REVIEW_STARTED_AT: ${{ steps.surface.outputs.review-started-at }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/identity"
+          jq -n --arg artifact "$ARTIFACT" --arg artifact_id "$ARTIFACT_ID" \
+            --arg prompt "$PROMPT_SHA256" --arg routine "$ROUTINE_SHA256" \
+            --arg routine_sha "$ROUTINE_SHA" --arg agents "$AGENTS_MD_SHA256" \
+            --arg system "$SYSTEM_PROMPT_SHA256" --arg tools "$TOOL_SURFACE" \
+            --arg bundle "$BUNDLE_VERSION" --arg checkout "$CHECKOUT_SHA" \
+            --arg head "$SURFACE_HEAD_SHA" --arg started "$REVIEW_STARTED_AT" \
+            '{artifact: $artifact, "artifact-id": $artifact_id, "prompt-sha256": $prompt,
+              "routine-sha256": $routine, "routine-sha": $routine_sha,
+              "agents-md-sha256": $agents, "system-prompt-sha256": $system,
+              "tool-surface": $tools, "bundle-version": $bundle, "checkout-sha": $checkout,
+              "head-sha": $head, "review-started-at": $started}' > "$RUNNER_TEMP/identity/surface.json"
+      - name: Keep the identity for the capture job
+        if: ${{ !cancelled() && steps.execution-log.outputs.artifact-id != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: l2-surface-${{ github.event.pull_request.number }}-${{ matrix.part }}
+          path: ${{ runner.temp }}/identity/surface.json
+          if-no-files-found: ignore
+          retention-days: 1
 
   # ONE VERDICT FROM THE PARTS, composed where no model runs. Each leg's verdict is in its own
   # execution log, so this reads the logs the legs uploaded and hands `review_aggregate.py` the plan
@@ -834,7 +859,7 @@ jobs:
           retention-days: 90
 
   publish:
-    needs: [produce, aggregate]
+    needs: [plan, produce, aggregate]
     # `inputs.publish` is the staging of ADR-087 Engineering Protocol 1, not a feature flag: items
     # 2-3 land before the Apps and before the experiment, and a caller adopts the gate when there is
     # something known to adopt.
@@ -883,29 +908,12 @@ jobs:
       mandatory-gates: ${{ inputs.mandatory-gates }}
       l1-results: ${{ inputs.l1-results }}
       review-label: ${{ inputs.review-label }}
-      # What the produce job exported about the run (ADR-087 §C.14, ADR-086 §C.14a): digests,
-      # SHAs, a version and a timestamp, for the capture job to write into a run record. The
-      # callee declares every one of these as optional, so a caller pinned to an older produce
-      # half still resolves; and an input the callee does not declare is a startup failure,
-      # which is why these lines land only once the callee's declaration is on main.
-      capture-prompt-sha256: ${{ needs.produce.outputs.prompt-sha256 }}
-      capture-routine-sha256: ${{ needs.produce.outputs.routine-sha256 }}
-      capture-routine-sha: ${{ needs.produce.outputs.routine-sha }}
-      capture-agents-md-sha256: ${{ needs.produce.outputs.agents-md-sha256 }}
-      capture-system-prompt-sha256: ${{ needs.produce.outputs.system-prompt-sha256 }}
-      capture-tool-surface: ${{ needs.produce.outputs.tool-surface }}
-      capture-bundle-version: ${{ needs.produce.outputs.bundle-version }}
-      capture-checkout-sha: ${{ needs.produce.outputs.checkout-sha }}
-      capture-head-sha: ${{ needs.produce.outputs.head-sha }}
-      capture-review-started-at: ${{ needs.produce.outputs.review-started-at }}
-      # Whether this run becomes a row, and the pen it is written with (ADR-087 §C.13): passed
-      # only once the callee declares them on main, for the reason the capture-* lines above give.
-      capture-artifact-id: ${{ needs.produce.outputs.artifact-id }}
-      # Not in parts: the capture job reads one run's exports, and a matrix leaves them to
-      # whichever leg finished last. A row about a run that is not the one it describes is worse
-      # than no row, so a repository that reviews in parts contributes none until capture reads a
-      # run per part.
-      capture: ${{ inputs.capture && !inputs.review-in-parts }}
+      # Which parts ran, one captured run each (ADR-087 §C.14, ADR-086 §C.14a). Each leg's digests,
+      # SHAs, version, start and artefact id are in its own `l2-surface-<pr>-<part>`, which the
+      # capture job reads per part — a matrix's job outputs could describe only the leg that wrote
+      # them last. `["all"]` for a review run whole.
+      capture-parts: ${{ needs.plan.outputs.parts }}
+      capture: ${{ inputs.capture }}
       # And whether anything is made of them. Handed straight through, because the decision is the
       # caller's: this workflow neither turns capture on for a repository that did not ask nor off
       # for one that did.
