@@ -877,7 +877,7 @@ jobs:
             || (!inputs.review-in-parts && needs.produce.outputs.execution-written == 'true'
                 && format('l2-execution-{0}-all', github.event.pull_request.number))
             || '' }}
-      expect-agent: exeris-org-docs-reviewer
+      expect-agent: exeris-org-reviewer
       runner: ${{ inputs.runner }}
       routine: docs-guardrails-review.md
       mandatory-gates: ${{ inputs.mandatory-gates }}

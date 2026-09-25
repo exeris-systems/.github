@@ -220,6 +220,17 @@ def standing_override(comments_json: str, bot_login: str) -> tuple[str, str, str
     return found
 
 
+# A role's earlier names, read as the role. The marker names the role that wrote a comment, so a
+# comment published under a name the role no longer carries is still this role's: it is edited in
+# place rather than left beside a new one, and its decision is this role's, never a second routine's
+# for the arbiter to hold a label on.
+ROLE_ALIASES = {"exeris-org-docs-reviewer": "exeris-org-reviewer"}
+
+
+def role(name: str) -> str:
+    return ROLE_ALIASES.get(name, name)
+
+
 def blocking_standing(comments_json: str, agent: str, bot_login: str, head: str) -> str | None:
     """The `created_at` of a BLOCKED verdict that still covers this head, or None.
 
@@ -232,7 +243,7 @@ def blocking_standing(comments_json: str, agent: str, bot_login: str, head: str)
         if c.get("author") != bot_login:
             continue
         m = MARKER_RE.match(c["body"])
-        if m and m.group(1) == agent and m.group(2) == "BLOCKED":
+        if m and role(m.group(1)) == role(agent) and m.group(2) == "BLOCKED":
             sha = m.group(3) or ""
             if not head or not sha or sha[:7] == head[:7]:
                 stamp = c.get("updated_at") or c.get("created_at") or ""
@@ -277,7 +288,7 @@ def standing_for(comments_json: str, agent: str, bot_login: str) -> tuple[str, s
         if c.get("author") != bot_login:
             continue
         m = MARKER_RE.match(c["body"])
-        if m and m.group(1) == agent:
+        if m and role(m.group(1)) == role(agent):
             found = (m.group(2), m.group(3) or "")
     return found
 
@@ -296,8 +307,8 @@ def standing_verdicts(comments_json: str, exclude_agent: str, bot_login: str) ->
         # Position 0 only. `compose_comment` always opens with the marker, so a marker anywhere else
         # in a comment the bot signed came from text the bot was handed, not from a decision it made.
         m = MARKER_RE.match(c["body"])
-        if m and m.group(1) != exclude_agent:
-            out[m.group(1)] = m.group(2)
+        if m and role(m.group(1)) != role(exclude_agent):
+            out[role(m.group(1))] = m.group(2)
     return out
 
 
@@ -1354,6 +1365,16 @@ def cmd_plan(args) -> int:
     return finish(plan, args)
 
 
+def marker_searches(search: str) -> list[str]:
+    """Every prefix a comment this role published may start with: the search itself, and the same
+    search under each of the role's earlier names."""
+    found = [search]
+    for old, new in ROLE_ALIASES.items():
+        if f"agent={new} " in search:
+            found.append(search.replace(f"agent={new} ", f"agent={old} "))
+    return found
+
+
 def finish(plan: dict, args) -> int:
     # In `finish` rather than in the branch that records the override, because the verdict path
     # assigns `labels_remove` wholesale from the label map and would drop it. The label is a request;
@@ -1361,6 +1382,7 @@ def finish(plan: dict, args) -> int:
     if getattr(args, "override_by", "") and getattr(args, "override_label", ""):
         if args.override_label not in plan["labels_remove"]:
             plan["labels_remove"] = plan["labels_remove"] + [args.override_label]
+    plan["marker_searches"] = marker_searches(plan.get("marker_search") or "")
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(plan, fh, indent=2)
     print(f"publish_verdict: source={plan['verdict_source']} conclusion={plan['conclusion']} "

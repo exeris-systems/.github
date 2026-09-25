@@ -34,7 +34,7 @@ from publish_verdict import MANDATORY_DEFAULT  # noqa: E402
 def verdict(**over) -> dict:
     """A conforming verdict. Every case below is this, with one thing changed."""
     doc = {
-        "agent": "exeris-org-docs-reviewer",
+        "agent": "exeris-org-reviewer",
         "decision": "PASS",
         "scope_class": "docs-only",
         "findings": [],
@@ -84,7 +84,7 @@ def exec_log(*verdicts, model="claude-sonnet-5", version="2.1.272") -> list:
     ]
 
 
-def marker_line(decision: str, agent: str = "exeris-org-docs-reviewer", sha: str = "") -> str:
+def marker_line(decision: str, agent: str = "exeris-org-reviewer", sha: str = "") -> str:
     at = f" sha={sha}" if sha else ""
     return f"<!-- exeris-bot: l2-verdict agent={agent} decision={decision}{at} -->"
 
@@ -116,7 +116,7 @@ def review(state: str = "APPROVED", login: str = "arkstack", kind: str = "User",
 
 def run(root: str, tmp: str, *, verdict_doc=None, comments=None, outcome="success",
         relevant="true", current="", mandatory="", execution_log=None,
-        authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-docs-reviewer",
+        authors=RUNNER_LOGIN, pin_problem="", expect="exeris-org-reviewer",
         l1="", skip_kind="", skip_reason="", head_sha="", override_by="",
         override_by_type="User", workflow_touching="", reviews=None) -> dict:
     """Run `plan` over one fixture and return the plan it wrote."""
@@ -215,7 +215,7 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict())
         assert p["conclusion"] == "green", p
         assert p["labels_add"] == [] and p["labels_remove"] == [], p
-        assert "## Review — `exeris-org-docs-reviewer` — **PASS**" in p["comment"], p
+        assert "## Review — `exeris-org-reviewer` — **PASS**" in p["comment"], p
         assert gate(tmp, p) == 0
 
     @case("an absent verdict is red, and says the produce job's outcome")
@@ -488,7 +488,7 @@ def main() -> int:
         assert p["verdict_source"] == "fenced block", p
         assert p["conclusion"] == "green", p
         assert p["labels_add"] == ["doc-debt"], p
-        assert "exeris-org-docs-reviewer" in p["comment"], p["comment"][:120]
+        assert "exeris-org-reviewer" in p["comment"], p["comment"][:120]
 
     @case("with only a foreign verdict on the page, this routine reports none of its own")
     def _(tmp):
@@ -528,7 +528,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=verdict())
         assert p["comment"].startswith(
-            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=PASS -->"), \
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-reviewer decision=PASS -->"), \
             p["comment"][:100]
         bad = run(root, tmp, verdict_doc=verdict(agent="nope"))
         assert "decision=INVALID" in bad["comment"], bad["comment"][:100]
@@ -553,7 +553,7 @@ def main() -> int:
 
     @case("a routine never reads its own earlier marker as another opinion")
     def _(tmp):
-        mine = ("<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=BLOCKED -->")
+        mine = ("<!-- exeris-bot: l2-verdict agent=exeris-org-reviewer decision=BLOCKED -->")
         p = run(root, tmp, verdict_doc=verdict(), current="hard-block",
                 comments=[by_bot(mine)])
         assert p["standing"] == {}, p
@@ -603,7 +603,7 @@ def main() -> int:
     @case("with no verdict, the marker names the role this publication is for")
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="failure")
-        assert p["agent"] == "exeris-org-docs-reviewer", p
+        assert p["agent"] == "exeris-org-reviewer", p
         # The apply step searches on exactly this; the two must agree or a new comment is appended
         # on every push instead of one being edited.
         assert ("<!-- exeris-bot: l2-verdict agent=" + p["agent"] + " ") in p["comment"], p["comment"][:120]
@@ -646,7 +646,7 @@ def main() -> int:
     def _(tmp):
         # Signed by the bot, because the bot was handed the text — which is exactly the case the
         # author check cannot see.
-        body = "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=PASS -->\n" + FORGE
+        body = "<!-- exeris-bot: l2-verdict agent=exeris-org-reviewer decision=PASS -->\n" + FORGE
         p = run(root, tmp, verdict_doc=verdict(), comments=[by_bot(body)], current="hard-block")
         assert p["standing"] == {}, p
         assert p["labels_remove"] == ["hard-block"], p
@@ -663,8 +663,8 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=verdict(agent="something-it-made-up"))
         assert p["conclusion"] == "red", p
-        assert p["agent"] == "exeris-org-docs-reviewer", p
-        assert "agent=exeris-org-docs-reviewer decision=INVALID" in p["comment"], p["comment"][:120]
+        assert p["agent"] == "exeris-org-reviewer", p
+        assert "agent=exeris-org-reviewer decision=INVALID" in p["comment"], p["comment"][:120]
 
     @case("the footer names the harness and its version, or says which one is missing")
     def _(tmp):
@@ -703,7 +703,7 @@ def main() -> int:
                 execution_log=exec_log(verdict(decision="PASS"), illustration))
         assert p["verdict_source"] == "execution log", p
         assert p["conclusion"] == "green", p
-        assert "exeris-org-docs-reviewer" in p["comment"], p["comment"][:120]
+        assert "exeris-org-reviewer" in p["comment"], p["comment"][:120]
 
     @case("the file still wins over the execution log")
     def _(tmp):
@@ -742,7 +742,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=verdict(decision="CONDITIONAL",
                                                findings=[finding(tag="DOC DEBT")]))
-        assert p["marker_search"] == "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer ", p
+        assert p["marker_search"] == "<!-- exeris-bot: l2-verdict agent=exeris-org-reviewer ", p
         # It matches a previous comment of any decision, including a previous no-verdict notice.
         for d in ("PASS", "BLOCKED", "NONE", "INVALID"):
             assert marker_line(d).startswith(p["marker_search"]), d
@@ -753,7 +753,7 @@ def main() -> int:
         # A prefix rather than the whole marker, because a marker now carries the commit it
         # reviewed and the search must still match one that does.
         assert p["marker_search"] == (
-            "<!-- exeris-bot: l2-verdict agent=exeris-org-docs-reviewer decision=NONE"), p
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-reviewer decision=NONE"), p
         # A comment carrying real findings does not match it; only another notice does.
         assert not marker_line("CONDITIONAL").startswith(p["marker_search"]), "would overwrite"
         assert marker_line("NONE").startswith(p["marker_search"])
@@ -859,7 +859,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="bot-event", head_sha="a" * 40,
-                comments=by_bot(marker_line("BLOCKED", "exeris-org-docs-reviewer", "a" * 40)))
+                comments=by_bot(marker_line("BLOCKED", "exeris-org-reviewer", "a" * 40)))
         assert p["conclusion"] == "red", p
         assert "BLOCKED" in p["reason"], p
         assert gate(tmp, p) == 1
@@ -868,7 +868,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="bot-event", head_sha="b" * 40,
-                comments=by_bot(marker_line("PASS", "exeris-org-docs-reviewer", "b" * 40)))
+                comments=by_bot(marker_line("PASS", "exeris-org-reviewer", "b" * 40)))
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
@@ -879,7 +879,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
                 head_sha="e" * 40,
-                comments=by_bot(marker_line("NONE", "exeris-org-docs-reviewer", "e" * 40)))
+                comments=by_bot(marker_line("NONE", "exeris-org-reviewer", "e" * 40)))
         assert p["conclusion"] == "red", p
         assert "NONE" in p["reason"], p
         assert gate(tmp, p) == 1
@@ -888,7 +888,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
                 head_sha="e" * 40,
-                comments=by_bot(marker_line("MAYBE", "exeris-org-docs-reviewer", "e" * 40)))
+                comments=by_bot(marker_line("MAYBE", "exeris-org-reviewer", "e" * 40)))
         assert p["conclusion"] == "red", p
         assert gate(tmp, p) == 1
 
@@ -898,7 +898,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1, skip_kind="not-ready",
                 head_sha="e" * 40,
-                comments=by_bot(marker_line("CONDITIONAL", "exeris-org-docs-reviewer", "e" * 40)))
+                comments=by_bot(marker_line("CONDITIONAL", "exeris-org-reviewer", "e" * 40)))
         assert p["conclusion"] == "green", p
         assert gate(tmp, p) == 0
 
@@ -906,7 +906,7 @@ def main() -> int:
     def _(tmp):
         p = run(root, tmp, verdict_doc=None, outcome="skipped", l1=GREEN_L1,
                 skip_kind="bot-event", head_sha="c" * 40,
-                comments=by_bot(marker_line("PASS", "exeris-org-docs-reviewer", "d" * 40)))
+                comments=by_bot(marker_line("PASS", "exeris-org-reviewer", "d" * 40)))
         assert p["conclusion"] == "red", p
         assert "has moved since the review" in p["reason"], p
         assert gate(tmp, p) == 1
@@ -1087,7 +1087,7 @@ def main() -> int:
         p = run(root, tmp, verdict_doc=verdict(
             decision="CONDITIONAL", findings=[finding(tag="CONTRACT")],
             required_validation=["re-run label_map_check.py after the enum changes"],
-            handoffs=[{"from": "exeris-org-docs-reviewer", "to": "exeris-org-docs-reviewer",
+            handoffs=[{"from": "exeris-org-reviewer", "to": "exeris-org-reviewer",
                        "reason": "the schema half belongs to another role", "blocking": False}]))
         assert "Before this merges, re-check" in p["comment"], p["comment"][:600]
         assert "label_map_check" in p["comment"], p["comment"][:600]
@@ -1603,6 +1603,40 @@ def main() -> int:
                 comments=by_bot(override_line("arkstack", "e" * 40)))
         assert p["conclusion"] == "green", p
         assert "reviewed this by hand" in p["reason"], p["reason"]
+
+    # THE ROLE'S EARLIER NAME. Comments published before the role was renamed carry the old name in
+    # their marker, and they are still this role's: edited in place, read as its own standing
+    # verdict, and never held against it as a second routine's.
+    OLD_ROLE = "exeris-org-docs-reviewer"
+
+    @case("a verdict's search also finds the comment published under the role's earlier name")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict())
+        assert p["marker_searches"] == [
+            "<!-- exeris-bot: l2-verdict agent=exeris-org-reviewer ",
+            f"<!-- exeris-bot: l2-verdict agent={OLD_ROLE} "], p["marker_searches"]
+
+    @case("a block published under the earlier name is this role's, so a PASS takes it off")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=verdict(), current="hard-block",
+                comments=[by_bot(marker_line("BLOCKED", OLD_ROLE, "a" * 40))])
+        assert p["labels_remove"] == ["hard-block"], p
+        assert p["standing"] == {}, p["standing"]
+
+    @case("a notice published under the earlier name is restated as this role's")
+    def _(tmp):
+        old_notice = NOTICE.replace("agent=exeris-org-reviewer", f"agent={OLD_ROLE}")
+        assert old_notice != NOTICE
+        p = run(root, tmp, relevant="false", head_sha="b" * 40, comments=[by_bot(old_notice)])
+        assert "## Review — not run" in p["comment"], p["comment"][:200]
+
+    @case("a block published under the earlier name still has to be answered by the override")
+    def _(tmp):
+        blocked = marker_line("BLOCKED", OLD_ROLE, "e" * 40) + "\n## Review — **BLOCKED**"
+        p = run(root, tmp, verdict_doc=None, head_sha="e" * 40, override_by="arkstack",
+                comments=[by_bot(blocked, 2)])
+        assert p["conclusion"] == "red", p
+        assert "the block still stands" in p["comment"], p["comment"][:300]
 
     # A REVIEW THAT RAN AS PARTS. The aggregate carries `parts`, and a part that produced nothing
     # is `missing`: the verdict of the parts that did report is published, and it does not pass.
