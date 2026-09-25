@@ -13,7 +13,8 @@ the same role and the same schema:
 - `parts` says what each part came to: `reviewed` with its decision, `skipped` with the plan's
   reason, or `missing` with the reason no verdict was taken from its run.
 
-A part the plan ran and that left no verdict satisfying the schema is `missing`, never dropped. The
+A part the plan ran and that left no verdict satisfying the schema is `missing`, never dropped, and so
+is a part the plan does not name at all. The
 aggregate still carries every finding the other parts reported, and the publication is what refuses
 to pass a check on an incomplete one. With no part reviewed there is nothing to compose, and no
 verdict is written.
@@ -90,6 +91,10 @@ def aggregate(plan: dict, logs: dict[str, str], validate) -> dict | None:
             parts.append({"part": part, "status": "skipped", "reason": plan["skipped"][part]})
             continue
         if part not in plan.get("parts", []):
+            # A plan names every part, run or skipped. One it is silent about was neither decided
+            # to run nor decided not to, and counting it as skipped would state a reason nobody gave.
+            parts.append({"part": part, "status": "missing",
+                          "reason": "the plan neither ran nor skipped this part"})
             continue
         verdict, why = part_verdict(part, logs.get(part), validate)
         if verdict is None:

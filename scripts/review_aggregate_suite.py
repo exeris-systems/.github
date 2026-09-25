@@ -182,6 +182,49 @@ def _():
     assert agg["suggestions"] == ["link the ADR", "shorter title"], agg
 
 
+@case("a part the plan neither runs nor skips is missing, not silently absent")
+def _():
+    agg = ra.aggregate({"parts": ["pr"], "skipped": {"docs": "no `*.md` in the diff"}},
+                       {"pr": log("n-pr", verdict("pr"))}, validate)
+    got = {p["part"]: p for p in agg["parts"]}
+    assert set(got) == set(ra.PARTS), got
+    for part in ("records", "code-docs", "repo"):
+        assert got[part]["status"] == "missing" and "plan" in got[part]["reason"], got[part]
+    assert got["docs"]["status"] == "skipped", got["docs"]
+
+
+@case("handoffs from every reviewed part reach the composed verdict")
+def _():
+    handoff = {"from": ra.AGENT, "to": ra.AGENT, "reason": "the ADR registry is the owner",
+               "blocking": False}
+    agg = ra.aggregate({"parts": ["pr", "records"], "skipped": {}}, {
+        "pr": log("o-pr", verdict("pr")),
+        "records": log("o-r", verdict("records", handoffs=[handoff])),
+    }, validate)
+    assert agg.get("handoffs") == [handoff], agg
+    assert validate(agg) == [], validate(agg)
+
+
+@case("a composed verdict the schema refuses is an error, and nothing is written")
+def _():
+    # A schema every part's verdict satisfies and the composition cannot: it forbids `parts`, which
+    # only an aggregate carries. The command must refuse to write what the publication would refuse.
+    strict = os.path.join(TMP, "strict", "schemas", "verdict.schema.json")
+    os.makedirs(os.path.dirname(strict), exist_ok=True)
+    json.dump({"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+               "properties": {"parts": False}}, open(strict, "w", encoding="utf-8"))
+    plan = os.path.join(TMP, "p-plan.json")
+    out = os.path.join(TMP, "p-verdict.json")
+    json.dump({"parts": ["pr"], "skipped": {}}, open(plan, "w", encoding="utf-8"))
+    got = subprocess.run([sys.executable, os.path.join(HERE, "review_aggregate.py"), "--plan",
+                          plan, "--schema", strict, "--out", out,
+                          "--log", "pr=" + log("p-pr", verdict("pr"))],
+                         capture_output=True, text=True)
+    assert got.returncode == 1, (got.returncode, got.stdout, got.stderr)
+    assert "composed verdict does not satisfy the schema" in got.stdout, got.stdout
+    assert not os.path.exists(out)
+
+
 @case("no part reviewed: nothing to compose, and the command writes no verdict")
 def _():
     assert ra.aggregate(PLAN, {}, validate) is None
