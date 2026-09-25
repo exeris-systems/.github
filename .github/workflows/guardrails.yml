@@ -130,6 +130,7 @@ jobs:
         python3 scripts/artifact_guard_check.py --root .;
         python3 scripts/review_inputs_check.py --root .;
         python3 scripts/label_map_check.py;
+        python3 scripts/labels_sync_suite.py;
         python3 scripts/caller_permissions_check.py;
         python3 scripts/comment_history_suite.py;
         python3 scripts/gate_vocabulary_check_suite.py;
@@ -188,6 +189,11 @@ jobs:
       - name: The label map names only tags and labels that exist
         if: ${{ !cancelled() }}
         run: python scripts/label_map_check.py
+      # The sync renames labels in every repository that calls it, and a rename is the one request
+      # it sends that moves a label off what carries it if it goes wrong.
+      - name: The label sync renames in place and deletes nothing
+        if: ${{ !cancelled() }}
+        run: python scripts/labels_sync_suite.py
       # `pr_body_check.py` gates the `Owner:` line on who opened the pull request (ADR-085 §J.31,
       # ai-provenance.md rule 3b), and that branch has no case behind it anywhere else: the
       # reusable workflow that calls the checker hands it the real event payload, which this job
@@ -222,7 +228,7 @@ jobs:
         run: python scripts/gate_vocabulary_check_suite.py
       # The half the suite above cannot reach: it drives the planner with `--workflow-touching`
       # already computed, so the shell that computes it was cited as covered and was not. A wrong
-      # `true` there is a fail-open — it is what lets `l2-human-reviewed` green a check with no
+      # `true` there is a fail-open — it is what lets `human-reviewed` green a check with no
       # review behind it.
       - name: The entry-workflow question, one case per way of getting it wrong
         if: ${{ !cancelled() }}
