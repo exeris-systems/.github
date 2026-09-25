@@ -88,6 +88,10 @@ jobs:
     uses: ./.github/workflows/docs-review.yml
     with:
       publish: true
+      # THE ROUTINE IN PARTS, here first, as publication was. This repository captures
+      # no rows, so nothing is lost by the parts not writing one yet; and its pull requests touch
+      # Python, YAML and Markdown in every combination, which is what the plan has to get right.
+      review-in-parts: true
       l1-results: >-
         {"docs-lint": "${{ needs.docs.result }}",
          "commit-lint": "${{ needs.commits.result }}",
