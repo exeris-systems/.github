@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-22
+last-verified: 2026-09-25
 ---
 
 # Organisation rulesets
