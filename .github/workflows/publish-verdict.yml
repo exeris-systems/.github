@@ -652,9 +652,9 @@ jobs:
     # safe on its own, by replaying it against what is actually on the remote rather than by being
     # alone.
     #
-    # PER PART, because a group holds one running member and one waiting one: with every leg of a
-    # run in one group, the third leg displaced the second while it waited, and a part went
-    # uncaptured for no reason about the part.
+    # PER PART, because a group holds one running member and one waiting one: a third leg in the
+    # same group displaces the second while it waits, which leaves that part uncaptured for no
+    # reason about the part.
     concurrency:
       group: inbox-${{ github.repository }}-${{ matrix.part }}
       cancel-in-progress: false
