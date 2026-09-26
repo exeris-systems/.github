@@ -490,6 +490,14 @@ jobs:
           git diff --name-only --no-renames "$base...HEAD" -- "${specs[@]}" >> restored-paths.txt
           echo "::notice::$(tr -cd '\0' < instruction-files.txt | wc -c) instruction file(s) read at the base"
           rm -f instruction-files.txt
+      # GENERATED COPIES. A renderer's output carries `DO NOT EDIT. Generated from <source>`, and
+      # nobody authors it, so a finding about its text is a finding about the source — which the
+      # pull request may not carry at all when the source is a bundle's. The list is read from the
+      # pull request's commit, because some of these paths were just put back to the base above.
+      - name: The generated copies this pull request carries
+        run: |
+          python3 .guardrails/scripts/generated_paths.py --pr pull-request.json \
+            --out generated-paths.txt
       - name: The L1 gate results, in the verdict's vocabulary
         id: gates
         env:
@@ -596,6 +604,13 @@ jobs:
           executed: judge the change from that copy. A file there that begins
           `Snapshot placeholder:` stands for a link the copy did not follow, and says nothing
           about what the link pointed at.
+
+          GENERATED COPIES: the paths in `generated-paths.txt`, if any, carry a do-not-edit header
+          naming the file they are generated from, one `<path>` TAB `<source>` per line. Nobody
+          authors a copy, so judge its source and not the copy: where the source is in this diff,
+          a finding about the text belongs to the source; where it is not, report nothing about
+          the copy's content. Whether a copy still matches its source is `docs-lint`'s adapter
+          check, not a question for this review.
 
           REPOSITORY EXTENSION: ${{ inputs.repo-routine != '' && 'repo-routine.base.md' || '(none)' }}
           REPOSITORY CHECK OUTPUT: ${{ inputs.repo-checks != '' && 'repo-checks.out' || '(none)' }}

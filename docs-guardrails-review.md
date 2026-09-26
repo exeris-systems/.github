@@ -33,6 +33,7 @@ The reverse case is the checkout showing less than the branch. The runner reads 
 - The diff, restricted to: `docs/**`, `*.md`, `CLAUDE.md`, `.github/**`, `CHANGELOG.md`, `MIGRATION*.md`, `adr-index.md`, Java files whose diff touches `/** … */` blocks — and, for the `code` part, the source, script, workflow and build files its heading names.
 - The standards: `exeris-docs/standards/*.md`. Cite rule numbers in findings (`docs-style-guide.md rule 5`).
 - **Not judged: `.agents/vendor/**`.** It is a bundle vendored whole at a pinned digest and never edited in place, so a finding about its content cannot be fixed in the pull request that carries it; it belongs to the bundle's own repository. That the tree, the pin and the digest agree is `docs-lint`'s agent check. The plan counts a vendored file for no part.
+- **Judged through their source: generated copies.** A file whose header says `DO NOT EDIT. Generated from <source>` is a renderer's output, and nobody authors it. A finding about its text is a finding about the source: where the source is in the diff it belongs there, and where the source is not — a bundle's file, another repository's — nothing is reported about the copy's content. `generated-paths.txt` names these per run. Whether a copy still matches its source is `docs-lint`'s adapter check, which also catches a copy edited by hand; under `src/app/generated/**` that edit is rule 20f's as well.
 
 ## Parts
 

@@ -36,6 +36,8 @@ SNAPSHOT = ".claude-pr/"
 RUNNER_RESTORES = (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
                    "CLAUDE.md", "CLAUDE.local.md", ".husky")
 RESTORE_STEP_ENV = "RESTORED_BY_RUNNER"
+GENERATED = "generated-paths.txt"
+GENERATED_SCRIPT = "generated_paths.py"
 # ADR-087 §C.14a: the instruction files an agent reads that the runner does not restore for itself.
 # The workflow names them in `RESTORED_BY_ORGANISATION` and puts each back to the base branch's
 # content; this copy is what the list is compared with.
@@ -106,6 +108,14 @@ def main() -> int:
          f"pull request wrote to a restored path")
 
     organisation_rules(steps, prompt, rule)
+
+    # AND THE FILES NOBODY AUTHORED. A renderer's copy judged as written text reports its source's
+    # wording once per copy, in a pull request that may not carry the source at all.
+    rule(re.search(re.escape(GENERATED_SCRIPT) + r".*?>?\s*" + re.escape(GENERATED), shell, re.S)
+         is not None,
+         f"no step runs `{GENERATED_SCRIPT}` to write `{GENERATED}`")
+    rule(GENERATED in prompt,
+         f"the prompt does not name `{GENERATED}`, so a generated copy is judged as authored text")
 
     for said in bad:
         print(f"::error::review_inputs_check: {said}")
