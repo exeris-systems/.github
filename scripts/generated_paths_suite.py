@@ -67,11 +67,17 @@ def _():
                                     "EDIT. Generated from .agents/agents/router/AGENT.md by "
                                     "agents_render.py -->\n",
         "gen/a.ts": "// DO NOT EDIT. Generated from model/a.json by codegen\n",
+        "gen/b.css": "/* DO NOT EDIT. Generated from model/b.json by codegen */\n",
+        "gen/C.java": "/**\n * DO NOT EDIT. Generated from model/c.json by codegen\n */\n",
     })
-    assert generated_in(tmp, ["hooks/dispatch.py", ".claude/agents/router.md", "gen/a.ts"]) == {
+    got = generated_in(tmp, ["hooks/dispatch.py", ".claude/agents/router.md", "gen/a.ts",
+                             "gen/b.css", "gen/C.java"])
+    assert got == {
         "hooks/dispatch.py": "bundle/hooks/bin/dispatch.py",
         ".claude/agents/router.md": ".agents/agents/router/AGENT.md",
-        "gen/a.ts": "model/a.json"}
+        "gen/a.ts": "model/a.json",
+        "gen/b.css": "model/b.json",
+        "gen/C.java": "model/c.json"}, got
 
 
 @case("prose that quotes the marker is authored, and so is a marker far below the header")
