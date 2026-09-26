@@ -200,13 +200,16 @@ jobs:
         part: ${{ fromJSON(needs.plan.outputs.parts) }}
     # Drafts and dependency bumps are not reviewed, matching claude-code-review.yml and
     # pr-conventions.md rule 6.
-    # THIS CONDITION IS ALSO WHAT HOLDS §C.14a's TRIGGER CLOSED, and that is worth saying because
-    # nothing else here does. The produce job runs the model on the pull request's HEAD checkout,
-    # which includes its `AGENTS.md`, its `.agents/**` and its provider adapters — the instruction
-    # files the runner reads. §C.14a requires those to be restored from the merge base whenever the
-    # author is not a member of the organisation, and that is NOT implemented. Today no outside pull
-    # request reaches the runner at all, because of the line below. Anything that changes that —
-    # `pull_request_target`, or reviewing forks — must implement §C.14a first, in the same change.
+    # ONE BOT IS READ: THE ORGANISATION'S EXECUTION IDENTITY, `exeris-agent[bot]`, and only because
+    # §C.14a is implemented below. The produce job runs the model on the pull request's HEAD
+    # checkout, which includes its `AGENTS.md`, its `.agents/**` and its provider adapters — the
+    # instruction files an agent reads — and a pull request an agent wrote could otherwise rewrite
+    # the rules its own review follows. The step `The instruction files this pull request cannot
+    # write` puts every one of them back to the base branch's content before the runner starts, for
+    # every author, and the runner does the same for its own paths. The two are one change:
+    # `principal_check.py` refuses this condition admitting the identity without that step. Every
+    # other bot is still not reviewed. A fork is still not reviewed either — it receives no secrets —
+    # and `pull_request_target` remains the change that would need its own risk analysis.
     #
     # A fork's pull request receives no secrets, so the runner has no credential and the review
     # cannot happen. Skipped deliberately rather than left to fail: a permanent red on every
@@ -261,7 +264,8 @@ jobs:
       github.event.pull_request.head.repo.fork == false &&
       !contains(inputs.l1-results, '"failure"') &&
       !contains(inputs.l1-results, '"cancelled"') &&
-      !endsWith(github.event.pull_request.user.login, '[bot]') &&
+      (!endsWith(github.event.pull_request.user.login, '[bot]') ||
+       github.event.pull_request.user.login == 'exeris-agent[bot]') &&
       (github.event.action == 'opened' ||
        github.event.action == 'reopened' ||
        github.event.action == 'ready_for_review' ||
@@ -446,6 +450,46 @@ jobs:
                   | any($roots[]; . as $r | $f == $r or ($f | startswith($r + "/"))))' \
             pull-request.json > restored-paths.txt || : > restored-paths.txt
           echo "::notice::$(wc -l < restored-paths.txt) changed path(s) the checkout does not reflect"
+      # §C.14a — THE INSTRUCTIONS AN AGENT READS COME FROM THE BASE, whoever wrote the pull request.
+      # The runner restores only its own configuration (the list above). `AGENTS.md` at any depth,
+      # the bundle tree `.agents/**`, and the other agents' instruction files are read by a model
+      # just as surely, and a pull request that edits them would be reviewed under the instructions
+      # it wrote — the same reason the extension above is read at the base. Every such path that
+      # differs from the base branch is put back to the base branch's content, and one the base does
+      # not have is removed; what the branch wrote is kept under `.exeris-pr/<path>` for review and
+      # never executed. The paths THIS pull request changed are added to `restored-paths.txt`, so the
+      # reviewer is told which files the checkout does not show; a path that differs only because
+      # the branch is behind its base is restored and not named, since the pull request did not
+      # write it.
+      - name: The instruction files this pull request cannot write
+        env:
+          RESTORED_BY_ORGANISATION: >-
+            AGENTS.md .agents GEMINI.md .gemini .codex .cursor .cursorrules .clinerules
+            .windsurfrules .github/copilot-instructions.md
+        run: |
+          set -euo pipefail
+          set -f
+          base=$(jq -r '.base.sha' pull-request.json)
+          specs=()
+          for name in $RESTORED_BY_ORGANISATION; do
+            specs+=(":(glob)**/$name" ":(glob)**/$name/**")
+          done
+          # NUL-delimited: a path is read whole whatever characters it carries.
+          git diff -z --name-only --no-renames "$base" HEAD -- "${specs[@]}" > instruction-files.txt
+          while IFS= read -r -d '' path; do
+            if git cat-file -e "HEAD:$path" 2>/dev/null; then
+              mkdir -p ".exeris-pr/$(dirname "$path")"
+              git show "HEAD:$path" > ".exeris-pr/$path"
+            fi
+            if git cat-file -e "$base:$path" 2>/dev/null; then
+              git checkout -q "$base" -- "$path"
+            else
+              rm -f -- "$path"
+            fi
+          done < instruction-files.txt
+          git diff --name-only --no-renames "$base...HEAD" -- "${specs[@]}" >> restored-paths.txt
+          echo "::notice::$(tr -cd '\0' < instruction-files.txt | wc -c) instruction file(s) read at the base"
+          rm -f instruction-files.txt
       - name: The L1 gate results, in the verdict's vocabulary
         id: gates
         env:
@@ -543,9 +587,13 @@ jobs:
 
           FILES THIS CHECKOUT DOES NOT REFLECT: the paths in `restored-paths.txt`, if any, are
           changed by this pull request and restored to the base branch's content before you
-          start, because the runner reads them itself. Their content at that path is not the
-          change. What the pull request wrote to each is at `.claude-pr/<path>`, a copy kept for
-          review and never executed: judge the change from that copy. A file there that begins
+          start — because the runner reads them itself, or because they are instructions an agent
+          reads, and a pull request does not write the instructions its review follows. Their
+          content at that path is not the change. What the pull request wrote to each is at
+          `.claude-pr/<path>` for the runner's own paths and at `.exeris-pr/<path>` for the
+          organisation's (`AGENTS.md`, `.agents/**` and other agents' instruction files); a path
+          the pull request deleted has no copy. Both are copies kept for review and never
+          executed: judge the change from that copy. A file there that begins
           `Snapshot placeholder:` stands for a link the copy did not follow, and says nothing
           about what the link pointed at.
 
@@ -961,7 +1009,8 @@ jobs:
         ${{ github.event.pull_request.head.repo.fork && 'fork'
             || github.event.pull_request.draft && 'draft'
             || github.event_name == 'pull_request_review' && 'review-event'
-            || endsWith(github.event.pull_request.user.login, '[bot]') && 'bot-authored'
+            || endsWith(github.event.pull_request.user.login, '[bot]')
+               && github.event.pull_request.user.login != 'exeris-agent[bot]' && 'bot-authored'
             || github.event.sender.type != 'User' && 'bot-event'
             || (github.event.action == 'opened' || github.event.action == 'reopened'
                 || github.event.action == 'ready_for_review'
@@ -982,6 +1031,7 @@ jobs:
             || github.event.pull_request.head.repo.fork
             && 'the pull request comes from a fork, which receives no secrets, so the runner has no credential to review with'
             || endsWith(github.event.pull_request.user.login, '[bot]')
+            && github.event.pull_request.user.login != 'exeris-agent[bot]'
             && 'the pull request was opened by a bot, and this review does not read a dependency bump -- which skips the work, not the question'
             || 'the pull request is a draft, which this review does not read and GitHub does not merge' }}
     # Named rather than inherited: `exeris-kernel` and `exeris-sdk` both refused `secrets: inherit`

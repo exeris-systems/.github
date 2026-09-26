@@ -32,6 +32,8 @@ SENDER_TYPE = "github.event.sender.type"
 SENDER_LOGIN = "github.event.sender.login"
 HUMAN = "'User'"
 REVIEW_EVENT = "'pull_request_review'"
+# The organisation's execution identity (ADR-087 §A.1), the one bot whose pull requests are reviewed.
+AGENT = "'exeris-agent[bot]'"
 
 
 def load(root: str, name: str) -> dict:
@@ -120,6 +122,26 @@ def main() -> int:
     rule("github.event_name == 'pull_request'" in gate,
          "the produce job's `if:` does not require github.event_name == 'pull_request', so a "
          "review submitted while the request label stands runs the model again")
+
+    # 1b. ONE BOT'S PULL REQUESTS ARE READ, AND ONLY WITH §C.14a IN PLACE (ADR-087). The execution
+    # identity is admitted to review because its pull requests are the organisation's own work; it
+    # is admitted only while a step puts `AGENTS.md` and `.agents/**` back to the base before the
+    # runner starts, because an agent's pull request could otherwise write the instructions its own
+    # review follows. The two land together or not at all, and this is where that is held.
+    restores = [s for s in produce.get("steps") or []
+                if "RESTORED_BY_ORGANISATION" in (s.get("env") or {})]
+    listed = str((restores[0].get("env") or {}).get("RESTORED_BY_ORGANISATION", "")).split() \
+        if restores else []
+    rule(f"== {AGENT}" not in gate or {"AGENTS.md", ".agents"} <= set(listed),
+         f"the produce job's `if:` admits {AGENT} and no step restores `AGENTS.md` and `.agents` "
+         f"from the base, so the execution identity's pull request is reviewed under instructions "
+         f"it wrote")
+    admitted = set(re.findall(r"==\s*('[^']*\[bot\]')", gate))
+    rule(admitted <= {AGENT},
+         f"the produce job's `if:` admits {sorted(admitted - {AGENT})} beside the execution "
+         f"identity; §C.14a admits one bot to review, and a second is a second review bypass")
+    rule("[bot]') ||" not in gate or admitted == {AGENT},
+         "the produce job's `if:` lets a bot author through without naming which one")
 
     # 2. A BOT EVENT IS NOT A READINESS EVENT. `skip-kind` is an ordered chain of `||`, so the first
     # alternative that is truthy wins. `ready` before `bot-event` classified the publication's own

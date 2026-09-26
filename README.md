@@ -161,6 +161,14 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    is how a pull request the runner refuses to read (one changing the caller's own workflow file)
    gets a green check. Both are refused when a bot applies them.
 
+   A pull request a bot opened is not reviewed and takes its colour from the standing verdict,
+   with one exception: the organisation's execution identity, `exeris-agent[bot]`, whose pull
+   requests are the organisation's own work (ADR-087 §A.1). Every review — the identity's
+   included — reads the instruction files an agent follows (`AGENTS.md` at any depth, `.agents/**`
+   and other agents' instruction files) as the base branch has them, keeps what the pull request
+   wrote under `.exeris-pr/`, and names those paths to the reviewer (ADR-087 §C.14a): a pull
+   request does not write the instructions its own review follows.
+
    **Reviewing in parts is its own opt-in.** `review-in-parts: true` runs `pr` always, `repo` when
    `repo-routine` is set, and `docs`, `records`, `code-docs` and `code` only where their files are
    in the diff, one model run each, and publishes one verdict with a `Part` column and a line per

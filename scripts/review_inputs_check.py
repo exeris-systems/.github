@@ -36,6 +36,15 @@ SNAPSHOT = ".claude-pr/"
 RUNNER_RESTORES = (".claude", ".mcp.json", ".claude.json", ".gitmodules", ".ripgreprc",
                    "CLAUDE.md", "CLAUDE.local.md", ".husky")
 RESTORE_STEP_ENV = "RESTORED_BY_RUNNER"
+# ADR-087 §C.14a: the instruction files an agent reads that the runner does not restore for itself.
+# The workflow names them in `RESTORED_BY_ORGANISATION` and puts each back to the base branch's
+# content; this copy is what the list is compared with.
+ORGANISATION_RESTORES = ("AGENTS.md", ".agents", "GEMINI.md", ".gemini", ".codex", ".cursor",
+                         ".cursorrules", ".clinerules", ".windsurfrules",
+                         ".github/copilot-instructions.md")
+ORGANISATION_ENV = "RESTORED_BY_ORGANISATION"
+ORGANISATION_SNAPSHOT = ".exeris-pr/"
+RUNNER_ACTION = "anthropics/claude-code-action"
 # The step that renders the prompt, by id. The prompt is hashed as rendered, so it is written once
 # into a step rather than inline on the action; what a reviewer is handed therefore lives in a
 # `run:` and no longer only in a `with:`. A rule that read one place would pass on a prompt that
@@ -96,6 +105,8 @@ def main() -> int:
          f"the prompt does not send the reviewer to `{SNAPSHOT}`, where the runner keeps what the "
          f"pull request wrote to a restored path")
 
+    organisation_rules(steps, prompt, rule)
+
     for said in bad:
         print(f"::error::review_inputs_check: {said}")
     if bad:
@@ -103,6 +114,34 @@ def main() -> int:
     print("review_inputs_check: the extension comes from the base, and the paths the checkout "
           "cannot show are named")
     return 0
+
+
+def organisation_rules(steps: list, prompt: str, rule) -> None:
+    """§C.14a: the instructions an agent reads are put back to the base before the runner starts."""
+    found = [i for i, s in enumerate(steps) if ORGANISATION_ENV in (s.get("env") or {})]
+    rule(len(found) == 1, f"no single step names `{ORGANISATION_ENV}`, so `AGENTS.md` and "
+                          f"`.agents/**` are read as the pull request wrote them")
+    if len(found) != 1:
+        return
+    step = steps[found[0]]
+    listed = str(step["env"][ORGANISATION_ENV]).split()
+    rule(sorted(listed) == sorted(ORGANISATION_RESTORES),
+         f"`{ORGANISATION_ENV}` names {sorted(listed)}, and §C.14a restores "
+         f"{sorted(ORGANISATION_RESTORES)}")
+    run = re.sub(r"\\\n\s*", " ", str(step.get("run") or ""))
+    rule('git checkout -q "$base" --' in run,
+         "the step does not put the instruction files back to the base branch's content")
+    rule(re.search(r">>\s*" + re.escape(RESTORED), run) is not None,
+         f"the step does not add the paths it restored to `{RESTORED}`")
+    rule(ORGANISATION_SNAPSHOT in run,
+         f"the step keeps no copy of what the pull request wrote under `{ORGANISATION_SNAPSHOT}`")
+    runner = [i for i, s in enumerate(steps) if str(s.get("uses") or "").startswith(RUNNER_ACTION)]
+    rule(bool(runner) and found[0] < min(runner),
+         "the instruction files are restored after the runner has started, or no runner step "
+         "was found to order them before")
+    rule(ORGANISATION_SNAPSHOT in prompt,
+         f"the prompt does not send the reviewer to `{ORGANISATION_SNAPSHOT}`, where the "
+         f"pull request's own instruction files are kept")
 
 
 if __name__ == "__main__":

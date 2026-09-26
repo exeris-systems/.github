@@ -129,6 +129,7 @@ jobs:
         python3 scripts/entry_workflow_suite.py;
         python3 scripts/gate_vocabulary_check.py --root .;
         python3 scripts/principal_check.py --root .;
+        python3 scripts/principal_check_suite.py;
         python3 scripts/repo_checks_env_check.py --root .;
         python3 scripts/repo_checks_env_check_suite.py;
         python3 scripts/artifact_guard_check.py --root .;
@@ -262,6 +263,7 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python scripts/principal_check.py --root .
+          python scripts/principal_check_suite.py
       # The same command in two places is two places until something says so. `repo-checks` hands
       # the reviewer this repository's own gates; the jobs above run several of the same scripts.
       # When they disagree about what is installed, the reviewer reads a failure that CI does not
