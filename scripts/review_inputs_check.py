@@ -111,7 +111,7 @@ def main() -> int:
 
     # AND THE FILES NOBODY AUTHORED. A renderer's copy judged as written text reports its source's
     # wording once per copy, in a pull request that may not carry the source at all.
-    rule(re.search(re.escape(GENERATED_SCRIPT) + r".*?>?\s*" + re.escape(GENERATED), shell, re.S)
+    rule(re.search(re.escape(GENERATED_SCRIPT) + r"[^\n]*--out\s+" + re.escape(GENERATED), shell)
          is not None,
          f"no step runs `{GENERATED_SCRIPT}` to write `{GENERATED}`")
     rule(GENERATED in prompt,
