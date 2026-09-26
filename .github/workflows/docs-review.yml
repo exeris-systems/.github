@@ -474,8 +474,9 @@ jobs:
           for name in $RESTORED_BY_ORGANISATION; do
             specs+=(":(glob)**/$name" ":(glob)**/$name/**")
           done
-          git diff --name-only --no-renames "$base" HEAD -- "${specs[@]}" > instruction-files.txt
-          while IFS= read -r path; do
+          # NUL-delimited: a path is read whole whatever characters it carries.
+          git diff -z --name-only --no-renames "$base" HEAD -- "${specs[@]}" > instruction-files.txt
+          while IFS= read -r -d '' path; do
             if git cat-file -e "HEAD:$path" 2>/dev/null; then
               mkdir -p ".exeris-pr/$(dirname "$path")"
               git show "HEAD:$path" > ".exeris-pr/$path"
@@ -487,7 +488,7 @@ jobs:
             fi
           done < instruction-files.txt
           git diff --name-only --no-renames "$base...HEAD" -- "${specs[@]}" >> restored-paths.txt
-          echo "::notice::$(wc -l < instruction-files.txt) instruction file(s) read at the base"
+          echo "::notice::$(tr -cd '\0' < instruction-files.txt | wc -c) instruction file(s) read at the base"
           rm -f instruction-files.txt
       - name: The L1 gate results, in the verdict's vocabulary
         id: gates

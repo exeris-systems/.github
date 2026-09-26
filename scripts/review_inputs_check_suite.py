@@ -181,6 +181,14 @@ def _():
     assert named == [], named
 
 
+@case("an instruction file whose path carries a newline is read whole")
+def _():
+    odd = "docs/two\nlines/AGENTS.md"
+    tree, _, kept = instructions(BASE, {odd: "the branch's nested agents\n"})
+    assert odd not in tree, tree
+    assert kept == {odd: "the branch's nested agents\n"}, kept
+
+
 @case("a path that only resembles an instruction file is left as the branch wrote it")
 def _():
     near = {"AGENTS.md.bak": "a\n", ".agentsX/a.md": "b\n", "docs/NOT-AGENTS.md": "c\n",

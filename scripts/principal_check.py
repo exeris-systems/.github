@@ -136,8 +136,12 @@ def main() -> int:
          f"the produce job's `if:` admits {AGENT} and no step restores `AGENTS.md` and `.agents` "
          f"from the base, so the execution identity's pull request is reviewed under instructions "
          f"it wrote")
-    rule("[bot]') ||" not in gate or f"== {AGENT}" in gate,
-         "the produce job's `if:` admits a bot author other than the execution identity")
+    admitted = set(re.findall(r"==\s*('[^']*\[bot\]')", gate))
+    rule(admitted <= {AGENT},
+         f"the produce job's `if:` admits {sorted(admitted - {AGENT})} beside the execution "
+         f"identity; §C.14a admits one bot to review, and a second is a second review bypass")
+    rule("[bot]') ||" not in gate or admitted == {AGENT},
+         "the produce job's `if:` lets a bot author through without naming which one")
 
     # 2. A BOT EVENT IS NOT A READINESS EVENT. `skip-kind` is an ordered chain of `||`, so the first
     # alternative that is truthy wins. `ready` before `bot-event` classified the publication's own
