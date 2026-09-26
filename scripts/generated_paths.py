@@ -11,6 +11,9 @@ though each were written here.
 The copy is read from the pull request's own commit, not the working tree: some of these paths are
 restored to the base before the reviewer starts, and what the pull request wrote is the question.
 
+Cases: `generated_paths_suite.py`. That the review runs this and names its list is held by
+`review_inputs_check.py`.
+
 Usage: generated_paths.py --pr pull-request.json [--rev HEAD] [--out generated-paths.txt]
   Writes one line per generated file, `<path>\\t<source>`.
 """
