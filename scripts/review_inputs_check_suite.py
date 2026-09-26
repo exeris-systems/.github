@@ -261,6 +261,19 @@ def _():
     assert got.returncode == 1 and ".claude-pr/" in got.stdout, got.stdout
 
 
+@case("the check refuses a workflow that lists no copies, or a prompt that does not name them")
+def _():
+    got = check_on(lambda t: t.replace("--out generated-paths.txt", "--out copies.txt", 1))
+    assert got.returncode == 1 and "generated_paths.py" in got.stdout, got.stdout
+    # Both names kept, in places that do not make one invocation, is not the list being written.
+    got = check_on(lambda t: t.replace("--pr pull-request.json \\\n            --out generated-paths.txt",
+                                       "--pr pull-request.json\n          echo generated-paths.txt", 1))
+    assert got.returncode == 1 and "generated_paths.py" in got.stdout, got.stdout
+    got = check_on(lambda t: t.replace("GENERATED COPIES: the paths in `generated-paths.txt`",
+                                       "GENERATED COPIES: the paths listed", 1))
+    assert got.returncode == 1 and "does not name `generated-paths.txt`" in got.stdout, got.stdout
+
+
 @case("this repository's workflow passes")
 def _():
     got = check_on(lambda t: t)
