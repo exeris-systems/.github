@@ -552,6 +552,10 @@ jobs:
           about one of them here is a finding reported twice. Every part reads the routine's
           `## Parts`, `## Repository extension`, `## Output format` and `## Verdict` sections. A
           part's verdict carries `"part": "<PART>"`; the whole routine's carries no `part`.
+          Every part's verdict carries every field the schema requires, whichever part it is:
+          `scope_class` is the pull request's own `Scope class:` line, copied as it stands even
+          where judging the classification belongs to another part. A verdict missing it fails
+          the schema, and the part is then reported as producing nothing.
 
           Each finding's `why` is the clause it violates as `<file>#<rule>` and nothing else —
           `docs-guardrails-review.md#8`, `repo-review-rules.md#R2`. The explanation belongs in
