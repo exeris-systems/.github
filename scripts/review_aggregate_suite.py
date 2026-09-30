@@ -151,6 +151,32 @@ def _():
     assert got is None and "schema" in why and "MAYBE" in why, why
 
 
+@case("a refused verdict's reason names every cause once, and no finding's text")
+def _():
+    loose = {"tag": "HARD BLOCK", "file": "docs/adr/ADR-036.md", "line": 202,
+             "what": "An amendment headed with no date.", "why": "docs-guardrails-review.md#13"}
+    got, why = ra.part_verdict("records", log("r", verdict("records", "BLOCKED", [loose])),
+                               validate)
+    assert got is None, got
+    assert "'fix' is a required property" in why, why
+    assert "'file'" in why and "'line'" in why, why
+    assert "findings: no item matches" in why, why
+    assert "An amendment headed" not in why, "a `contains` cause repeated the findings it searched"
+    assert why.count("'fix' is a required property") == 1, why
+    assert "<root>: Unevaluated" not in why, why
+
+
+@case("a reason is bounded: a few causes, each short, and a count of the rest")
+def _():
+    errors = [f"findings/{i}: 'fix' is a required property" for i in range(8)]
+    got = ra.causes(errors + ["x: " + "y" * 400])
+    assert got.count("; ") == ra.MAX_CAUSES, got
+    assert got.endswith(f"and {9 - ra.MAX_CAUSES} more"), got
+    assert all(len(c) <= ra.MAX_CAUSE for c in ra.causes(["x: " + "y" * 400]).split("; ")), got
+    assert ra.causes(["<root>: Unevaluated properties are not allowed"]).startswith("<root>"), \
+        "with nothing else, the unevaluated line is the only cause there is"
+
+
 @case("one entry per check, and its worst report stands: fail over pass over not-run")
 def _():
     agg = ra.aggregate({"parts": ["pr", "docs"], "skipped": {}}, {

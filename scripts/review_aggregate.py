@@ -57,18 +57,39 @@ def part_verdict(part: str, log: str | None, validate) -> tuple[dict | None, str
             continue
         errors = validate(doc)
         if errors:
-            refused = refused or f"its verdict does not satisfy the schema: {first_cause(errors)}"
+            refused = refused or f"its verdict does not satisfy the schema: {causes(errors)}"
             continue
         return doc, ""
     return None, refused
 
 
-def first_cause(errors: list[str]) -> str:
-    """The first message that is a cause. A composition validates through a `$ref` into the base,
-    and when anything in that branch fails, the root reports every property as unevaluated — a
-    secondary line that names the verdict's own fields and never the fault."""
-    real = [e for e in errors if not e.startswith("<root>: Unevaluated properties")]
-    return (real or errors)[0]
+# How many causes a reason names, and how long any one of them may run. A reason is read in the
+# published comment, where every finding of a part that got the shape wrong once fails the same
+# three ways; the first few say what to fix, and the count says how much more there is.
+MAX_CAUSES = 5
+MAX_CAUSE = 160
+CONTAINS = " does not contain items matching the given schema"
+
+
+def causes(errors: list[str]) -> str:
+    """Every message that is a cause, each once, in the validator's order. A composition validates
+    through a `$ref` into the base, and when anything in that branch fails, the root reports every
+    property as unevaluated — a secondary line that names the verdict's own fields and never the
+    fault. A `contains` failure repeats the whole array it searched; it is said by its path alone,
+    because the array is the part's own findings, already in the log."""
+    real = [e for e in errors if not e.startswith("<root>: Unevaluated properties")] or errors
+    seen: list[str] = []
+    for error in real:
+        if error.endswith(CONTAINS):
+            where = error.split(":", 1)[0]
+            error = f"{where}: no item matches what the schema's `contains` requires"
+        if len(error) > MAX_CAUSE:
+            error = error[:MAX_CAUSE - 1] + "…"
+        if error not in seen:
+            seen.append(error)
+    shown = "; ".join(seen[:MAX_CAUSES])
+    rest = len(seen) - MAX_CAUSES
+    return f"{shown}; and {rest} more" if rest > 0 else shown
 
 
 def merge_checks(verdicts: list[dict]) -> list[dict]:
@@ -149,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         errors = schema_errors(verdict, a.schema)
         if errors:
             print(f"::error title=review_aggregate::the composed verdict does not satisfy the "
-                  f"schema: {first_cause(errors)}")
+                  f"schema: {causes(errors)}")
             return 1
         with open(a.out, "w", encoding="utf-8") as fh:
             json.dump(verdict, fh, indent=2, ensure_ascii=False)
