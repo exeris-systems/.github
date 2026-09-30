@@ -177,6 +177,43 @@ def _():
         "with nothing else, the unevaluated line is the only cause there is"
 
 
+@case("a finding anchored by `file` and `line`, with no `fix`, is refused; the prompt's shape passes")
+def _():
+    what = "An amendment to an accepted ADR is headed with no date."
+    loose = {"tag": "HARD BLOCK", "part": "records", "file": "docs/adr/ADR-036.md", "line": 202,
+             "what": what, "why": "docs-guardrails-review.md#13"}
+    got, why = ra.part_verdict("records", log("q1", verdict("records", "BLOCKED", [loose])),
+                               validate)
+    assert got is None and "schema" in why, why
+    for field in ("file", "line", "fix", "blocking"):
+        shaped = {"tag": "HARD BLOCK", "part": "records", "location": "docs/adr/ADR-036.md:202",
+                  "what": what, "why": "docs-guardrails-review.md#13",
+                  "fix": "date the amendment", "blocking": True}
+        if field in ("file", "line"):
+            shaped[field] = loose[field]
+        else:
+            del shaped[field]
+        errors = validate(verdict("records", "BLOCKED", [shaped]))
+        assert errors, f"a finding that differs from the stated shape by `{field}` validated"
+    shaped = {"tag": "HARD BLOCK", "part": "records", "location": "docs/adr/ADR-036.md:202",
+              "what": what, "why": "docs-guardrails-review.md#13", "fix": "date the amendment",
+              "blocking": True}
+    got, why = ra.part_verdict("records", log("q2", verdict("records", "BLOCKED", [shaped])),
+                               validate)
+    assert got is not None and why == "", why
+
+
+@case("the part prompt and the routine both state the finding's fields")
+def _():
+    prompt = open(os.path.join(ROOT, ".github", "workflows", "docs-review.yml"),
+                  encoding="utf-8").read()
+    routine = open(os.path.join(ROOT, "docs-guardrails-review.md"), encoding="utf-8").read()
+    for name, text in (("docs-review.yml", prompt), ("docs-guardrails-review.md", routine)):
+        flat = " ".join(text.split())
+        for phrase in ("`location`", "no `file` or `line` field", "`fix`", '`"blocking": true`'):
+            assert phrase in flat, f"{name} does not state {phrase}"
+
+
 @case("one entry per check, and its worst report stands: fail over pass over not-run")
 def _():
     agg = ra.aggregate({"parts": ["pr", "docs"], "skipped": {}}, {
