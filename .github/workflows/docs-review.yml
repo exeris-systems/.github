@@ -569,6 +569,13 @@ jobs:
           `docs-guardrails-review.md#8`, `repo-review-rules.md#R2`. The explanation belongs in
           `what`; a `why` with prose in it fails the schema and the review is refused.
 
+          Each finding carries `what`, `why` and `fix`. Where it has one site, that site is
+          `location`, one string `<path>:<line>`; a finding has no `file` or `line` field, and
+          one carrying either fails the schema. A finding that refuses the merge carries
+          `"blocking": true` — every `HARD BLOCK` does — and a `BLOCKED` verdict with no such
+          finding fails the schema too. The routine's `## Verdict` maps each part of a report
+          line to its field.
+
           The L1 gates have already run and their results are below. Do not try to fetch them —
           this runner's harness denies network calls, and a review that reports them as `not-run`
           because it could not read a page is a review defeated by its own sandbox. Put these
