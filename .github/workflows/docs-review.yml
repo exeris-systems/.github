@@ -557,6 +557,14 @@ jobs:
           where judging the classification belongs to another part. A verdict missing it fails
           the schema, and the part is then reported as producing nothing.
 
+          The verdict's top-level fields are these and no others: `agent`, `part`, `decision`,
+          `scope_class`, `findings`, `checks_run`, and where the review has them `suggestions`,
+          `handoffs`, `decision_label`, `required_validation`. The composed schema reaches the
+          base through a `$ref`, so reading it alone does not show the base's fields; a field
+          added from memory, a `summary` among them, fails the schema. Put the fenced `json`
+          block in the text of your final message, whether or not writing `verdict.json`
+          succeeded, rather than pointing at one above.
+
           Each finding's `why` is the clause it violates as `<file>#<rule>` and nothing else —
           `docs-guardrails-review.md#8`, `repo-review-rules.md#R2`. The explanation belongs in
           `what`; a `why` with prose in it fails the schema and the review is refused.
