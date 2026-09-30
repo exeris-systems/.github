@@ -381,8 +381,31 @@ def fenced_verdicts(comments_json: str, trusted: set[str]) -> list[dict]:
     return found
 
 
+def written_verdict(part: dict) -> dict | None:
+    """The object a `Write` call put into `verdict.json`, whether or not the harness let it land.
+
+    The routine tells the runner to write the file, and this runner's harness denies the call, so a
+    run can leave its verdict only in the call's input and then point at "the block above" that it
+    never wrote as text. The input is the model's own output in its own log, as much the run's as
+    its prose is.
+    """
+    if part.get("type") != "tool_use" or part.get("name") != "Write":
+        return None
+    given = part.get("input")
+    if not isinstance(given, dict):
+        return None
+    if os.path.basename(str(given.get("file_path") or "")) != "verdict.json":
+        return None
+    try:
+        doc = json.loads(given.get("content") or "")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
 def execution_verdicts(path: str) -> list[dict]:
-    """Fenced `json` verdicts in what the runner itself said, oldest first.
+    """Fenced `json` verdicts in what the runner itself said, and any it wrote to `verdict.json`,
+    oldest first.
 
     The third source and the best one. The runner writes an execution log, the produce job uploads it
     already, and the model's own final message is in it — so the verdict reaches the publish step
@@ -406,24 +429,32 @@ def execution_verdicts(path: str) -> list[dict]:
                 events.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    texts: list[str] = []
+    # Each entry is a text to search for fenced blocks, or a document the model wrote to
+    # `verdict.json` — kept in the order the run produced them, so the newest is still last.
+    said: list[str | dict] = []
     for ev in events:
         if not isinstance(ev, dict):
             continue
         message = ev.get("message")
         for part in (message.get("content") if isinstance(message, dict) else None) or []:
-            if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
-                texts.append(part["text"])
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text" and part.get("text"):
+                said.append(part["text"])
+            elif written := written_verdict(part):
+                said.append(written)
         if ev.get("type") == "result" and isinstance(ev.get("result"), str):
-            texts.append(ev["result"])
+            said.append(ev["result"])
     found = []
-    for block in FENCE.findall("\n".join(texts)):
-        try:
-            doc = json.loads(block)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(doc, dict) and "agent" in doc and "decision" in doc:
-            found.append(doc)
+    for item in said:
+        blocks = [item] if isinstance(item, dict) else FENCE.findall(item)
+        for block in blocks:
+            try:
+                doc = block if isinstance(block, dict) else json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(doc, dict) and "agent" in doc and "decision" in doc:
+                found.append(doc)
     return found
 
 

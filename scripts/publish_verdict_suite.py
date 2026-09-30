@@ -732,6 +732,39 @@ def main() -> int:
         assert p["conclusion"] == "red" and p["verdict_source"] == "none", p
         assert "execution log" in p["reason"], p
 
+    def written_log(path, doc, then="The fenced `json` block above is the fallback."):
+        """A run whose only verdict is in a `Write` call's input, and whose last word points at a
+        block it never wrote as text."""
+        return [{"type": "system", "subtype": "init", "model": "claude-sonnet-5"},
+                {"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "name": "Write",
+                     "input": {"file_path": path, "content": json.dumps(doc, indent=2)}}]}},
+                {"type": "assistant", "message": {"content": [{"type": "text", "text": then}]}},
+                {"type": "result", "subtype": "success", "result": then,
+                 "permission_denials": [{"tool_name": "Write"}]}]
+
+    @case("a verdict the runner wrote to `verdict.json` is read from the log, denied or not")
+    def _(tmp):
+        log = written_log("/home/runner/work/x/x/verdict.json",
+                          verdict(decision="CONDITIONAL", findings=[finding(tag="DOC DEBT")]))
+        p = run(root, tmp, verdict_doc=None, execution_log=log)
+        assert p["verdict_source"] == "execution log", p
+        assert p["labels_add"] == ["doc-debt"], p
+
+    @case("a `Write` to any other file is not a verdict")
+    def _(tmp):
+        p = run(root, tmp, verdict_doc=None, outcome="success",
+                execution_log=written_log("/home/runner/work/x/x/notes.json", verdict()))
+        assert p["conclusion"] == "red" and p["verdict_source"] == "none", p
+
+    @case("a block in the final text still wins over an earlier write")
+    def _(tmp):
+        text = "Review.\n\n```json\n" + json.dumps(verdict(decision="PASS")) + "\n```"
+        log = written_log("verdict.json", verdict(decision="BLOCKED",
+                                                  findings=[finding(blocking=True)]), then=text)
+        p = run(root, tmp, verdict_doc=None, execution_log=log)
+        assert p["verdict_source"] == "execution log" and p["conclusion"] == "green", p
+
     @case("the footer names the harness and every model the run used")
     def _(tmp):
         p = run(root, tmp, verdict_doc=verdict(), execution_log=exec_log(verdict()))

@@ -201,6 +201,39 @@ def _():
     assert agg["scope_class"] == "docs-only", "with `pr` missing, the first reviewed part's"
 
 
+@case("the prompt lists a part verdict's top-level fields as the composed schema has them")
+def _():
+    import re
+    composed = json.load(open(SCHEMA, encoding="utf-8"))
+    base = json.load(open(os.path.join(os.path.dirname(SCHEMA),
+                                       composed["allOf"][0]["$ref"]), encoding="utf-8"))
+    local = composed["allOf"][1]["properties"]
+    # `parts` is the aggregate's to write, never a run's.
+    expected = (set(base["properties"]) | set(local)) - {"parts"}
+    prompt = " ".join(open(os.path.join(ROOT, ".github", "workflows", "docs-review.yml"),
+                           encoding="utf-8").read().split())
+    lead = "The verdict's top-level fields are these and no others:"
+    assert lead in prompt, "the prompt does not list the verdict's top-level fields"
+    listed = prompt.split(lead, 1)[1].split(".", 1)[0]
+    got = set(re.findall(r"`([a-z_]+)`", listed))
+    assert got == expected, f"listed but not in the schema: {sorted(got - expected)}; " \
+                            f"in the schema but not listed: {sorted(expected - got)}"
+
+
+@case("a part whose verdict is only in its `Write` to `verdict.json` is reviewed, not missing")
+def _():
+    path = os.path.join(TMP, "s.json")
+    events = [{"type": "assistant", "message": {"content": [
+                  {"type": "tool_use", "name": "Write",
+                   "input": {"file_path": "/w/verdict.json",
+                             "content": json.dumps(verdict("code-docs"))}}]}},
+              {"type": "result", "result": "The fenced `json` block above is the fallback."}]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(events, fh)
+    got, why = ra.part_verdict("code-docs", path, validate)
+    assert got is not None and why == "", why
+
+
 @case("suggestions are kept once each")
 def _():
     agg = ra.aggregate({"parts": ["pr", "docs"], "skipped": {}}, {
