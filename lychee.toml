@@ -4,17 +4,24 @@ no_progress = true
 max_concurrency = 8
 timeout = 20
 max_retries = 2
-# 403, 429 and 503 are answers from a server that is there: some vendor docs refuse bots, a rate
-# limit says the host is up and busy, and a 503 says it is up and declining right now. A link
-# check that fails a pull request because a third party throttled or shed load on the runner
-# reports the runner, not the link.
+# 403, 429, 503 and 504 are answers from a server that is there: some vendor docs refuse bots, a
+# rate limit says the host is up and busy, and a 503 or 504 says it is up and declining right now.
+# github.com answers an anonymous client's HTML page requests with 503 or 504 once its rate limit
+# trips, at once and for any user agent, and the GITHUB_TOKEN the workflow passes does not change
+# that, because lychee still fetches the page. A link check that fails a pull request because a
+# third party throttled the runner reports the runner, not the link.
 #
-# What that costs, stated rather than left to be discovered: a service that is permanently 503
-# passes this check. The trade is deliberate — a dead host answers nothing at all and still fails,
-# while a live one having a bad minute stops turning every repository's docs gate red at random.
-# `max_retries` above is the first defence and it is not enough on its own: the run that prompted
-# this saw a 503 from github.com survive both retries.
-accept = ["200..=299", "403", "429", "503"]
+# What that costs, stated rather than left to be discovered: a page behind any of these codes
+# passes, whether or not it exists — a throttled github.com answers 503 for a missing file as well.
+# The remap below takes the bulk of github.com links out of that blind spot.
+accept = ["200..=299", "403", "429", "503", "504"]
+# A github.com `blob/` link is checked against raw.githubusercontent.com, which serves the same file
+# without the HTML rate limit and answers 404 for a missing one. The fragment is dropped, as lychee
+# does not check fragments here either. Other github.com pages (`tree/`, pull requests, releases)
+# have no raw form and stay under `accept` above.
+remap = [
+  "^https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/([^#?]+)(?:[#?].*)?$ https://raw.githubusercontent.com/$1/$2/$3/$4",
+]
 exclude_all_private = true
 # Local relative links are the point: check them against the checkout, offline-first.
 offline = false
