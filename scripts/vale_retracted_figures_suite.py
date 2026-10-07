@@ -9,7 +9,7 @@ the same Vale version and the same `.vale.ini` the gate uses:
 - `fixtures/vale/retracted-figures.alert.txt` — each non-blank line outside the leading HTML comment
   is one retracted figure in one of the forms it is written in, and must raise exactly one alert
   from this rule, on that line, and nothing else from it;
-- `fixtures/vale/retracted-figures.pass.txt` — citations the canon admits, including an Axon arm
+- `fixtures/vale/retracted-figures.pass.txt` — citations the Never quote alone rules admit, including an Axon arm
   next to its own numbers and the same digits in unrelated units, which must raise none.
 
 The fixtures are `.txt` so the repository's own docs-lint does not read them: `.vale.ini` applies
@@ -106,7 +106,7 @@ def _():
     assert not stray, f"alert(s) outside a figure line: {stray}"
 
 
-@case("a citation the canon admits raises nothing from the rule")
+@case("a citation the Never quote alone rules admit raises nothing from the rule")
 def _():
     hits = [(a["Line"], a["Match"]) for a in alerts(PASS) if a["Check"] == RULE]
     assert not hits, f"alerted on {hits}"

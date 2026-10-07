@@ -259,7 +259,7 @@ npx --package @commitlint/cli --package @commitlint/config-conventional commitli
 vale --config vale/.vale.ini docs/
 ```
 
-Vale inline toggles are the sanctioned way to quote a retracted figure on purpose (a withdrawal note, a retraction register):
+Vale inline toggles are the sanctioned way to quote a retracted figure on purpose (a withdrawal note, a Withdrawn list):
 
 ```markdown
 <!-- vale Exeris.RetractedFigures = NO -->

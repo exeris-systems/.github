@@ -1,4 +1,4 @@
-<!-- Citations the canon admits. None of these lines may raise an Exeris.RetractedFigures alert. -->
+<!-- Citations the Never quote alone rules admit. None of these lines may raise an Exeris.RetractedFigures alert. -->
 
 The `spring-axon-jdbc` arm (Axon Server) fails at 60/s and passes 50/s.
 

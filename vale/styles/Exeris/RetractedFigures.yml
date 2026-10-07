@@ -1,17 +1,17 @@
 extends: existence
-message: "'%s' is a retracted or forbidden figure — see exeris-benchmarks/docs/CLAIMS.md retraction register (claims-and-evidence.md rule 4)."
+message: "'%s' is a retracted or forbidden figure — see the Withdrawn list in exeris-benchmarks/docs/CLAIMS.md (claims-and-evidence.md rule 4)."
 level: error
 ignorecase: true
 nonword: true
 # Every token names a retracted figure itself, so it fires wherever the figure stands — next to a
-# product name or alone. A product name is never a token: a figure from a campaign the citation canon
-# admits may sit next to any name it measured, and a rule keyed on the name rather than the figure
+# product name or alone. A product name is never a token: a figure from a campaign the Never quote alone
+# rules admit may sit next to any name it measured, and a rule keyed on the name rather than the figure
 # fails every legitimate citation of that campaign.
 tokens:
   # Unsourced inflation magnitudes.
   - '~?60\s?% CPU waste'
   - '>\s?160\s?GB'
-  # The v1 e2e-shop-order-saga run (retraction register #23): resident set sizes,
+  # The v1 e2e-shop-order-saga run (Withdrawn #23): resident set sizes,
   - '\b(459|752|1,?312)\s?MB\b'
   # its thread counts — with their unit, or as the per-process sums of the whitepaper table, because
   # a bare ~217 or ~221 is an ordinary number in any other report,
