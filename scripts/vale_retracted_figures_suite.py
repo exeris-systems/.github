@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cases for `Exeris.RetractedFigures` — the one Vale rule docs-lint fails a build on.
+"""Cases for `Exeris.RetractedFigures` — the error-level rule that blocks a build on a retracted figure.
 
 The rule is a token list, and a token list has no behaviour of its own to test: a token edited so it
 no longer matches its figure, or widened so it matches a legitimate citation, changes what fails CI
