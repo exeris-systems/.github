@@ -148,7 +148,11 @@ jobs:
         python3 scripts/status_capture_check_suite.py;
         git clone --quiet --depth 1 https://github.com/exeris-systems/exeris-ai-execution "$RUNNER_TEMP/execution";
         python3 scripts/capture_ci_row_suite.py --execution-root "$RUNNER_TEMP/execution";
-        python3 scripts/judge_review_suite.py --execution-root "$RUNNER_TEMP/execution"
+        python3 scripts/judge_review_suite.py --execution-root "$RUNNER_TEMP/execution";
+        curl -sSfL -o "$RUNNER_TEMP/vale.tgz" https://github.com/errata-ai/vale/releases/download/v3.20.0/vale_3.20.0_Linux_64-bit.tar.gz;
+        echo "f59e7030c5d4ace6cf915497d0d076a1699d61e876142765963237e6867c9712  $RUNNER_TEMP/vale.tgz" | sha256sum -c -;
+        tar -xzf "$RUNNER_TEMP/vale.tgz" -C "$RUNNER_TEMP" vale;
+        python3 scripts/vale_retracted_figures_suite.py --vale "$RUNNER_TEMP/vale"
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
@@ -345,3 +349,20 @@ jobs:
         run: |
           pip install --quiet jsonschema referencing
           python scripts/judge_review_suite.py --execution-root execution
+      # The one Vale rule docs-lint fails a build on is a token list, and nothing about a token list
+      # fails when a token stops matching its figure or starts matching a legitimate citation. Two
+      # corpora hold it in place: figures that must each raise one error, and admitted citations
+      # that must raise none. The binary is the version docs-lint pins, and the suite's first case
+      # fails if the two pins part.
+      - name: The retracted-figure rule fires on each figure and on no admitted citation
+        if: ${{ !cancelled() }}
+        env:
+          VALE_VERSION: 3.20.0
+          # sha256 of vale_${VALE_VERSION}_Linux_64-bit.tar.gz from the release's checksums file.
+          VALE_SHA256: f59e7030c5d4ace6cf915497d0d076a1699d61e876142765963237e6867c9712
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/vale.tgz" \
+            "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          echo "${VALE_SHA256}  $RUNNER_TEMP/vale.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/vale.tgz" -C "$RUNNER_TEMP" vale
+          python scripts/vale_retracted_figures_suite.py --vale "$RUNNER_TEMP/vale"
