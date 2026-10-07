@@ -3,10 +3,26 @@ message: "'%s' is a retracted or forbidden figure — see exeris-benchmarks/docs
 level: error
 ignorecase: true
 nonword: true
+# Every token names a retracted figure itself, so it fires wherever the figure stands — next to a
+# product name or alone. A product name is never a token: a figure from a campaign the citation canon
+# admits may sit next to any name it measured, and a rule keyed on the name rather than the figure
+# fails every legitimate citation of that campaign.
 tokens:
+  # Unsourced inflation magnitudes.
   - '~?60\s?% CPU waste'
   - '>\s?160\s?GB'
-  - '\b(459|752|1,?312)\s?MB RSS'
-  - '\b(3\.4|4\.7)×\s?density'
-  - 'Axon[^.\n]{0,40}\b\d[\d.,]*\s?(ms|µs|%|×|req|MB|GB)\b'
-  - '\b\d[\d.,]*\s?(ms|µs|%|×|req|MB|GB)\b[^.\n]{0,40}Axon'
+  # The v1 e2e-shop-order-saga run (retraction register #23): resident set sizes,
+  - '\b(459|752|1,?312)\s?MB\b'
+  # its thread counts — with their unit, or as the per-process sums of the whitepaper table, because
+  # a bare ~217 or ~221 is an ordinary number in any other report,
+  - '\b2(17|21)\s?(threads|wątków)\b'
+  - '~\s?(140|123)\s?=\s?\**~?2(21|17)\b'
+  # its compensation-unresolved columns,
+  - '\b(1\.82|1\.22)\s?%'
+  - '(^|[^\d.])0\s?%\s?(of\s)?(compensations?|compensation-unresolved)\b'
+  # its density multipliers, singly or as the range,
+  - '\b(3\.4|4\.7)\s?×\s?(whole-deployment\s)?(density|denser)'
+  - 'density[^.\n]{0,40}\b(3\.4|4\.7)\s?×'
+  - '\b3\.4\s?[–-]\s?4\.7\s?×'
+  # and the mechanism offered for the columns.
+  - 'event-sourced dispatch return(s|ing)? before the work is done'

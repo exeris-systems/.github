@@ -1,0 +1,31 @@
+<!-- Every other line below is one retracted figure and must raise exactly one Exeris.RetractedFigures error. -->
+
+The order service settled at 459 MB RSS under the saga load.
+
+The Spring arm peaked at 752 MB once the ladder reached its top step.
+
+The Axon arm held 1,312 MB of resident memory.
+
+The Axon arm held 1312 MB of resident memory.
+
+The JVM ran ~217 threads at steady state.
+
+The JVM ran ~221 threads at steady state.
+
+| Axon | ~140 = **~221** |
+
+The unresolved column read 1.82% for the first arm.
+
+The unresolved column read 1.22% for the second arm.
+
+The saga run finished with 0% compensations left open.
+
+Exeris delivered 3.4× density over the Spring deployment.
+
+The kernel arm is 4.7× denser than the reference.
+
+The whole-deployment density came out at 4.7× the baseline.
+
+The campaign reported a 3.4–4.7× gain on the same box.
+
+The columns are explained by event-sourced dispatch returning before the work is done.
