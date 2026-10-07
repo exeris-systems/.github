@@ -3,7 +3,7 @@
 **A JVM runtime where the things that usually need a second process run in yours — at a measured, published resident cost.**
 
 [![Website](https://img.shields.io/badge/Website-exeris.eu-blue?style=flat-square)](https://exeris.eu)
-[![Status](https://img.shields.io/badge/Kernel-v0.11_pre--1.0-orange?style=flat-square)](#status)
+[![Status](https://img.shields.io/badge/Kernel-v0.12_pre--1.0-orange?style=flat-square)](#status)
 [![License](https://img.shields.io/badge/Open--core-Apache--2.0-green?style=flat-square)](#where-things-live)
 
 ## What we're building
@@ -34,7 +34,7 @@ When a number loses, we retract it in public: the revision histories in those re
 
 ## Status
 
-Deep R&D, pre-1.0. The kernel is on the v0.11 line; API stability declarations have been honored since v0.9 (verified with japicmp across the full tag history). Kernel SPI, Core, the Community driver and the TCK are open under Apache-2.0; the Enterprise driver (`io_uring` / IOCP transport, QUIC/HTTP-3, NUMA-aware slab pools) is a commercial implementation of the same SPI — a Maven-coordinate swap, not a fork of your application.
+Deep R&D, pre-1.0. The kernel is on the v0.12 line; API stability declarations have been honored since v0.9 (verified with japicmp across the full tag history). Kernel SPI, Core, the Community driver and the TCK are open under Apache-2.0; the Enterprise driver (`io_uring` / IOCP transport, QUIC/HTTP-3, NUMA-aware slab pools) is a commercial implementation of the same SPI — a Maven-coordinate swap, not a fork of your application.
 
 ## The exit is part of the design
 
