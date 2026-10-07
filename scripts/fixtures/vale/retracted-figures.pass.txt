@@ -1,0 +1,11 @@
+<!-- Citations the canon admits. None of these lines may raise an Exeris.RetractedFigures alert. -->
+
+The `spring-axon-jdbc` arm (Axon Server) fails at 60/s and passes 50/s.
+
+Axon Framework handled 120 req/s at 45 ms p99 in ladderI.
+
+The profile covers roughly 221 s of recording.
+
+The arm showed a 3.0% compensation rate and 3.4× more requests.
+
+The run closed with 10% compensations still pending.

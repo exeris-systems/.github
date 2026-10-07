@@ -71,6 +71,8 @@ scripts/
                          verdict, validates it, and writes the labels, the comment and the
                          conclusion the workflow then applies and gates on
   publish_verdict_suite.py  one case per red path ADR-087 §B.8 names, run in this repository's CI
+  vale_retracted_figures_suite.py  Exeris.RetractedFigures against two corpora in fixtures/vale/:
+                         each retracted figure raises one error, no admitted citation raises any
   review_plan.py         which parts of the routine a pull request's changed files call for, each
                          part run or skipped with the reason
   review_aggregate.py    one verdict from the parts' runs: the worst decision, every finding marked
@@ -248,6 +250,7 @@ python scripts/caller_permissions_check.py           # the caller blocks and eve
 python scripts/bundle_pin_check.py                   # the vendored bundle is the ref docs-lint uses
 python scripts/label_map_check.py                    # the label map names only what exists
 python scripts/publish_verdict_suite.py --root .     # the publish step's rules, no network, no token
+python scripts/vale_retracted_figures_suite.py      # the error-level Vale rule, on the Vale docs-lint pins
 # agent layer: from the bundle, not from here
 git clone https://github.com/exeris-systems/exeris-agents ../exeris-agents
 python ../exeris-agents/tools/agents_file_check.py --root .
