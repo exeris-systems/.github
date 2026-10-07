@@ -3,7 +3,7 @@
 **A JVM runtime where the things that usually need a second process run in yours — at a measured, published resident cost.**
 
 [![Website](https://img.shields.io/badge/Website-exeris.eu-blue?style=flat-square)](https://exeris.eu)
-[![Status](https://img.shields.io/badge/Kernel-v0.11_pre--1.0-orange?style=flat-square)](#status)
+[![Status](https://img.shields.io/badge/Kernel-v0.12_pre--1.0-orange?style=flat-square)](#status)
 [![License](https://img.shields.io/badge/Open--core-Apache--2.0-green?style=flat-square)](#where-things-live)
 
 ## What we're building
