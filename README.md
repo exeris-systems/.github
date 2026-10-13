@@ -178,8 +178,9 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    own run record.
 5a. **Capture is the second opt-in, and a separate decision.** `capture: true` adds a third job:
    the runner's execution log is committed to the streams repository as content, one run record is
-   assembled from what the producing job exported about the run, and the day's rows reach
-   `exeris-ai-execution` as one pull request per repository per UTC day (ADR-087 §C.13-§C.17). It
+   assembled from what the producing job exported about the run, and the row is committed straight
+   to `main` of `exeris-ai-execution`, one commit per row, after the producer has run the inbox's
+   own validator on it (ADR-087 §C.13-§C.17). It
    decides nothing about the pull request — the required check stays the publishing half's — and it
    writes through `EXERIS_INBOX_APP_ID` / `EXERIS_INBOX_PRIVATE_KEY`, two more optional secrets,
    again with no permission added to the caller's block. Turn it on after reading rows a producer

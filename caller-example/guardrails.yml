@@ -167,10 +167,10 @@ jobs:
     #   # CAPTURE IS THE SECOND OPT-IN, and a separate decision from the first. With it on, the run
     #   # becomes a row in the organisation's execution dataset (ADR-087 §C.13-§C.17): the runner's
     #   # execution log is committed to the streams repository as content, a run record is assembled
-    #   # from what the producing job exported about itself, and the day's rows reach the inbox as
-    #   # one pull request per repository per day. Turn it on after reading rows a producer has
-    #   # already written — a repository that starts contributing to a dataset should have seen what
-    #   # it will be contributing.
+    #   # from what the producing job exported about itself, and the row is committed to the
+    #   # inbox's `main`, one commit per row, once the inbox's own validator has passed it. Turn it
+    #   # on after reading rows a producer has already written — a repository that starts
+    #   # contributing to a dataset should have seen what it will be contributing.
     #   #
     #   # IT RUNS INSIDE THE PUBLISHING HALF, so it needs `publish: true` as well: with publication
     #   # off there is no job for it to be a part of, and `capture: true` alone runs nothing and

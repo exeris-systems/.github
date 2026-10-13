@@ -221,7 +221,7 @@ on:
         default: "exeris-systems/exeris-ai-execution"
         description: >-
           Where the rows land, and where the row contract and its derivations are read from. One
-          value, so that the tooling a row is assembled by and the inbox it is proposed to cannot
+          value, so that the tooling a row is assembled by and the inbox it is committed to cannot
           be two different versions of the contract.
     secrets:
       # OPTIONAL, because ADR-087 Engineering Protocol 1 says items 2-3 "land first … and run under
@@ -637,20 +637,21 @@ jobs:
     runs-on: ubuntu-latest
     # ONE LEG PER PART, ONE AT A TIME. Each part's run is its own row, its own stream and its own
     # artefact, so a leg is exactly the one-run capture below. `max-parallel: 1` keeps this run's legs
-    # from racing each other on the day's branch; the writes survive a race anyway, the way they do
-    # across repositories. The leg named `""` is the scalar exports' one run.
+    # from racing each other on the inbox's `main`; the writes survive a race anyway, the way they
+    # do across repositories. The leg named `""` is the scalar exports' one run.
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         part: ${{ fromJSON(inputs.capture-parts != '' && inputs.capture-parts || '[""]') }}
-    # ONE CAPTURE AT A TIME PER REVIEWED REPOSITORY AND PART. The day's rows from one repository share a
-    # branch and a pull request in the inbox, so two captures running together would race on both.
+    # ONE CAPTURE AT A TIME PER REVIEWED REPOSITORY AND PART. Every row is committed to the inbox's
+    # `main`, so two captures of one repository running together would race on it.
     # `cancel-in-progress: false` serialises them; it does not promise that every member survives —
     # a group holds one running member and one waiting one, and a third joining displaces the
-    # waiting one. So the group is an optimisation and NOT the guarantee: each write below is made
-    # safe on its own, by replaying it against what is actually on the remote rather than by being
-    # alone.
+    # waiting one. And it serialises one repository only, while every repository in the
+    # organisation commits to the same branch. So the group is an optimisation and NOT the
+    # guarantee: each write below is made safe on its own, by replaying it against what is actually
+    # on the remote rather than by being alone.
     #
     # PER PART, because a group holds one running member and one waiting one: a third leg in the
     # same group displaces the second while it waits, which leaves that part uncaptured for no
@@ -661,7 +662,7 @@ jobs:
     # READ, AND NOTHING THIS JOB'S CALLER DOES NOT ALREADY GRANT THE REVIEW. Two reads are made with
     # this token — the reviewed repository, to decide which inbox a row belongs to, and the pull
     # request, for its scope class and its author — and nothing else. Every write below — the
-    # stream, the rows, the inbox pull request, the issue a refusal files — goes through an App
+    # stream, the row, the issue a refusal files — goes through an App
     # installation token minted for the step that makes it. A caller's permission block therefore
     # does not grow when capture is turned on, which is what `caller_permissions_check.py` reads it
     # for.
@@ -677,8 +678,8 @@ jobs:
         with: { repository: exeris-systems/.github, ref: main, path: .guardrails }
       - uses: actions/setup-python@v7
         with: { python-version: "3.14" }
-      # The row is checked against the record schema here, before it is proposed anywhere, which is
-      # the half of the inbox's gate that needs a Draft 2020-12 validator.
+      # The row is checked against the record schema here, before it is committed anywhere, which
+      # is the half of the inbox's gate that needs a Draft 2020-12 validator.
       - run: pip install --quiet jsonschema
       # Guarded on the name, not on the file: a produce job that was skipped uploads nothing, and an
       # empty name handed to the download is a step that fails about the wrong thing.
@@ -811,13 +812,13 @@ jobs:
           private-key: ${{ secrets.exeris_inbox_private_key }}
           owner: exeris-systems
           repositories: ${{ steps.identity.outputs.repositories }}
-          # The two scopes this job spends and nothing else. The pen holds only these on the data
-          # repositories today, so this changes nothing now — it is here so that widening the App
-          # later does not silently widen a job that runs beside a model's own output.
+          # The one scope this job spends and nothing else: a stream and a row are both commits
+          # pushed to a default branch, and nothing here opens a pull request. Named so that
+          # widening the App later does not silently widen a job that runs beside a model's own
+          # output.
           permission-contents: write
-          permission-pull-requests: write
-      # `fetch-depth: 0`, because this checkout is pushed from: a day's branch is fetched onto it
-      # and a commit is pushed back, and a shallow history is refused by the receiving end. The
+      # `fetch-depth: 0`, because this checkout is pushed from: the inbox's `main` is fetched onto
+      # it and a commit is pushed back, and a shallow history is refused by the receiving end. The
       # repository holds records and tooling, so the whole history is small.
       - name: The row contract and its derivations
         if: ${{ steps.inbox.outputs.token != '' }}
@@ -880,9 +881,9 @@ jobs:
           if [ -n "$reason" ]; then
             echo "::notice::capture: no row — $reason: $(jq -r '.detail' capture-decision.json)"
           fi
-      # A STREAM IS CONTENT, NOT A ROW, and it goes to `main` directly (§C.13). A pull request there
-      # would leave every row's `execution.event_stream.ref` dangling until somebody merged it, and
-      # the row's digest is verifiable only against a commit that exists.
+      # A STREAM IS CONTENT, and it goes to `main` directly and BEFORE the row (§C.13): every row's
+      # `execution.event_stream.ref` names the commit holding its stream, and the row's digest is
+      # verifiable only against a commit that exists.
       - name: Commit the stream to the streams repository
         id: stream-commit
         if: ${{ steps.decide.outputs.reason == '' && steps.decide.outputs.stream-path != '' }}
@@ -998,25 +999,28 @@ jobs:
               --review-started-at "$REVIEW_STARTED_AT" \
               --row row.json \
               --commit-message capture-commit-message.txt \
-              --pull-request-body capture-pull-request-body.md \
               --issue-body capture-issue-body.md \
               --out capture-decision.json
           }
-          # THE ROW IS DERIVED AGAINST THE BRANCH AS IT IS, EVERY ATTEMPT. The day's branch is
-          # shared: one branch per repository per day collects that day's rows, and a branch created
-          # afresh on the second run of the day would open a second pull request for the same batch.
-          # A push that loses the race is therefore answered by fetching the branch, discarding this
-          # attempt and assembling again onto it, so that `write_row`'s two answers — identical
-          # bytes are a skip, different bytes under one name are refused — are decided against what
-          # the branch actually holds rather than against what it held when this job started.
+          # THE ROW IS COMMITTED TO THE INBOX'S `main`, ONE COMMIT PER ROW. The inbox App holds a
+          # ruleset bypass on that repository alone, so the row lands without a pull request: the
+          # producer has already put it through the inbox's own validator, and the inbox validates
+          # it again on the push (ADR-087 §C.15). The branch is the one the script decided, read
+          # from its decision rather than spelled here twice.
+          #
+          # DERIVED AGAINST THE BRANCH AS IT IS, EVERY ATTEMPT. `main` is shared by every
+          # repository in the organisation, so a push that loses the race is the ordinary case and
+          # is answered by fetching the branch, discarding this attempt and assembling again onto
+          # it — so that `write_row`'s two answers, identical bytes are a skip and different bytes
+          # under one name are refused, are decided against what the branch actually holds rather
+          # than against what it held when this job started. Five attempts, because the race is
+          # organisation-wide and each attempt is a fetch and a rebuild of one file.
           pushed=no
-          for _attempt in 1 2 3; do
-            git -C execution fetch --quiet origin "$BRANCH" || true
-            if git -C execution rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
-              git -C execution checkout --quiet -B "$BRANCH" "origin/$BRANCH"
-            else
-              git -C execution checkout --quiet -B "$BRANCH" origin/main
-            fi
+          for _attempt in 1 2 3 4 5; do
+            # A fetch that did not answer is an attempt spent, not the step failed: the branch
+            # always exists, so the only thing a failed fetch says is that this attempt saw nothing.
+            git -C execution fetch --quiet origin "$BRANCH" || continue
+            git -C execution checkout --quiet -B "$BRANCH" "origin/$BRANCH"
             git -C execution reset --quiet --hard HEAD
             git -C execution clean --quiet -fd
             assemble
@@ -1034,7 +1038,7 @@ jobs:
           # RED, for the reason the stream's push is red: the stream is committed by now, so a row
           # that did not reach the branch is something this job had to write and did not.
           if [ "$pushed" != "yes" ]; then
-            echo "::error::capture: the day's branch could not be pushed, so the run's row is not in the inbox"
+            echo "::error::capture: the row could not be pushed to the inbox's $BRANCH, so the run's row is not in the inbox"
             exit 1
           fi
           {
@@ -1085,39 +1089,6 @@ jobs:
             -f "title=capture: the run record of pull request #${PR} was refused by the inbox's rules" \
             -F body=@capture-issue-body.md \
             -f "labels[]=triage" --silent
-      # The rows reach the inbox as a pull request, never as a push (§C.15): the inbox validator is
-      # the required check on it, and merge is a person's. The rows themselves are already on the
-      # branch — the step above pushes them, because a push that loses a race has to be re-derived
-      # against the branch it lost to and only the step that assembles can do that.
-      - name: Open the inbox pull request for the day's rows
-        if: ${{ steps.assemble.outputs.state == 'new' || steps.assemble.outputs.state == 'skip' }}
-        env:
-          GH_TOKEN: ${{ steps.inbox.outputs.token }}
-          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
-          BRANCH: ${{ steps.decide.outputs.branch }}
-        run: |
-          set -euo pipefail
-          # One pull request per repository per day: the branch already carries the day's rows, so a
-          # second pull request for the same branch would be two proposals of one batch.
-          open=$(gh api "repos/$EXECUTION_REPOSITORY/pulls?head=exeris-systems:$BRANCH&state=open" \
-                 --jq 'length')
-          if [ "$open" -gt 0 ]; then
-            echo "::notice::capture: the inbox pull request for $BRANCH is already open"
-            exit 0
-          fi
-          # And a branch with nothing on it is not a batch. A re-run of a capture whose row was
-          # already merged has a branch level with the base, and asking for a pull request over no
-          # commits is an error about the request rather than about the rows.
-          git -C execution fetch --quiet origin main
-          if [ "$(git -C execution rev-list --count origin/main..HEAD)" -eq 0 ]; then
-            echo "::notice::capture: $BRANCH holds no rows the base does not, so no pull request was opened"
-            exit 0
-          fi
-          gh api -X POST "repos/$EXECUTION_REPOSITORY/pulls" \
-            -f "title=$(head -1 "$GITHUB_WORKSPACE/capture-commit-message.txt")" \
-            -f "head=$BRANCH" \
-            -f base=main \
-            -F body=@"$GITHUB_WORKSPACE/capture-pull-request-body.md" --silent
       - name: What this capture did
         if: ${{ !cancelled() }}
         env:

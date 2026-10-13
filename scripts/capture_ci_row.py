@@ -71,6 +71,13 @@ OUTCOME = "UNKNOWN"
 # visibility is published by the act of filing it.
 INBOX_VISIBILITY = "public"
 
+# The branch a row lands on, and it is the inbox's default one for every repository and every day.
+# A row is a measurement and not a proposal: the producer has already put it through the inbox's own
+# validator, and the inbox reads it again on the push, so a pull request in between would add a
+# merge nobody has a reason to refuse and a queue nobody reads. The inbox App commits it under a
+# ruleset bypass that is the inbox repository's alone, one commit per row (ADR-087 §C.15).
+INBOX_BRANCH = "main"
+
 # How long the produce job keeps the execution artefact, in days, and the only reason this producer
 # knows it: the index entry records when the host would have dropped the artefact, and the producer
 # cannot read that without the Actions API — a permission the capture job does not hold and a
@@ -224,16 +231,6 @@ class Decision:
         return dataclasses.asdict(self)
 
 
-def slug(repository: str) -> str:
-    """A repository name as a branch segment: `owner/name` with the slash written `--`.
-
-    A branch carries the repository it holds rows for, so one day's rows from two repositories are
-    two branches and two pull requests — which is what §C.15 asks for, and what keeps a refusal in
-    one repository's batch from holding up another's.
-    """
-    return repository.replace("/", "--")
-
-
 def stream_path(date: str, repository: str, workflow_run_id: object, artifact_id: object) -> str:
     """Where one stream lands in the streams repository, in that repository's own layout.
 
@@ -343,7 +340,7 @@ def decide(args, fetcher, ci_row) -> Decision:
 
     out.date = supplied["review_started_at"][:10]
     out.fence = ci_row.fence_id(out.date, PRODUCER, facts.harness_version)
-    out.branch = f"inbox/{slug(args.repository)}/{out.date}"
+    out.branch = INBOX_BRANCH
 
     # VISIBILITY IS ASKED FIRST, and it decides two things. It decides which inbox the row belongs
     # to — fail-closed, one way only, because a row filed under the wrong one is published by the
@@ -478,15 +475,15 @@ def capture_version(root: str) -> str:
 
 
 def validate(row: dict, out: Decision, root: str, ci_row, Report, check) -> list[str]:
-    """The row through the inbox's own gate, before anything is proposed to the inbox.
+    """The row through the inbox's own gate, before anything is committed to the inbox.
 
     Both halves, because each sees what the other cannot. The validator holds the cross-file rules
     and the names this organisation owns; `jsonschema` holds the shape. They run in a throwaway
     inbox declaring the visibility this row is bound for, since rule 1 is fail-closed on that
     identity and a row checked against the wrong one passes a test it was never subject to.
 
-    A refusal here is a producer defect and is recorded as one (§C.15): the row never enters a
-    batch, so one bad row does not hold up good ones.
+    A refusal here is a producer defect and is recorded as one (§C.15): the row is never committed,
+    so a bad row is kept where it can be read and never reaches the branch every producer writes to.
     """
     where = tempfile.mkdtemp(prefix="capture-ci-row-")
     try:
@@ -552,67 +549,54 @@ def write_row(root: str, out: Decision, text: str) -> None:
 # --------------------------------------------------------------------------------------------
 
 
-def pull_request_body(out: Decision) -> str:
-    """The inbox pull request's body, in the shape the receiving repository's gate requires.
+# The organisation's subject limit, in characters (commit-conventions rule 2). Stated here because a
+# producer that writes commits is held to it like a person is, and a subject over it is a commit the
+# organisation's own lint refuses.
+SUBJECT_LIMIT = 100
 
-    It names the human whose pull request produced the rows, which is §C.15's requirement and the
-    reason the body is assembled rather than left to a template: the accountable person is a fact
-    about the batch, and a body that did not carry it would make the batch anonymous.
 
-    Written once, when the branch is opened. The branch collects the day's rows, so the body speaks
-    of the day rather than of a count it would have to be edited to keep true.
+def commit_subject(what: str, repository: str, pull_request: object) -> str:
+    """`feat(inbox): <what> of <name>#<pull request>`, within the organisation's subject limit.
+
+    The repository is named without its owner, because every repository whose records reach this
+    inbox is the organisation's and the body names it in full. A name long enough to push the line
+    past the limit falls back to the pull request alone rather than to a truncated name, which
+    would be a repository that does not exist.
     """
-    who = f"@{out.author}" if out.author else "an author the platform did not name"
-    return "\n".join([
-        f"Motivation: the L2 reviews of {out.repository} on {out.date} produced run records; a row "
-        f"that is not filed is a measurement that was not taken.",
-        "",
-        f"Modification: adds the day's rows under `inbox/{out.date}/runs/`, captured by the "
-        f"reviewing workflow of {out.repository}. The pull request behind the first of them was "
-        f"opened by {who}.",
-        "",
-        "Result: the inbox holds one row per review run of that day. The producer ran this "
-        "repository's own validator before opening this pull request, so a row that fails it never "
-        "reaches the batch.",
-        "",
-        "## Classification",
-        "",
-        "Scope class: docs-only",
-        "Wall impact: none",
-        "Generated files touched: no",
-        "TCK obligation: n/a",
-        "Compatibility impact: none",
-        f"Cross-repo impact: {out.repository}: the rows describe review runs in that repository",
-        "ADRs referenced: ADR-086, ADR-087",
-        "Evidence state: citable",
-        "",
-        "## Verification",
-        "",
-        "The producer validated every row against the cross-file rules and the record schema "
-        "before this branch was pushed; the required checks on this pull request read them again.",
-        "",
-        "Refs: ADR-086, ADR-087",
-    ]) + "\n"
+    line = f"feat(inbox): {what} of {repository.split('/')[-1]}#{pull_request}"
+    if len(line) <= SUBJECT_LIMIT:
+        return line
+    return f"feat(inbox): {what} of pull request #{pull_request}"
 
 
 def commit_message(out: Decision) -> str:
-    """The commit in the organisation's grammar, sections included.
+    """The commit in the organisation's grammar, sections included, for the one row it carries.
 
     A `feat` commit carries Motivation, Modification and Result, and this one is written by a
-    producer — so it is written correctly here rather than fixed by hand afterwards. The subject is
-    the pull request's title too: one branch per repository per day, so the two describe the same
-    batch and the squash subject needs no second spelling.
+    producer — so it is written correctly here rather than fixed by hand afterwards. One commit is
+    one row, so the subject names the run's pull request rather than a batch.
+
+    It names the human whose pull request produced the row, the repository the run reviewed and the
+    path the row lands at, which is what §C.15 asks the record of a filing to carry: the commit is
+    the only account of the filing the inbox keeps, and one that did not name the accountable
+    person would make the row anonymous. The pull request is spelled `owner/name#N` in the body,
+    because the commit is read in the inbox repository and a bare `#N` there links to the inbox's
+    own pull request of that number.
     """
+    who = f"@{out.author}" if out.author else "an author the platform did not name"
     return "\n".join([
-        f"feat(inbox): rows from {out.repository} on {out.date}",
+        commit_subject("the run record", out.repository, out.pull_request),
         "",
-        "Motivation: one run record per L2 review run, captured where the run happened "
-        "(ADR-087 §C.13).",
+        f"Motivation: the L2 review of {out.repository}#{out.pull_request}, a pull request "
+        f"opened by {who}, produced a run record (ADR-087 §C.13); a row that is not filed is a "
+        f"measurement that was not taken.",
         "",
-        f"Modification: adds {out.row_path}, referencing its event stream by commit and digest.",
+        f"Modification: adds {out.row_path}, captured by the reviewing workflow of "
+        f"{out.repository} and referencing its event stream by commit and digest.",
         "",
-        "Result: the day's review runs are in the inbox, validated at the producer before they "
-        "were proposed.",
+        "Result: the run is in the inbox. The producer ran this repository's own validator and "
+        "the record schema before committing, so a row that fails either never reaches the "
+        "branch; the inbox reads it again on the push.",
         "",
         "Refs: ADR-086, ADR-087",
     ]) + "\n"
@@ -716,14 +700,14 @@ def main(argv: list[str] | None = None, fetcher=None) -> int:
                         help="the commit the stream was committed at; without it this decides and "
                              "assembles nothing")
     parser.add_argument("--inbox-root", default="",
-                        help="a checkout of the inbox repository on the day's branch")
+                        help="a checkout of the inbox repository at its default branch, as it "
+                             "is on the remote")
     parser.add_argument("--out", default="capture-decision.json")
     parser.add_argument("--row", default="row.json")
-    # The message and the body are written BESIDE the clone, never inside it: a file written into
-    # the inbox checkout is a file the next commit carries into the inbox, and the inbox holds
-    # records and nothing else.
+    # The message is written BESIDE the clone, never inside it: a file written into the inbox
+    # checkout is a file the next commit carries into the inbox, and the inbox holds records and
+    # nothing else.
     parser.add_argument("--commit-message", default="capture-commit-message.txt")
-    parser.add_argument("--pull-request-body", default="capture-pull-request-body.md")
     parser.add_argument("--issue-body", default="capture-issue-body.md",
                         help="where the text of a refusal's issue is written, when there is one")
     for name in CAPTURE_INPUTS:
@@ -778,9 +762,7 @@ def main(argv: list[str] | None = None, fetcher=None) -> int:
         write_row(args.inbox_root, out, text)
         if out.state == "refused":
             refusal_issue(out, args)
-        if out.state in ("new", "skip"):
-            with open(args.pull_request_body, "w", encoding="utf-8") as handle:
-                handle.write(pull_request_body(out))
+        if out.state == "new":
             with open(args.commit_message, "w", encoding="utf-8") as handle:
                 handle.write(commit_message(out))
     else:

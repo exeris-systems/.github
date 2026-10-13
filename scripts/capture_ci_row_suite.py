@@ -33,6 +33,7 @@ import copy
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -70,7 +71,9 @@ MODEL = "claude-sonnet-5"
 CLIENT_VERSION = "2.1.274"
 BUNDLE_VERSION = "2.1.0"
 ROW_PATH = os.path.join("inbox", DATE, "runs", f"{RUN_ID}.json")
-BRANCH = f"inbox/{REPO.replace('/', '--')}/{DATE}"
+# Every row lands on the inbox's default branch, whatever its repository and whatever its day.
+BRANCH = "main"
+AUTHOR = "a-person"
 # The streams repository's own layout: `streams/<date>/<repo>/<workflow run>-<artefact>.json`,
 # which is how every stream already there is named. The row's `run_id` is spelled differently and
 # deliberately — the two are joined by `event_stream.ref` and by `index.json`, so nothing needs them
@@ -174,7 +177,6 @@ class World:
                 "--out", self.decision_path,
                 "--row", self.row_path,
                 "--commit-message", os.path.join(self.tmp, "message.txt"),
-                "--pull-request-body", os.path.join(self.tmp, "body.md"),
                 "--issue-body", os.path.join(self.tmp, "issue.md")]
         for key, value in self.exports.items():
             argv += [f"--{key}", value]
@@ -345,18 +347,95 @@ def components_carry_through(root, check):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-@case("one repository and one day are one branch, and one run is one file")
+@case("every row lands on the inbox's default branch, and one run is one file")
 def one_branch_one_file(root, check):
     here, tmp = world(root)
     try:
         _code, first = here.run()
+        message = os.path.join(here.tmp, "message.txt")
+        os.remove(message)
         _code, second = here.run()
-        check("the branch is a function of the repository and the day", first["branch"], BRANCH)
+        check("the branch is the inbox's default one", first["branch"], BRANCH)
         check("the second capture targets the same branch", second["branch"], first["branch"])
         check("the second capture recognises its own bytes", second["state"], "skip")
         check("the day holds one file for the run", sorted(here.rows()), [ROW_PATH])
+        # A skip has nothing of its own to commit, so it leaves no message behind: a message there
+        # would be a commit the caller is invited to make over an unchanged tree.
+        check("a capture that wrote nothing writes no commit message",
+              os.path.exists(message), False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# The organisation's commit grammar as `commitlint.config.js` states it for a `feat` commit: a
+# subject within 100 characters, the three sections in order at the start of a line, and a `Refs:`
+# trailer naming ADRs. Restated rather than run, because the lint is a Node tool this suite does not
+# install; a message that passes this and fails the lint is a difference in the restatement, and the
+# repository's own commit lint is where it shows.
+HEADER = re.compile(r"^feat\(inbox\): \S.*[^.]$")
+SECTIONS = ("Motivation:", "Modification:", "Result:")
+REFS = re.compile(r"^Refs: ADR-\d{3}(\s*,\s*ADR-\d{3})*$")
+
+
+def grammar(message: str) -> list[str]:
+    """Every way a message departs from the grammar, or nothing where it keeps to it."""
+    lines = message.splitlines()
+    wrong = []
+    if not lines or not HEADER.match(lines[0]):
+        wrong.append(f"subject `{lines[0] if lines else ''}` is not `feat(inbox): ...`")
+    elif len(lines[0]) > 100:
+        wrong.append(f"subject is {len(lines[0])} characters")
+    if len(lines) < 2 or lines[1] != "":
+        wrong.append("no blank line after the subject")
+    at = [next((i for i, line in enumerate(lines) if line.startswith(name)), -1)
+          for name in SECTIONS]
+    if -1 in at:
+        wrong.append("missing " + " ".join(n for n, i in zip(SECTIONS, at) if i == -1))
+    elif at != sorted(at):
+        wrong.append("sections out of order")
+    if not any(REFS.match(line) for line in lines):
+        wrong.append("no `Refs:` trailer in the grammar")
+    return wrong
+
+
+@case("the commit that files a row names its human, its repository and its path, in the grammar")
+def commit_names_its_human(root, check):
+    here, tmp = world(root)
+    try:
+        here.run()
+        with open(os.path.join(here.tmp, "message.txt"), encoding="utf-8") as fh:
+            message = fh.read()
+        # §C.15. A row is committed to the inbox's default branch with no pull request around it,
+        # so the commit is the only account of the filing the inbox keeps — one that named nobody
+        # would make the row anonymous.
+        check("the human whose pull request produced the row is named", f"@{AUTHOR}" in message,
+              True)
+        check("the pull request is spelled so it links from the inbox to the right repository",
+              f"{REPO}#{PR}" in message, True)
+        check("the row's path is named", ROW_PATH in message, True)
+        check("the subject names the run's pull request",
+              message.splitlines()[0], f"feat(inbox): the run record of {REPO.split('/')[-1]}#{PR}")
+        check("and the message is in the organisation's commit grammar", grammar(message), [])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # A pull request the platform named no author for is said to be one, never left as a bare `@`.
+    nobody = capture.Decision(repository=REPO, pull_request=PR, row_path=ROW_PATH)
+    check("an author the platform did not name is said to be one",
+          "an author the platform did not name" in capture.commit_message(nobody), True)
+    check("and no bare mention is written", "@ " in capture.commit_message(nobody)
+          or "@," in capture.commit_message(nobody), False)
+    # A repository name long enough to carry the subject past the limit costs the name, never the
+    # limit: the body names the repository in full.
+    long_name = "exeris-systems/" + "x" * 90
+    subject = capture.commit_subject("the run record", long_name, 123456)
+    check("a subject is within the limit whatever the repository's name", len(subject) <= 100,
+          True)
+    check("and falls back to the pull request alone", subject,
+          "feat(inbox): the run record of pull request #123456")
+    long_message = capture.commit_message(
+        capture.Decision(repository=long_name, pull_request=123456, author=AUTHOR,
+                         row_path=ROW_PATH))
+    check("and a message about that repository keeps the grammar", grammar(long_message), [])
 
 
 @case("a row already there in other bytes is refused, never overwritten")

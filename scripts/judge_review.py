@@ -22,12 +22,11 @@ the verdict.
 
 NO JUDGEMENT WITHOUT ITS RUN. Rule 5 of the inbox validator refuses a judgement whose `run_id` does
 not resolve to a run record in the same inbox, so the row is looked for before the judgement is
-filed — on the default branch, and on the day's open branch only where that branch is the one this
-judgement lands on. A row proposed and not yet merged is still a row this producer wrote, but a row
-on another day's branch is not in the tree this judgement's own batch is validated over, and a
-judgement filed beside a row that is not there is red for the whole batch. Where it is on neither,
-the judgement is kept as an artefact and one issue is filed in the source repository: §C.16 calls
-that the producer's defect to fix, not a gap to hide.
+filed — on the inbox's default branch and nowhere else. Rows and judgements are both committed
+there, so it is the one tree a judgement is validated over: by this producer before the commit and
+by the inbox on the push. Where the row is not there, the judgement is kept as an artefact and one
+issue is filed in the source repository: §C.16 calls that the producer's defect to fix, not a gap
+to hide.
 
 ONE FENCE FOR A RUN AND ITS JUDGEMENT, and it is the run's own, read from the row rather than
 derived here. §C.12a reads a run's outcome as the latest judgement inside the fence in force, so a
@@ -319,7 +318,7 @@ def record(judgement_id: str, run_id: str, judged_at: str, fence: str, capture_v
 
 def validate(judgement: dict, run_row: object, out: One, date: str, run_date: str,
              visibility: str, root: str, ci_row, Report, check) -> list[str]:
-    """The judgement through the inbox's own rules, before anything is proposed to the inbox.
+    """The judgement through the inbox's own rules, before anything is committed to the inbox.
 
     Both halves, because each sees what the other cannot: the validator holds the cross-file rules —
     rule 5 among them, which is the whole reason the run row is fetched — and `jsonschema` holds the
@@ -453,16 +452,12 @@ def judge_one(args, out: Decision, entry: dict, fetcher, ci_row, tools, token) -
     facts = ci_row.stream_facts(events)
 
     # THE RUN ROW, and it is asked before anything is assembled because the record's fence comes
-    # out of it. The default branch, and the day's open branch only where that branch is the one
-    # this judgement lands on: a row proposed and not yet merged is still a row this organisation
-    # wrote, so a judgement is not held back for want of a human's merge — but a row on ANOTHER
-    # day's open branch is in no tree this judgement's batch is validated over, and filing beside
-    # it would be red for the whole batch.
+    # out of it. On the branch this judgement lands on and nowhere else: rows are committed to the
+    # inbox's default branch as they are captured, so a row that is not there is a row that was not
+    # filed, and a judgement filed beside it is one the inbox's rule 5 refuses on the push.
     run_date = str(entry.get("created_at") or "")[:10]
     run_path = f"inbox/{run_date}/runs/{one.run_id}.json"
-    run_row = json_file(fetcher, args.execution_repository, run_path, "main", token)
-    if run_row is None and run_date == out.date:
-        run_row = json_file(fetcher, args.execution_repository, run_path, out.branch, token)
+    run_row = json_file(fetcher, args.execution_repository, run_path, out.branch, token)
 
     # THE FENCE IS THE RUN'S OWN. A row that names none is a row nothing can be judged inside, and
     # a fence invented here would resolve in no entry of the register.
@@ -511,13 +506,8 @@ def judge_one(args, out: Decision, entry: dict, fetcher, ci_row, tools, token) -
         # judgement whose run is not in the inbox is refused there, so it is kept where it can be
         # read and reported where it is fixed.
         one.state, one.reason = "unresolved", "run-row-absent"
-        if run_date == out.date:
-            one.detail = (f"`{run_path}` is on neither the default branch nor the open branch this "
-                          f"judgement lands on, so rule 5 refuses a judgement of it")
-        else:
-            one.detail = (f"`{run_path}` is not on the default branch, and a row of {run_date} "
-                          f"belongs to that day's batch rather than to this judgement's, so rule 5 "
-                          f"refuses a judgement of it")
+        one.detail = (f"`{run_path}` is not on the inbox's `{out.branch}`, so rule 5 refuses a "
+                      f"judgement of it")
         keep(args, one, text)
         return one
     if one.refusals:
@@ -586,12 +576,12 @@ def judge(args, fetcher, ci_row, tools, token) -> Decision:
                            f"`{closed_at}` is not an RFC 3339 UTC instant — a judgement is dated by "
                            f"when the oracle judged, and an undated one is on neither side of a "
                            f"fence")
-    # The human whose pull request produced these records, carried for the batch's own pull
-    # request: §C.15 asks that it name them, and a batch this half opens would otherwise be
-    # anonymous where the same batch opened by the capture half is not.
+    # The human whose pull request produced these records, carried for the commit that files them:
+    # §C.15 asks that it name them, and a judgement committed without them would be anonymous where
+    # the run record it judges is not.
     out.author = str((pull.get("user") or {}).get("login") or "")
     out.judged_at, out.date = closed_at, closed_at[:10]
-    out.branch = f"inbox/{capture.slug(args.repository)}/{out.date}"
+    out.branch = capture.INBOX_BRANCH
     out.merged = bool(pull.get("merged") or pull.get("merged_at"))
     out.head_sha = str((pull.get("head") or {}).get("sha") or "")
     if not capture.SHA1.match(out.head_sha):
@@ -622,75 +612,35 @@ def judge(args, fetcher, ci_row, tools, token) -> Decision:
 
 
 def commit_message(out: Decision) -> str:
-    """The commit in the organisation's grammar, sections included.
+    """The commit in the organisation's grammar, sections included, for one pull request's records.
 
-    One subject for the day's judgements from one repository, because they share a branch: the
-    branch is `inbox/<repository>/<date>` exactly as the rows' is, so a pull request opened for
-    either collects both and the squash subject needs no second spelling.
+    One commit carries the judgements of one closed pull request — one per run that reviewed it —
+    because they are filed together by one run of this job, and the subject names that pull request
+    rather than a batch. It names the human whose pull request produced the records, the repository
+    it belongs to and where the records land, which is what §C.15 asks the record of a filing to
+    carry: the commit is the only account of the filing the inbox keeps.
 
-    It carries no count, and that is what lets the same text stand as the pull request's title when
-    a re-run found its records already on the branch: a count would be a number this producer would
-    have to keep true across every later commit to the same batch.
-    """
-    return "\n".join([
-        f"feat(inbox): judgements from {out.repository} on {out.date}",
-        "",
-        "Motivation: a review-domain run is judged when the pull request closes, and the verdict "
-        "arrives as its own record (ADR-087 §C.16).",
-        "",
-        f"Modification: adds the judgement records of pull request #{out.pull_request} under "
-        f"`inbox/{out.date}/judgements/`, each keyed by the run it judges.",
-        "",
-        "Result: what the human did with each finding is in the inbox, beside the run that "
-        "produced it and without the run record being touched.",
-        "",
-        "Refs: ADR-086, ADR-087",
-    ]) + "\n"
-
-
-def pull_request_body(out: Decision) -> str:
-    """The inbox pull request's body, in the shape the receiving repository's gate requires.
-
-    It names the human whose pull request produced the records, which is §C.15's requirement and
-    the reason the body is assembled rather than left to a template: either half of this producer
-    may be the one that opens the day's pull request, and a batch is not anonymous because the
-    judgement half got there first.
-
-    Written once, when the branch is opened, and speaking of the day rather than of a count it would
-    have to be edited to keep true — the branch collects the day's records from this repository,
-    rows and judgements alike.
+    It carries no count, because a re-run that finds some records already there commits only the
+    rest, and a count would describe the commit that was not made. The pull request is spelled
+    `owner/name#N` in the body, because the commit is read in the inbox repository and a bare `#N`
+    there links to the inbox's own pull request of that number.
     """
     who = f"@{out.author}" if out.author else "an author the platform did not name"
     return "\n".join([
-        f"Motivation: the L2 reviews of {out.repository} were judged as their pull requests closed "
-        f"on {out.date}; a judgement that is not filed is a verdict nobody can join to its run.",
+        capture.commit_subject("the judgements", out.repository, out.pull_request),
         "",
-        f"Modification: adds the day's judgement records under `inbox/{out.date}/judgements/`, "
-        f"written by the closing workflow of {out.repository}. Each names the run it judges and "
-        f"nothing of the review's text. The pull request whose close produced the first of them "
-        f"was opened by {who}.",
+        f"Motivation: {out.repository}#{out.pull_request}, a pull request opened by {who}, closed "
+        f"on {out.date}; a review-domain run is judged when the pull request closes, and the "
+        f"verdict arrives as its own record (ADR-087 §C.16).",
         "",
-        "Result: the inbox holds the disposition of every finding of every judged run. The producer "
-        "ran this repository's own validator before opening this pull request, so a record that "
-        "fails it never reaches the batch.",
+        f"Modification: adds the judgement records of that pull request's L2 review runs under "
+        f"`inbox/{out.date}/judgements/`, each keyed by the run it judges and written by the "
+        f"closing workflow of {out.repository}.",
         "",
-        "## Classification",
-        "",
-        "Scope class: docs-only",
-        "Wall impact: none",
-        "Generated files touched: no",
-        "TCK obligation: n/a",
-        "Compatibility impact: none",
-        f"Cross-repo impact: {out.repository}: the records judge review runs in that repository",
-        "ADRs referenced: ADR-086, ADR-087",
-        "Evidence state: citable",
-        "",
-        "## Verification",
-        "",
-        "The producer validated every record against the cross-file rules — rule 5 included, which "
-        "is why each run row was resolved before its judgement was filed — and against the record "
-        "schema, before this branch was pushed; the required checks on this pull request read them "
-        "again.",
+        "Result: what the human did with each finding is in the inbox, beside the run that "
+        "produced it and without the run record being touched. The producer ran this repository's "
+        "own validator — rule 5 included, which is why each run row was resolved first — and the "
+        "record schema before committing; the inbox reads them again on the push.",
         "",
         "Refs: ADR-086, ADR-087",
     ]) + "\n"
@@ -720,10 +670,10 @@ def issue_body(out: Decision) -> str:
     lines += [
         "",
         "A judgement resolves to its run or it is about nothing: rule 5 of the inbox validator "
-        "refuses one whose run record is not in the same inbox, so the batch is red for the whole "
-        "pull request if such a record is filed. The repair is at the producer — the run's own row "
-        "reaching the inbox — never an edited record, which would say what its editor later "
-        "believed rather than what the run did.",
+        "refuses one whose run record is not in the same inbox, so the inbox's own check on its "
+        "default branch is red if such a record is filed. The repair is at the producer — the "
+        "run's own row reaching the inbox — never an edited record, which would say what its "
+        "editor later believed rather than what the run did.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -763,14 +713,11 @@ def emit(out: Decision, args) -> None:
     print(json.dumps(out.as_json(), sort_keys=True, ensure_ascii=False))
     with open(args.out, "w", encoding="utf-8") as handle:
         json.dump(out.as_json(), handle, indent=2, sort_keys=True, ensure_ascii=False)
-    # Both for a batch that gained a record AND for one whose records were already there: the
-    # subject is the pull request's title too, and a re-run that found everything on the branch may
-    # still be the run that has to open the pull request for it.
-    if out.counted("new") or out.counted("skip"):
+    # Only where a record was written: a run whose records were all already there has nothing of
+    # its own to commit.
+    if out.counted("new"):
         with open(args.commit_message, "w", encoding="utf-8") as handle:
             handle.write(commit_message(out))
-        with open(args.pull_request_body, "w", encoding="utf-8") as handle:
-            handle.write(pull_request_body(out))
     if out.counted("unresolved") or out.counted("refused"):
         with open(args.issue_body, "w", encoding="utf-8") as handle:
             handle.write(issue_body(out))
@@ -789,20 +736,20 @@ def main(argv: list[str] | None = None, fetcher=None) -> int:
     parser.add_argument("--streams-repository", default=capture.STREAMS_REPO)
     parser.add_argument("--execution-repository", default=EXECUTION_REPO)
     parser.add_argument("--inbox-root", default="",
-                        help="a checkout of the inbox repository on the day's branch; without it "
-                             "records are assembled and nothing is written")
+                        help="a checkout of the inbox repository at its default branch, as it is "
+                             "on the remote; without it records are assembled and nothing is "
+                             "written")
     parser.add_argument("--out", default="judge-decision.json")
     parser.add_argument("--unresolved-dir", default="unresolved-judgements",
                         help="where a record that was not filed is kept for the artefact")
     # Written BESIDE the clone, never inside it: a file written into the inbox checkout is a file
     # the next commit carries into the inbox, and the inbox holds records and nothing else.
     parser.add_argument("--commit-message", default="judge-commit-message.txt")
-    parser.add_argument("--pull-request-body", default="judge-pull-request-body.md")
     parser.add_argument("--issue-body", default="judge-issue-body.md")
     # The credential the two DATA repositories are read under, named rather than carried: the
-    # streams repository is private and the inbox's open branches are the pen's, while the reviewed
-    # repository is read under the job's own token. A token on a command line is readable by every
-    # process on the runner.
+    # streams repository is private and the inbox is read where the pen writes it, while the
+    # reviewed repository is read under the job's own token. A token on a command line is readable
+    # by every process on the runner.
     parser.add_argument("--inbox-token-env", default="EXERIS_INBOX_TOKEN")
     args = parser.parse_args(argv)
 
