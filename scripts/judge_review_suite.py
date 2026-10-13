@@ -34,6 +34,7 @@ import copy
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -99,8 +100,12 @@ RUN_PATH = f"inbox/{RUN_DATE}/runs/{RUN_ID}.json"
 JUDGEMENT_PATH = os.path.join("inbox", JUDGED_DATE, "judgements", JUDGEMENT_ID + ".json")
 SECOND_JUDGEMENT_PATH = os.path.join("inbox", JUDGED_DATE, "judgements",
                                      SECOND_JUDGEMENT_ID + ".json")
-BRANCH = f"inbox/{REPO.replace('/', '--')}/{JUDGED_DATE}"
-ROW_BRANCH = f"inbox/{REPO.replace('/', '--')}/{RUN_DATE}"
+# Rows and judgements are both committed to the inbox's default branch, so it is the one ref a run
+# row is looked for at and the one a judgement lands on.
+BRANCH = "main"
+# A ref that is not the inbox's default branch, holding the run's row: where a row that was never
+# committed to `main` might be, and a ref this producer has no reason to ask.
+OTHER_REF = f"inbox/{REPO.replace('/', '--')}/{RUN_DATE}"
 CHANGED = "docs/b.md"
 
 # The four findings the fixture's fenced verdict carries, by what each is for. Named here so a case
@@ -175,7 +180,6 @@ class World:
         self.unresolved = os.path.join(tmp, "unresolved-judgements")
         self.decision_path = os.path.join(tmp, "judge-decision.json")
         self.issue_path = os.path.join(tmp, "issue.md")
-        self.body_path = os.path.join(tmp, "body.md")
         self.message_path = os.path.join(tmp, "message.txt")
         self.events = copy.deepcopy(fixture("stream.json"))
         self.index = [{
@@ -200,10 +204,6 @@ class World:
 
     def run_path(self) -> str:
         return f"inbox/{self.row_date()}/runs/{RUN_ID}.json"
-
-    def row_branch(self) -> str:
-        """The open branch the run's own day's batch is proposed on."""
-        return f"inbox/{REPO.replace('/', '--')}/{self.row_date()}"
 
     def build(self) -> "World":
         os.makedirs(self.inbox, exist_ok=True)
@@ -272,7 +272,6 @@ class World:
                 "--unresolved-dir", self.unresolved,
                 "--out", self.decision_path,
                 "--commit-message", self.message_path,
-                "--pull-request-body", self.body_path,
                 "--issue-body", self.issue_path]
         if inbox:
             argv += ["--inbox-root", self.inbox]
@@ -357,6 +356,37 @@ def world(execution_root: str, ci_row):
 # The cases.
 
 
+# The organisation's commit grammar as `commitlint.config.js` states it for a `feat` commit: a
+# subject within 100 characters, the three sections in order at the start of a line, and a `Refs:`
+# trailer naming ADRs. Restated rather than run, because the lint is a Node tool this suite does not
+# install; a message that passes this and fails the lint is a difference in the restatement, and the
+# repository's own commit lint is where it shows.
+HEADER = re.compile(r"^feat\(inbox\): \S.*[^.]$")
+SECTIONS = ("Motivation:", "Modification:", "Result:")
+REFS = re.compile(r"^Refs: ADR-\d{3}(\s*,\s*ADR-\d{3})*$")
+
+
+def grammar(message: str) -> list[str]:
+    """Every way a message departs from the grammar, or nothing where it keeps to it."""
+    lines = message.splitlines()
+    wrong = []
+    if not lines or not HEADER.match(lines[0]):
+        wrong.append(f"subject `{lines[0] if lines else ''}` is not `feat(inbox): ...`")
+    elif len(lines[0]) > 100:
+        wrong.append(f"subject is {len(lines[0])} characters")
+    if len(lines) < 2 or lines[1] != "":
+        wrong.append("no blank line after the subject")
+    at = [next((i for i, line in enumerate(lines) if line.startswith(name)), -1)
+          for name in SECTIONS]
+    if -1 in at:
+        wrong.append("missing " + " ".join(n for n, i in zip(SECTIONS, at) if i == -1))
+    elif at != sorted(at):
+        wrong.append("sections out of order")
+    if not any(REFS.match(line) for line in lines):
+        wrong.append("no `Refs:` trailer in the grammar")
+    return wrong
+
+
 @case("the four dispositions, one closed pull request, one record that validates")
 def green(root, ci_row, check):
     here, tmp = world(root, ci_row)
@@ -398,13 +428,19 @@ def green(root, ci_row, check):
         check("the dispositions are keyed by position and carry nothing of the finding",
               sorted(record["dispositions"][0]), ["disposition", "finding_index"])
         check("nothing was kept for an artefact", here.kept(), [])
-        # AND THE BATCH NAMES ITS HUMAN (§C.15). Either half of this producer may be the one that
-        # opens the day's pull request, so a body written by this half that named nobody would
-        # make the same batch anonymous depending on which half got there first.
-        with open(here.body_path, encoding="utf-8") as fh:
-            body = fh.read()
-        check("the batch's pull request names the human whose pull request produced the records",
-              f"@{AUTHOR}" in body, True)
+        # AND THE COMMIT NAMES ITS HUMAN (§C.15). The records are committed to the inbox's default
+        # branch with no pull request around them, so the commit is the only account of the filing
+        # the inbox keeps, and one that named nobody would make the records anonymous.
+        with open(here.message_path, encoding="utf-8") as fh:
+            message = fh.read()
+        check("the commit names the human whose pull request produced the records",
+              f"@{AUTHOR}" in message, True)
+        check("and the pull request, spelled so it links from the inbox to the right repository",
+              f"{REPO}#{PR}" in message, True)
+        check("and where the records land", f"inbox/{JUDGED_DATE}/judgements/" in message, True)
+        check("the subject names this pull request and nothing that would need a count",
+              message.splitlines()[0], f"feat(inbox): the judgements of {REPO.split('/')[-1]}#{PR}")
+        check("and the message is in the organisation's commit grammar", grammar(message), [])
         # WHICH CREDENTIAL READ WHAT. The two data repositories are private to this organisation's
         # pen; the reviewed repository is read under the job's own token, which is what keeps the
         # App's installation out of every repository the review runs in.
@@ -520,7 +556,7 @@ def run_row_absent(root, ci_row, check):
         check("the record itself is kept where it can be read",
               here.kept(), [JUDGEMENT_ID + ".json"])
         # AND IT IS THE INBOX'S OWN RULE THAT SAYS SO, not this producer's bookkeeping: the record
-        # was put through the validator that gates the inbox pull request, and rule 5 is what
+        # was put through the validator the inbox runs on its default branch, and rule 5 is what
         # refused it. A producer that only counted the missing row would be asserting a rule it had
         # stopped running.
         check("rule 5 is what refused it",
@@ -530,32 +566,27 @@ def run_row_absent(root, ci_row, check):
             issue = fh.read()
         check("an issue body is written", f"{REPO}#{PR}/judgement" in issue, True)
         check("and it names the record that was not filed", JUDGEMENT_ID in issue, True)
-        check("no pull request body is written for a batch with nothing in it",
-              os.path.exists(here.body_path), False)
-        # AND ONLY THE DEFAULT BRANCH IS ASKED, because this pull request closed on a day the run
-        # did not: the judgement lands on the closing day's branch, and a row on another day's
-        # open branch is in no tree this batch is validated over. The other day's branch is asked
-        # by the case where it IS this judgement's own.
-        check("only the default branch is asked for a run of another day",
+        check("no commit message is written where there is nothing to commit",
+              os.path.exists(here.message_path), False)
+        # AND ONLY THE DEFAULT BRANCH IS ASKED: rows are committed there as they are captured, so
+        # it is the one tree a judgement is validated over, here and by the inbox on the push.
+        check("only the default branch is asked",
               [p for p in here.rest.asked if RUN_PATH in p],
               [f"repos/{EXECUTION_REPO}/contents/{RUN_PATH}?ref=main"])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-@case("the run's row on the judgement's OWN open branch resolves it, and the judgement is filed")
-def run_row_on_branch(root, ci_row, check):
+@case("a run reviewed and closed on one day is looked for on the default branch alone")
+def run_row_same_day(root, ci_row, check):
     here, tmp = world(root, ci_row)
     try:
-        # A pull request reviewed and closed on one day: the run's batch and the judgement's are
-        # the same branch, so a row proposed there and not yet merged is a row this judgement will
-        # be validated beside. Holding the judgement back for want of a human's merge would report
-        # a producer defect that is not one.
+        # The run's day and the judgement's day are one day. The day the pull request closed
+        # decides where the judgement is FILED and nothing about where its run is looked for.
         same_day = f"{JUDGED_DATE}T08:15:00Z"
         here.index[0]["created_at"] = same_day
         here.row = run_row(ci_row, root, started_at=same_day,
                            fence=f"{JUDGED_DATE}-ci-live-cc-2-1-274")
-        here.row_ref = here.row_branch()
         here.build().compare(CHANGED)
         _code, decision = here.run()
         check("the record is filed", decision["written"], 1)
@@ -563,25 +594,22 @@ def run_row_on_branch(root, ci_row, check):
         check("it carries that row's fence",
               here.filed()[JUDGEMENT_PATH]["instrument"]["fence"],
               f"{JUDGED_DATE}-ci-live-cc-2-1-274")
-        # BOTH REFS ARE ASKED, and in that order.
-        check("the default branch and this judgement's own open branch are both asked",
+        check("the default branch is the one ref asked",
               [p for p in here.rest.asked if here.run_path() in p],
-              [f"repos/{EXECUTION_REPO}/contents/{here.run_path()}?ref=main",
-               f"repos/{EXECUTION_REPO}/contents/{here.run_path()}?ref={BRANCH}"])
+              [f"repos/{EXECUTION_REPO}/contents/{here.run_path()}?ref=main"])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-@case("a row on ANOTHER day's open branch is not in this batch's tree, and is not filed against")
-def run_row_on_another_days_branch(root, ci_row, check):
+@case("a row on any ref but the default branch is not in the inbox, and is not filed against")
+def run_row_off_main(root, ci_row, check):
     here, tmp = world(root, ci_row)
     try:
-        # The ordinary case this producer must not mistake for a resolution: reviewed one day,
-        # closed the next, the run's batch still open. The judgement goes on the closing day's
-        # branch, whose tree holds no such row — so filing it there is rule 5 red for the whole
-        # batch, which is what producer-side validation exists to prevent. Kept back instead, and
-        # §C.16 names the state: the inbox pull request was never merged.
-        here.row_ref = ROW_BRANCH
+        # A row that exists somewhere other than `main` is a row that was never committed to the
+        # inbox: the inbox validates `main`, so a judgement filed beside it there is refused by rule
+        # 5 on the push, which is what producer-side validation exists to prevent. Kept back
+        # instead, and §C.16 names the state.
+        here.row_ref = OTHER_REF
         here.build().compare(CHANGED)
         code, decision = here.run()
         check("the job is not failed by it", code, 0)
@@ -589,8 +617,11 @@ def run_row_on_another_days_branch(root, ci_row, check):
         check("the record is kept back", decision["kept_back"], 1)
         check("and the reason is that its run is not in the inbox",
               decision["judgements"][0]["reason"], "run-row-absent")
-        check("the other day's open branch is never asked",
-              [p for p in here.rest.asked if ROW_BRANCH in p], [])
+        check("and the detail names the branch it was looked for on",
+              f"`{BRANCH}`" in decision["judgements"][0]["detail"], True)
+        check("no other ref is ever asked",
+              [p for p in here.rest.asked
+               if f"/runs/{RUN_ID}.json" in p and not p.endswith("?ref=main")], [])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -604,14 +635,12 @@ def twice(root, ci_row, check):
         check("the second reading writes nothing new", decision["written"], 0)
         check("it is a skip rather than a refusal", decision["skipped"], 1)
         check("and one record stands", sorted(here.filed()), [JUDGEMENT_PATH])
-        # THE SUBJECT IS THE PULL REQUEST'S TITLE, and the run that finds every record already on
-        # the branch may still be the run that has to open the pull request for the batch — a
-        # branch whose pull request was closed unmerged is exactly that. So it is written here too,
-        # and it carries no count for the same reason.
-        with open(here.message_path, encoding="utf-8") as fh:
-            subject = fh.read().splitlines()[0]
-        check("the subject a pull request would be titled by is written for a skip too",
-              subject, f"feat(inbox): judgements from {REPO} on {JUDGED_DATE}")
+        # A RE-RUN THAT WROTE NOTHING HAS NOTHING TO COMMIT, so it writes no message: a message
+        # left behind is a commit the caller would be invited to make over an unchanged tree.
+        os.remove(here.message_path)
+        here.run()
+        check("a reading that wrote nothing writes no commit message",
+              os.path.exists(here.message_path), False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

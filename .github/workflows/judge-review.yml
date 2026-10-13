@@ -31,7 +31,7 @@ on:
   workflow_call:
     inputs:
       # The same two repositories the capture job names, with the same defaults and for the same
-      # reason: the tooling a record is assembled by and the inbox it is proposed to cannot be two
+      # reason: the tooling a record is assembled by and the inbox it is committed to cannot be two
       # different versions of one contract.
       execution-repository:
         type: string
@@ -69,19 +69,20 @@ jobs:
     # judgement dated by an instant no pull request closed at.
     if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
     runs-on: ubuntu-latest
-    # THE SAME GROUP AS THE CAPTURE JOB'S, because they write to the same branch: one branch per
-    # repository per UTC day collects that day's rows and that day's judgements, and two jobs
-    # appending to it at once race on the same ref. `cancel-in-progress: false` serialises them; it
-    # does not promise that every member survives, so each write below is made safe on its own by
-    # replaying it against what is actually on the remote.
+    # ONE JUDGEMENT AT A TIME PER REVIEWED REPOSITORY. Rows and judgements are both committed to
+    # the inbox's `main`, so two closes of one repository judged together would race on it.
+    # `cancel-in-progress: false` serialises them; it does not promise that every member survives,
+    # and it serialises one repository's judgements only — the capture job's legs and every other
+    # repository in the organisation commit to the same branch. So each write below is made safe on
+    # its own, by replaying it against what is actually on the remote.
     concurrency:
       group: inbox-${{ github.repository }}
       cancel-in-progress: false
     # READ, AND THE ONE READ A REVIEW DOES NOT ALREADY GRANT. Three reads are made with this token —
     # the repository, for the inbox its records belong to; the pull request, for the instant it
     # closed and the head its history ends at; and the run that produced each stream, for the commit
-    # the review read. Every write below — the records, the inbox pull request, the issue — goes
-    # through an App installation token minted for the step that makes it.
+    # the review read. Every write below — the records, the issue — goes through an App
+    # installation token minted for the step that makes it.
     permissions:
       contents: read
       pull-requests: read
@@ -142,11 +143,11 @@ jobs:
           private-key: ${{ secrets.exeris_inbox_private_key }}
           owner: exeris-systems
           repositories: ${{ steps.identity.outputs.repositories }}
-          # The two scopes this job spends and nothing else.
+          # The one scope this job spends and nothing else: the records are a commit pushed to the
+          # inbox's default branch, and nothing here opens a pull request.
           permission-contents: write
-          permission-pull-requests: write
-      # `fetch-depth: 0`, because this checkout is pushed from: a day's branch is fetched onto it
-      # and a commit is pushed back, and a shallow history is refused by the receiving end.
+      # `fetch-depth: 0`, because this checkout is pushed from: the inbox's `main` is fetched onto
+      # it and a commit is pushed back, and a shallow history is refused by the receiving end.
       - name: The record contract and its derivations
         if: ${{ steps.inbox.outputs.token != '' }}
         uses: actions/checkout@v7
@@ -180,14 +181,12 @@ jobs:
               --streams-repository "$STREAMS_REPOSITORY" \
               --unresolved-dir "$GITHUB_WORKSPACE/unresolved-judgements" \
               --commit-message "$GITHUB_WORKSPACE/judge-commit-message.txt" \
-              --pull-request-body "$GITHUB_WORKSPACE/judge-pull-request-body.md" \
               --issue-body "$GITHUB_WORKSPACE/judge-issue-body.md" \
               --out judge-decision.json "$@"
           }
-          # PHASE ONE: what the records would be, with nothing written. The branch a record lands on
-          # is decided by the instant the pull request closed, which the script reads from the
-          # platform — so it is asked for before the checkout is moved anywhere, and a pull request
-          # that yields no record moves no checkout at all.
+          # PHASE ONE: what the records would be, with nothing written. The script names the branch
+          # a record lands on — the inbox's `main` — in its decision, so the branch is spelled in
+          # one place, and a pull request that yields no record moves no checkout at all.
           judge
           branch=$(jq -r '.branch // ""' judge-decision.json)
           reason=$(jq -r '.reason // ""' judge-decision.json)
@@ -199,12 +198,18 @@ jobs:
           if [ -n "$reason" ]; then
             echo "::notice::judge: no judgement — $reason: $(jq -r '.detail' judge-decision.json)"
           fi
-          # THE RECORDS ARE DERIVED AGAINST THE BRANCH AS IT IS, EVERY ATTEMPT. The day's branch is
-          # shared with the capture job and with every other run of this one, so a push that loses
-          # the race is answered by fetching the branch, discarding this attempt and assembling
-          # again onto it — which is what lets `write_judgement`'s two answers, identical bytes are
-          # a skip and different bytes under one name are refused, be decided against what the
-          # branch actually holds rather than against what it held when this job started.
+          # THE RECORDS ARE COMMITTED TO THE INBOX'S `main`, ONE COMMIT PER CLOSED PULL REQUEST. The
+          # inbox App holds a ruleset bypass on that repository alone, so they land without a pull
+          # request: the producer has already put each through the inbox's own validator, rule 5
+          # included, and the inbox validates them again on the push (ADR-087 §C.15).
+          #
+          # DERIVED AGAINST THE BRANCH AS IT IS, EVERY ATTEMPT. `main` is shared with the capture
+          # job and with every repository in the organisation, so a push that loses the race is the
+          # ordinary case and is answered by fetching the branch, discarding this attempt and
+          # assembling again onto it — which is what lets `write_judgement`'s two answers, identical
+          # bytes are a skip and different bytes under one name are refused, be decided against
+          # what the branch actually holds rather than against what it held when this job started.
+          # Five attempts, because the race is organisation-wide.
           pushed=yes
           if [ -n "$branch" ] && [ "$filing" -gt 0 ]; then
             pushed=no
@@ -212,13 +217,17 @@ jobs:
             # identity to. Asked of the host rather than written down: an id is the host's to
             # assign, and a hard-coded one attributes the commit to nobody the moment it is wrong.
             uid=$(GH_TOKEN="$EXERIS_INBOX_TOKEN" gh api /users/exeris-inbox%5Bbot%5D --jq .id)
-            for _attempt in 1 2 3; do
-              git -C execution fetch --quiet origin "$branch" || true
-              if git -C execution rev-parse --verify --quiet "origin/$branch" >/dev/null; then
-                git -C execution checkout --quiet -B "$branch" "origin/$branch"
-              else
-                git -C execution checkout --quiet -B "$branch" origin/main
-              fi
+            last=""
+            for attempt in 1 2 3 4 5; do
+              # A pause before every attempt but the first, randomised so that runs which lost
+              # the same race do not meet again at the same instant: every repository of the
+              # organisation writes here.
+              if [ "$attempt" -gt 1 ]; then sleep $(( (RANDOM % 5) + 2 * attempt )); fi
+              # A fetch that did not answer is an attempt spent, not the step failed: the branch
+              # always exists, so the only thing a failed fetch says is that this attempt saw
+              # nothing.
+              git -C execution fetch --quiet origin "$branch" || { last="fetch"; continue; }
+              git -C execution checkout --quiet -B "$branch" "origin/$branch"
               git -C execution reset --quiet --hard HEAD
               git -C execution clean --quiet -fd
               judge --inbox-root execution
@@ -233,16 +242,16 @@ jobs:
               if git -C execution push --quiet origin "HEAD:refs/heads/$branch"; then
                 pushed=yes; break
               fi
+              last="push"
             done
           fi
           # RED, and deliberately: this job reports green whenever it had nothing to write, so a
           # green here would be indistinguishable from a pull request nobody reviewed.
           if [ "$pushed" != "yes" ]; then
-            echo "::error::judge: the day's branch could not be pushed, so the judgements of this pull request are not in the inbox"
+            echo "::error::judge: the judgements could not be pushed to the inbox's $branch after five attempts, the last ending at the ${last:-assembly} step, so the judgements of this pull request are not in the inbox"
             exit 1
           fi
           {
-            echo "branch=$branch"
             echo "written=$(jq -r '.written' judge-decision.json)"
             echo "skipped=$(jq -r '.skipped' judge-decision.json)"
             echo "kept-back=$(jq -r '.kept_back' judge-decision.json)"
@@ -293,42 +302,6 @@ jobs:
             -f "title=judgement: the review runs of pull request #${PR} were judged and the records were not filed" \
             -F body=@"$GITHUB_WORKSPACE/judge-issue-body.md" \
             -f "labels[]=triage" --silent
-      # The records reach the inbox as a pull request, never as a push (§C.15): the inbox validator
-      # is the required check on it, and merge is a person's. The records themselves are already on
-      # the branch — the step above pushes them, because a push that loses a race has to be
-      # re-derived against the branch it lost to and only the step that assembles can do that.
-      - name: Open the inbox pull request for the day's records
-        if: ${{ (steps.judge.outputs.written != '' && steps.judge.outputs.written != '0')
-                || (steps.judge.outputs.skipped != '' && steps.judge.outputs.skipped != '0') }}
-        env:
-          GH_TOKEN: ${{ steps.inbox.outputs.token }}
-          EXECUTION_REPOSITORY: ${{ inputs.execution-repository }}
-          BRANCH: ${{ steps.judge.outputs.branch }}
-        run: |
-          set -euo pipefail
-          # One pull request per repository per day, rows and judgements together: the branch
-          # already carries the day's records, so a second pull request for the same branch would be
-          # two proposals of one batch. Whichever producer opened it named it; both subjects are
-          # the same batch in the same grammar.
-          open=$(gh api "repos/$EXECUTION_REPOSITORY/pulls?head=exeris-systems:$BRANCH&state=open" \
-                 --jq 'length')
-          if [ "$open" -gt 0 ]; then
-            echo "::notice::judge: the inbox pull request for $BRANCH is already open"
-            exit 0
-          fi
-          # And a branch with nothing on it is not a batch. A re-run whose records were already
-          # merged has a branch level with the base, and asking for a pull request over no commits
-          # is an error about the request rather than about the records.
-          git -C execution fetch --quiet origin main
-          if [ "$(git -C execution rev-list --count origin/main..HEAD)" -eq 0 ]; then
-            echo "::notice::judge: $BRANCH holds no records the base does not, so no pull request was opened"
-            exit 0
-          fi
-          gh api -X POST "repos/$EXECUTION_REPOSITORY/pulls" \
-            -f "title=$(head -1 "$GITHUB_WORKSPACE/judge-commit-message.txt")" \
-            -f "head=$BRANCH" \
-            -f base=main \
-            -F body=@"$GITHUB_WORKSPACE/judge-pull-request-body.md" --silent
       - name: What this judgement did
         if: ${{ !cancelled() }}
         run: |

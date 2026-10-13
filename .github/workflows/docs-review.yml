@@ -118,7 +118,7 @@ on:
         description: >-
           Whether this run becomes a row in the execution dataset (ADR-087 §C.13-§C.17): the
           execution log is committed as a stream, a run record is assembled from what the produce
-          job exported, and the day's rows reach the inbox as one pull request. OFF by default and
+          job exported, and the row is committed to the inbox's `main`. OFF by default and
           turned on per repository as its own decision, exactly as publication is — a repository
           that starts writing rows starts contributing to a dataset, and the rows a producer writes
           are read by a person before that is asked of anyone else. IT NEEDS `publish: true` TOO:
