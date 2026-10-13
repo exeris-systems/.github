@@ -217,11 +217,16 @@ jobs:
             # identity to. Asked of the host rather than written down: an id is the host's to
             # assign, and a hard-coded one attributes the commit to nobody the moment it is wrong.
             uid=$(GH_TOKEN="$EXERIS_INBOX_TOKEN" gh api /users/exeris-inbox%5Bbot%5D --jq .id)
-            for _attempt in 1 2 3 4 5; do
+            last=""
+            for attempt in 1 2 3 4 5; do
+              # A pause before every attempt but the first, randomised so that runs which lost
+              # the same race do not meet again at the same instant: every repository of the
+              # organisation writes here.
+              if [ "$attempt" -gt 1 ]; then sleep $(( (RANDOM % 5) + 2 * attempt )); fi
               # A fetch that did not answer is an attempt spent, not the step failed: the branch
               # always exists, so the only thing a failed fetch says is that this attempt saw
               # nothing.
-              git -C execution fetch --quiet origin "$branch" || continue
+              git -C execution fetch --quiet origin "$branch" || { last="fetch"; continue; }
               git -C execution checkout --quiet -B "$branch" "origin/$branch"
               git -C execution reset --quiet --hard HEAD
               git -C execution clean --quiet -fd
@@ -237,12 +242,13 @@ jobs:
               if git -C execution push --quiet origin "HEAD:refs/heads/$branch"; then
                 pushed=yes; break
               fi
+              last="push"
             done
           fi
           # RED, and deliberately: this job reports green whenever it had nothing to write, so a
           # green here would be indistinguishable from a pull request nobody reviewed.
           if [ "$pushed" != "yes" ]; then
-            echo "::error::judge: the judgements could not be pushed to the inbox's $branch, so the judgements of this pull request are not in the inbox"
+            echo "::error::judge: the judgements could not be pushed to the inbox's $branch after five attempts, the last ending at the ${last:-assembly} step, so the judgements of this pull request are not in the inbox"
             exit 1
           fi
           {

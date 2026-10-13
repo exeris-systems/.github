@@ -1016,10 +1016,15 @@ jobs:
           # than against what it held when this job started. Five attempts, because the race is
           # organisation-wide and each attempt is a fetch and a rebuild of one file.
           pushed=no
-          for _attempt in 1 2 3 4 5; do
+          last=""
+          for attempt in 1 2 3 4 5; do
+            # A pause before every attempt but the first, randomised so that runs which lost
+            # the same race do not meet again at the same instant: every repository of the
+            # organisation writes here.
+            if [ "$attempt" -gt 1 ]; then sleep $(( (RANDOM % 5) + 2 * attempt )); fi
             # A fetch that did not answer is an attempt spent, not the step failed: the branch
             # always exists, so the only thing a failed fetch says is that this attempt saw nothing.
-            git -C execution fetch --quiet origin "$BRANCH" || continue
+            git -C execution fetch --quiet origin "$BRANCH" || { last="fetch"; continue; }
             git -C execution checkout --quiet -B "$BRANCH" "origin/$BRANCH"
             git -C execution reset --quiet --hard HEAD
             git -C execution clean --quiet -fd
@@ -1034,11 +1039,12 @@ jobs:
             if git -C execution push --quiet origin "HEAD:refs/heads/$BRANCH"; then
               pushed=yes; break
             fi
+            last="push"
           done
           # RED, for the reason the stream's push is red: the stream is committed by now, so a row
           # that did not reach the branch is something this job had to write and did not.
           if [ "$pushed" != "yes" ]; then
-            echo "::error::capture: the row could not be pushed to the inbox's $BRANCH, so the run's row is not in the inbox"
+            echo "::error::capture: the row could not be pushed to the inbox's $BRANCH after five attempts, the last ending at the ${last:-assembly} step, so the run's row is not in the inbox"
             exit 1
           fi
           {

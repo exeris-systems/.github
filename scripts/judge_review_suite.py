@@ -581,10 +581,8 @@ def run_row_absent(root, ci_row, check):
 def run_row_same_day(root, ci_row, check):
     here, tmp = world(root, ci_row)
     try:
-        # The run's day and the judgement's day are one day, which is the case a per-day branch
-        # once made different from the others. Rows and judgements both land on `main` now, so the
-        # day the pull request closed decides where the judgement is FILED and nothing about where
-        # its run is looked for.
+        # The run's day and the judgement's day are one day. The day the pull request closed
+        # decides where the judgement is FILED and nothing about where its run is looked for.
         same_day = f"{JUDGED_DATE}T08:15:00Z"
         here.index[0]["created_at"] = same_day
         here.row = run_row(ci_row, root, started_at=same_day,
