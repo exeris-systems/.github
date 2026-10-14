@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-26
+last-verified: 2026-10-14
 ---
 
 # Docs & Hygiene Review — Exeris Systems (L2 step, ADR-085 §J.33)
@@ -66,7 +66,7 @@ Commits:
 Changelog and compatibility:
 
 24. Release PR: `### Breaking` present and consistent with the japicmp report (Java) or the golden diff (TS); `accepted-api-changes.json` justified; `MIGRATION.md` section for non-empty Breaking → else `[HARD BLOCK]`.
-25. Non-release PR with a `Compatibility impact: breaking (ADR-NNN)` line: is the ADR accepted and does `accepted-api-changes.json` gain the entry in this PR → else `[CONTRACT]`.
+25. Non-release PR with a `Compatibility impact: breaking (ADR-NNN)` line: is the ADR accepted and does `accepted-api-changes.json` gain the entry in this PR → else `[CONTRACT]`. The entry requirement applies only to a capability or SKU that is **released**: one with a first resolvable published artefact (`capability-conventions.md` rule 9). Before its first release, nothing can resolve it, so no consumer exists for an entry to protect; the PR declares `breaking (ADR-NNN)` in its body, the ADR must still be accepted, and no `accepted-api-changes.json` entry is required. Treat the capability or SKU as unreleased when the checkout shows all of: the root `pom.xml` `<version>` ends in `-SNAPSHOT`, the repository has no non-snapshot release tag, and no `accepted-api-changes.json` has been committed yet. A repository extension stating that the capability is unreleased counts as the same evidence, but cannot contradict the checkout. Where the evidence is mixed or absent, treat it as released. For an unreleased capability or SKU, raise no finding on the missing entry, at any severity; the requirement applies in full from the first release.
 
 ## Part `docs` — documentation pages and agent files (every `*.md`, ADRs and standards included, and `.cursorrules`)
 
@@ -139,7 +139,7 @@ A calling repository may add to this routine. It may not subtract from it. Two o
 - **`repo-routine`** names a file in the calling repository, handed to you as `REPOSITORY EXTENSION`. Read it and the policies it names, and apply it **after** the steps above. It may add checks, raise a severity this routine assigns, or forbid something this routine permits. It may **not** lower a severity, skip a step, or change the output format, the severity tags or the verdict schema below. Those belong to this file: a review whose shape varies by repository is one no shared check can be gated on, and the point of the extension is to stop repositories keeping a whole review workflow of their own to get their rules applied.
 - **`repo-checks`** is a command CI runs in the checked-out repository before you, its combined output and exit code left in the file named as `REPOSITORY CHECK OUTPUT`. **You do not run it.** This runner's harness denies `Bash`, and a routine that asks for what the harness refuses produces a review reporting its own checks as `not-run` — measured, and the reason the command moved into CI. Read the file, judge what it found, and list each script in `checks_run` with what it reported. A non-zero exit is evidence, not a verdict: most repo-local scripts locate candidates rather than decide, so report what was found and let the finding carry the severity, rather than failing the review on an exit code.
 
-Where the extension and this routine disagree about severity, the higher one stands.
+Where the extension and this routine disagree about severity, the higher one stands. A condition under which a rule does not apply, such as the unreleased case in rule 25, is part of that rule in this file; an extension cannot add such an exemption, nor widen one.
 
 ## Output format
 
