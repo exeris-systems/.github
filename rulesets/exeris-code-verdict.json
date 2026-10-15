@@ -29,6 +29,7 @@
         "exeris-caps-token-issuer",
         "exeris-caps-upstream-pool",
         "exeris-caps-waf-rules",
+        "exeris-control-plane",
         "exeris-docs",
         "exeris-kernel",
         "exeris-platform",
@@ -36,6 +37,7 @@
         "exeris-sku-api-gateway",
         "exeris-sku-identity",
         "exeris-spring-runtime",
+        "exeris-studio",
         "exeris-tooling",
         "exeris-web"
       ],
