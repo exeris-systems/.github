@@ -34,6 +34,7 @@
         "exeris-platform",
         "exeris-sdk",
         "exeris-sku-api-gateway",
+        "exeris-sku-identity",
         "exeris-spring-runtime",
         "exeris-tooling",
         "exeris-web"
