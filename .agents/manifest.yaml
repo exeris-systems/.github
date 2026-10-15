@@ -2,7 +2,7 @@
 #
 # This repository is a bundle CONSUMER and nothing else. It authors no role profile, no skill and
 # no agent workflow: its `[L2]` routine is prose (`docs-guardrails-review.md`) handed to a runner
-# by `.github/workflows/docs-review.yml`, and the schema below is the shape that routine's verdict
+# by `.github/workflows/review.yml`, and the schema below is the shape that routine's verdict
 # has to take. The keys that name profiles, skills, workflows, policies, references and hooks are
 # therefore absent rather than empty — `agents_file_check.py` asserts the manifest and the
 # filesystem agree in BOTH directions, so an empty list here would claim a directory that is not

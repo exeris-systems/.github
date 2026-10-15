@@ -205,10 +205,10 @@ def _():
 
 @case("the part prompt and the routine both state the finding's fields")
 def _():
-    prompt = open(os.path.join(ROOT, ".github", "workflows", "docs-review.yml"),
+    prompt = open(os.path.join(ROOT, ".github", "workflows", "review.yml"),
                   encoding="utf-8").read()
     routine = open(os.path.join(ROOT, "docs-guardrails-review.md"), encoding="utf-8").read()
-    for name, text in (("docs-review.yml", prompt), ("docs-guardrails-review.md", routine)):
+    for name, text in (("review.yml", prompt), ("docs-guardrails-review.md", routine)):
         flat = " ".join(text.split())
         for phrase in ("`location`", "no `file` or `line` field", "`fix`", '`"blocking": true`'):
             assert phrase in flat, f"{name} does not state {phrase}"
@@ -247,7 +247,7 @@ def _():
     local = composed["allOf"][1]["properties"]
     # `parts` is the aggregate's to write, never a run's.
     expected = (set(base["properties"]) | set(local)) - {"parts"}
-    prompt = " ".join(open(os.path.join(ROOT, ".github", "workflows", "docs-review.yml"),
+    prompt = " ".join(open(os.path.join(ROOT, ".github", "workflows", "review.yml"),
                            encoding="utf-8").read().split())
     lead = "The verdict's top-level fields are these and no others:"
     assert lead in prompt, "the prompt does not list the verdict's top-level fields"

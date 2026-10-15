@@ -2,7 +2,7 @@
 """Cases for `principal_check.py`: each rule is shown to fail on the edit it exists to catch.
 
 The check reads the workflow expressions this repository ships, so the cases do the same: each one
-copies the files the check reads, applies one edit to `docs-review.yml`'s text, and runs the check
+copies the files the check reads, applies one edit to `review.yml`'s text, and runs the check
 over the copy. A case passes when the check refuses the edit and names what it refused, and the
 unedited copy has to pass.
 
@@ -39,13 +39,13 @@ def case(title):
 
 
 def check_on(edit) -> subprocess.CompletedProcess:
-    """The check over a copy of the files it reads, with `edit` applied to `docs-review.yml`."""
+    """The check over a copy of the files it reads, with `edit` applied to `review.yml`."""
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copytree(WORKFLOWS, os.path.join(tmp, ".github", "workflows"))
         shutil.copytree(os.path.join(ROOT, "caller-example"), os.path.join(tmp, "caller-example"))
         os.makedirs(os.path.join(tmp, "scripts"))
         shutil.copy(os.path.join(HERE, "publish_verdict.py"), os.path.join(tmp, "scripts"))
-        target = os.path.join(tmp, ".github", "workflows", "docs-review.yml")
+        target = os.path.join(tmp, ".github", "workflows", "review.yml")
         with open(target, encoding="utf-8") as fh:
             text = fh.read()
         edited = edit(text)

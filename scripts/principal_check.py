@@ -51,6 +51,20 @@ def condition(job: dict) -> str:
     return " ".join(str((job or {}).get("if", "")).split())
 
 
+def review_job(jobs: dict) -> dict | None:
+    """The caller's job that calls the review, whatever it is called.
+
+    A caller names its job `review` once it has moved to `review.yml`, and `docs-review` before; the
+    job id is the first segment of the required check, so a rule about the job cannot assume one of
+    the two. It is found by what it calls.
+    """
+    for spec in jobs.values():
+        called = str((spec or {}).get("uses", "")).split("@")[0].rsplit("/", 1)[-1]
+        if called in ("review.yml", "docs-review.yml"):
+            return spec
+    return None
+
+
 def caller_rules(root: str, rule) -> None:
     """Rules 5 and 5a, asked of this repository's own caller and of the one every repository copies.
 
@@ -67,7 +81,7 @@ def caller_rules(root: str, rule) -> None:
         with open(path, encoding="utf-8") as fh:
             wf = yaml.safe_load(fh) or {}
         jobs = wf.get("jobs") or {}
-        review = condition(jobs.get("docs-review"))
+        review = condition(review_job(jobs))
         rule(SENDER_TYPE not in review,
              f"{caller} skips the review job on a bot's event; the newest run then carries no "
              f"verdict and the required check waits on a status that never arrives")
@@ -92,10 +106,13 @@ def main() -> int:
     ap.add_argument("--root", default=".")
     root = os.path.abspath(ap.parse_args().root)
 
-    review = load(root, "docs-review.yml")
-    publish = load(root, "publish-verdict.yml")
+    review = load(root, "review.yml")
+    # The `verdict` job is a job of `review.yml` (it must be, for the check to be named
+    # `review / verdict`), and what it reads from the producing half arrives as the outputs of
+    # `handover`. `publish_twin_check.py` holds the frozen `publish-verdict.yml` to the same text.
+    publish = review
     produce = review["jobs"]["produce"]
-    hands_over = review["jobs"]["publish"]["with"]
+    hands_over = review["jobs"]["handover"]["outputs"]
     bad: list[str] = []
     # Counted where they run, not counted by a reader. A number in a pull request body that no tool
     # prints is a number somebody arrived at, and on #62 that number was wrong by four — asserted as
@@ -183,7 +200,7 @@ def main() -> int:
         if str(step.get("name", "")).startswith("Plan the publication"):
             plan_step = step
     if plan_step is None:
-        bad.append("publish-verdict.yml has no `Plan the publication` step to read")
+        bad.append("review.yml's `verdict` job has no `Plan the publication` step to read")
     else:
         env = plan_step.get("env") or {}
         by = " ".join(str(env.get("OVERRIDE_BY", "")).split())
@@ -207,7 +224,7 @@ def main() -> int:
     fetch = [step for step in publish["jobs"]["verdict"]["steps"]
              if str(step.get("name", "")).startswith("The approvals on this pull request")]
     rule(bool(fetch) and "type: .user.type" in str(fetch[0].get("run", "")),
-         "publish-verdict.yml does not carry each review's `user.type` to the planner, so no "
+         "review.yml's `verdict` job does not carry each review's `user.type` to the planner, so no "
          "approval can be told apart from an App's")
 
     # 4. The planner's own half of the same rule, read from the file rather than imported: this

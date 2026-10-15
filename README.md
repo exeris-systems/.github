@@ -20,10 +20,11 @@ review routine — one copy, checked out and handed to a model verbatim, so chan
 repository at once. Its rules are grouped into parts — `pr`, `docs`, `records`, `code-docs`,
 `code`, and a repository's own rules as `repo` — and a repository may run it whole or one run per
 part. What the review produces is a `verdict`: a JSON object this repository defines a
-schema for, composed over the `exeris-agents` bundle vendored under `.agents/`. `docs-review.yml`
-produces it and `publish-verdict.yml` publishes it under the `exeris-bot` identity — posting the
-review, applying the labels of `labels-from-verdict.json`, and being the required check that is red
-when the verdict is absent, invalid, `BLOCKED`, or resting on a gate that did not run.
+schema for, composed over the `exeris-agents` bundle vendored under `.agents/`. `review.yml`
+produces it, and its `verdict` job publishes it under the `exeris-bot` identity — posting the
+review, applying the labels of `labels-from-verdict.json`, and being the required check, `review /
+verdict`, that is red when the verdict is absent, invalid, `BLOCKED`, or resting on a gate that did
+not run.
 
 **Every change here changes CI for every repository.** The workflows are called `@main`, so a merge
 to `main` is a deployment and there is no staging. The gates in this repository's own
@@ -40,13 +41,18 @@ does not run is a gate nobody has tested.
     pr-body-check.yml    reusable — template headings + classification grammar + trailers
     javadoc-gate.yml     reusable — Javadoc gate: whole-module on `modules`, changed-files on `diff-modules`
     tsdoc-gate.yml       reusable — TS doc comments + API-surface goldens (tsdoc-conventions.md)
-    docs-review.yml      reusable — the review: a `plan` job names the parts to run, `produce` runs
+    review.yml           reusable — the review: a `plan` job names the parts to run, `produce` runs
                          one leg per part (one leg, `all`, when whole), `aggregate` composes the
-                         parts' verdicts, and a `publish` job (opt-in, `publish: true`) posts and
-                         gates. ADR-087 §B.5
-    publish-verdict.yml  reusable — the publishing half on its own, so more than one producer can
-                         reach it. Posts as `exeris-bot`, labels, and is the required check; a
-                         second job (opt-in, `capture: true`) writes the run's row. ADR-087 §C.13
+                         parts' verdicts, and `handover` and `verdict` (opt-in, `publish: true`)
+                         post and gate. `verdict` posts as `exeris-bot`, labels, and is the
+                         required check, `review / verdict`; `capture` (opt-in, `capture: true`)
+                         writes the run's row. ADR-087 §B.5, §C.13
+    docs-review.yml      reusable — a one-job wrapper around `review.yml`, kept while a caller still
+                         calls it, so that caller keeps the check `docs-review / publish / verdict`.
+                         Removed when the last caller has moved
+    publish-verdict.yml  reusable — the publishing jobs as they were before they moved into
+                         `review.yml`, kept only for the callers that pin an old `docs-review.yml`
+                         by commit, whose copy reaches this file at `@main`. Removed with them
     judge-review.yml     reusable — the other half of that row: on `pull_request: closed` it reads
                          what the human did with each finding and appends a judgement record beside
                          the run, never into it. ADR-087 §C.16
@@ -139,7 +145,7 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    The gate checks this bundle out beside the package and **fails if that import is missing** — a flat config cannot be injected from outside, so a lint step that did not verify the reference would only be running the package's own rules.
 
    The rest is per package and opt-in: copy `ts/tsdoc.json` beside the package's `tsconfig.json`; a library that publishes adds `typedoc` (and `@microsoft/api-extractor`), ports `ts/typedoc.base.json` and `ts/api-extractor.base.json`, and sets `typedoc: true` with `api-report: api-extractor`; an MCP server sets `api-report: mcp-tool-surface`. Both stay off until the package commits the config and the golden they read — **the first golden lands in that build's own pull request, reviewed on its own**, because a golden reviewed alongside a feature is a golden nobody reads.
-5. The review comes with the caller's `docs-review` job and needs nothing else to run: it
+5. The review comes with the caller's `review` job and needs nothing else to run: it
    produces a review and posts it, as it did before the split. **Publication is opt-in.** Adding
    `publish: true` turns on the second job, which posts the verdict under the organisation's
    identity, applies the labels of `labels-from-verdict.json`, and becomes a check that is red when
@@ -147,9 +153,26 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
 
    Leave it off until `exeris-systems/.github` has answered ADR-087 Engineering Protocol 4 on its
    own pull requests — whether the runner writes a verdict file, and what identity it posts under.
-   When you do turn it on, the check to protect is `docs-review / publish / verdict`, and **confirm
-   that name against a real run first**: a required check whose name does not exist never reports,
-   and a pull request waiting on one can never merge.
+   When you do turn it on, the check to protect is `review / verdict`, and **confirm that name
+   against a real run first**: a required check whose name does not exist never reports, and a pull
+   request waiting on one can never merge. The name is the caller's job id, a slash, and the job of
+   `review.yml` that holds the steps, so a job not called `review` reports a different name.
+
+   **A repository that still has the job `docs-review` calling `docs-review.yml`** reports
+   `docs-review / publish / verdict` and goes on reporting it, and its ruleset names that. It moves
+   in one change, and the ruleset's `include` moves with it (`rulesets/README.md`):
+
+   ```diff
+   -  docs-review:
+   +  review:
+        needs: [docs, commits, pr-body]
+        if: ${{ always() && github.event.action != 'closed' }}
+   -    uses: exeris-systems/.github/.github/workflows/docs-review.yml@main
+   +    uses: exeris-systems/.github/.github/workflows/review.yml@main
+   ```
+
+   A repository that pins `docs-review.yml` by commit takes `@main` of `review.yml` in the same
+   change, or pins the commit that carries it.
 
    Two organisation secrets carry the publication, `EXERIS_BOT_APP_ID` and
    `EXERIS_BOT_PRIVATE_KEY`. They are optional — without them the review still runs and the check

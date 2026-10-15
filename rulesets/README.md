@@ -4,12 +4,12 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-25
+last-verified: 2026-10-15
 ---
 
 # Organisation rulesets
 
-Two rulesets, applied at organisation level, versioned here because a rule that exists only in a
+Three rulesets, applied at organisation level, versioned here because a rule that exists only in a
 settings page is a rule nobody reviews (ADR-085 §C.11: shared enforcement lives in this
 repository). They are the "capability absence" half of RFC-2026-09-17 Q6: what the `exeris-agent`
 App structurally cannot do is decided by these files and by the App's permission set, not by a
@@ -18,13 +18,55 @@ sentence in `AGENTS.md`.
 | File | Targets | What it says |
 |:--|:--|:--|
 | `exeris-code-base.json` | every repository's default branch, except the three data repositories: the two inboxes (`exeris-ai-execution`, `-enterprise`), which carry ADR-086 §G.33's validator as their own required check, and `exeris-ai-execution-streams`, whose `main` the pen commits streams to directly (ADR-087 §A.1, §C.13) | no deletion, no force-push, **every change through a pull request**, **no bypass actors — the founder included**, stale approvals dismissed on push; approval of the most recent push by someone other than its pusher is one of the three switches below |
-| `exeris-code-verdict.json` | only the repositories whose `guardrails.yml` sets `publish: true` | the required check `docs-review / publish / verdict` (ADR-087 §B.8), pinned to the GitHub Actions integration so another App cannot report a check by that name |
+| `exeris-code-verdict.json` | the repositories whose `guardrails.yml` sets `publish: true` and whose review job is still called `docs-review` | the required check `docs-review / publish / verdict` (ADR-087 §B.8), pinned to the GitHub Actions integration so another App cannot report a check by that name |
+| `exeris-code-review.json` | the repositories whose `guardrails.yml` sets `publish: true` and whose review job is called `review` | the same check under its new name, `review / verdict`, with the same pin |
 
-Why two and not one: a required status check that no workflow reports leaves a pull request unable
-to merge forever. Publication is opt-in per repository (`caller-example/guardrails.yml`), so the
-check exists only where it is switched on, and the ruleset that requires it lists exactly those
-repositories. **Turning `publish: true` on in a repository and adding it to
-`exeris-code-verdict.json`'s `include` is one change**, in that order.
+Why a ruleset per check name: a required status check that no workflow reports leaves a pull request
+unable to merge forever. Publication is opt-in per repository (`caller-example/guardrails.yml`), so
+the check exists only where it is switched on, and a ruleset that requires it lists exactly those
+repositories. **`include` must list every repository whose `guardrails.yml` sets `publish: true`**,
+in the ruleset whose check name that repository's review job produces. A repository that publishes
+and is in neither file merges unprotected; one that is in the wrong file waits for a check its
+workflow never reports. **Turning `publish: true` on in a repository and adding it to a ruleset's
+`include` is one change**, in that order.
+
+### Moving a repository to `review / verdict`
+
+The check is named `<caller job> / <job>`, so the name follows the caller's job id: a job called
+`review` calling `review.yml` reports `review / verdict`, and a job called `docs-review` calling
+`docs-review.yml` reports `docs-review / publish / verdict`. A repository requires one of the two,
+never both, and both rulesets stay while any caller has not moved. For each repository, in this order:
+
+1. Open the caller change (`README.md`, step 5). Its own checks report `review / verdict`, because
+   the run that decides a pull request is the one its branch carries.
+2. Move the repository's name from `exeris-code-verdict.json`'s `include` to
+   `exeris-code-review.json`'s, and apply both files (`PUT`, below). The pull request now requires
+   the name it reports; before this it would wait for `docs-review / publish / verdict`, which its
+   branch no longer produces.
+3. Merge it. A pull request still open in that repository carries the old job id until it takes the
+   merge, so it reports the old name and waits on the new one: update its branch from the base.
+4. Confirm the name against the merge commit's run, as below.
+
+`.github` is the first repository to move, and its pull request is the one that adds
+`exeris-code-review.json`: its own required check changes at merge time, so the ruleset change and
+the merge are made together.
+
+When the last repository has moved, `exeris-code-verdict.json` is deleted and `docs-review.yml` and
+`publish-verdict.yml` go with it. `scripts/review_check_name_check.py` fails when a repository is
+listed in both files, when a file's context is not a name some caller job can produce, and when
+`.github`, whose caller is in this repository, is listed in the wrong one.
+
+To list the repositories that publish, and the job id each one's review job carries, fetch each
+`guardrails.yml` and read it; a code search finds the candidates and nothing in it is the answer,
+because a commented-out `publish: true` matches too:
+
+```sh
+gh api 'search/code?q=org:exeris-systems+%22publish:+true%22+path:.github/workflows+filename:guardrails.yml' \
+  --jq '.items[].repository.name'
+```
+
+A caller that pins `docs-review.yml` by commit is still served by the file it pinned, and that
+copy reaches `publish-verdict.yml` at `@main`: neither file is removed while one exists.
 
 ## The three switches for the second maintainer
 
@@ -52,6 +94,7 @@ An approval by a `Bot` principal never counts, and a push leaves either behind.
 # first time
 gh api -X POST orgs/exeris-systems/rulesets --input rulesets/exeris-code-base.json
 gh api -X POST orgs/exeris-systems/rulesets --input rulesets/exeris-code-verdict.json
+gh api -X POST orgs/exeris-systems/rulesets --input rulesets/exeris-code-review.json
 
 # afterwards: find the id, then PUT the file
 gh api orgs/exeris-systems/rulesets --jq '.[] | "\(.id)\t\(.name)"'

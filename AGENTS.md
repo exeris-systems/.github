@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-09-15
+last-verified: 2026-10-15
 ---
 
 # exeris-systems/.github: the shared enforcement for the documentation standards
@@ -61,7 +61,8 @@ defect in the gate. Both are worth fixing; suppressing the check is neither. `co
 | `docs-guardrails-review.md`, `pr-review.patch.md` | The `[L2]` review routine and its router patch |
 | `.agents/` | The pinned, digest-verified copy of `exeris-agents` and the verdict schema composed over it |
 | `labels-from-verdict.json` | Which verdict field applies which label from `labels.yml` |
-| `.github/workflows/publish-verdict.yml` | The publication half, reusable — any L2 producer calls it (§B.11) |
+| `.github/workflows/review.yml` | The review, reusable: `plan`, `produce`, `aggregate`, then `handover`, `verdict` (the required check, `review / verdict`) and `capture` |
+| `.github/workflows/docs-review.yml`, `publish-verdict.yml` | The old entry point (a one-job wrapper, job `publish`, so its callers keep `docs-review / publish / verdict`) and the publishing jobs as they were; both go when the last caller has moved |
 | `scripts/publish_verdict.py` | What that workflow decides: it plans, and never writes |
 | `scripts/publish_verdict_suite.py` | One case per red path §B.8 names — the publish step's own gate |
 

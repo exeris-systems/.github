@@ -1,5 +1,13 @@
 # Reusable: publish one L2 review verdict under the organisation's identity — ADR-087 §B.5-B.11.
 #
+# FROZEN, AND KEPT FOR ONE REASON. The `verdict` and `capture` jobs below now live in `review.yml`,
+# because the required check is named `<caller job> / <job>` and a job reached through a nested call
+# adds a segment: `review / verdict` needs the steps in the file the caller calls. The callers that
+# pin an old commit of `docs-review.yml` still reach THIS file at `@main`, so it has to keep working
+# until they move, and a change here reaches them at once. `scripts/review_check_name_check.py`
+# holds the two jobs here to the text of `review.yml`'s, so a fix made in one cannot be missed in
+# the other. Nothing new calls this file; it is removed with `docs-review.yml`.
+#
 # THIS IS PREPARATION FOR §B.11, NOT §B.11. The section requires a repository's own routine and the
 # organisation's to publish "under one identity and one contract", which is impossible while the
 # publishing half lives inside one producer's workflow — so it lives here, and `docs-review.yml`
@@ -249,10 +257,10 @@ permissions:
 
 jobs:
   # The job name is the last segment of the check name, and the check name is what a branch
-  # protection rule names. Through `docs-review.yml` this reads `docs-review / publish / verdict`;
-  # called straight from a repository's own `guardrails.yml` it reads `<job> / verdict`. CONFIRM THE
-  # NAME AGAINST A REAL RUN BEFORE MAKING IT REQUIRED — a required check whose name does not exist
-  # never reports, and a pull request waiting on one can never merge.
+  # protection rule names. Through an old `docs-review.yml` this reads `docs-review / publish /
+  # verdict`; called straight from a repository's own `guardrails.yml` it reads `<job> / verdict`.
+  # CONFIRM THE NAME AGAINST A REAL RUN BEFORE MAKING IT REQUIRED — a required check whose name
+  # does not exist never reports, and a pull request waiting on one can never merge.
   verdict:
     runs-on: ubuntu-latest
     # WHAT THE PLAN DECIDED, CARRIED OUT OF THE JOB. `verdict_source` is the transport that carried

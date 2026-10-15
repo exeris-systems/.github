@@ -410,7 +410,7 @@ def _(_root):
         with open(os.path.join(ROOT, ".github", "workflows", name), encoding="utf-8") as fh:
             return yaml.safe_load(fh)
 
-    produce = (workflow("docs-review.yml").get("jobs") or {}).get("produce") or {}
+    produce = (workflow("review.yml").get("jobs") or {}).get("produce") or {}
     steps = produce.get("steps") or []
     assert any(str(step.get("id") or "") == SURFACE_STEP for step in steps), \
         f"the produce job carries no step with `id: {SURFACE_STEP}`, so every value below is empty"

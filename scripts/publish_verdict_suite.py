@@ -1175,7 +1175,7 @@ def main() -> int:
 
     @case("the routine's mandatory list and the planner's default are the same list")
     def _(tmp):
-        # Two copies of one rule, and the header of `docs-review.yml` claims "there is exactly one
+        # Two copies of one rule, and the header of `review.yml` claims "there is exactly one
         # copy". This repository has `label_map_check.py` and `registry_check.py` for exactly this
         # shape of pair; without an assertion the sentence and the default drift and nobody notices.
         routine = os.path.join(root, "docs-guardrails-review.md")
