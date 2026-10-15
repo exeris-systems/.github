@@ -41,13 +41,14 @@ The check is named `<caller job> / <job>`, so the name follows the caller's job 
    the run that decides a pull request is the one its branch carries.
 2. Merge it. A pull request still open in that repository carries the old job id until it takes the
    merge, so it reports the old name: update its branch from the base.
-3. Confirm the name against the merge commit's run, as below.
+3. Confirm the name against the run on the caller pull request's last head, as below. The review
+   runs on pull requests, not on the push to the default branch, so the merge commit has no such run.
 4. Add the repository to `include` in `exeris-code-verdict.json` and apply the file (`PUT`, below).
    Only now do its pull requests require the name its caller reports.
 
 `.github` is the first repository: its caller is in this repository, so the pull request that
 introduces the job `review` also lists `.github` in the file, and the owner applies the file after
-that merge, once the merge commit's run reports `review / verdict`.
+that merge, once the run on that pull request's last head reported `review / verdict`.
 
 When the last repository has moved, `docs-review.yml` and `publish-verdict.yml` are deleted.
 `scripts/review_check_name_check.py` fails when the ruleset requires anything but exactly
