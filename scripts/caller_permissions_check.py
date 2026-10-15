@@ -25,7 +25,7 @@ def declared(path: str, seen: set[str] | None = None) -> dict:
     A reusable workflow may call another, and the caller's block still has to be the union of
     everything down the chain — GitHub rejects the file at the top, in the adopting repository, with
     no logs. Reading one level was right while no workflow here nested; `docs-review.yml` now calls
-    `publish-verdict.yml`, and a checker that stops at the first level answers "0 problems" to the
+    `review.yml`, and a checker that stops at the first level answers "0 problems" to the
     question it exists to ask. The union happens to hold today, which is exactly when a gate quietly
     stops covering its subject.
     """

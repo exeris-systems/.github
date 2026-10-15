@@ -73,10 +73,10 @@ def main() -> int:
     reviewer_has = packages(checks)
 
     # THE INTERPRETER, asked of the routine rather than of this repository's own workflow:
-    # `repo-checks` runs inside `docs-review.yml`'s produce job, and a caller cannot put a step
+    # `repo-checks` runs inside `review.yml`'s produce job, and a caller cannot put a step
     # there. Read from the routine as it ships, for the reason `gate_vocabulary_check.py` reads the
     # mapping that ships — a guarantee is worth what the file says, not what a comment claims.
-    routine = os.path.join(root, ".github", "workflows", "docs-review.yml")
+    routine = os.path.join(root, ".github", "workflows", "review.yml")
     bad_interp: list[str] = []
     if os.path.exists(routine):
         with open(routine, encoding="utf-8") as fh:
@@ -87,10 +87,10 @@ def main() -> int:
         runs_checks = next((i for i, st in enumerate(steps)
                             if "own checks" in str(st.get("name") or "")), None)
         if runs_checks is None:
-            bad_interp.append("docs-review.yml's produce job has no step running `repo-checks`")
+            bad_interp.append("review.yml's produce job has no step running `repo-checks`")
         elif sets_up is None or sets_up > runs_checks:
             bad_interp.append(
-                "docs-review.yml's produce job runs `repo-checks` without setting Python up first, "
+                "review.yml's produce job runs `repo-checks` without setting Python up first, "
                 "so a caller's `pip install` goes to the runner image's system interpreter and "
                 "reports an older package satisfied instead of resolving the one a job resolves")
 

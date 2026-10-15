@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cases for `review_inputs_check.py` and the restored-path filter it holds the workflow to.
 
-The filter is run, not read: the `jq` program is taken out of `docs-review.yml` as written and
+The filter is run, not read: the `jq` program is taken out of `review.yml` as written and
 executed over a pull request's files, so a case fails on the filter the job runs rather than on a
 copy of it. The rest mutate the workflow and expect the check to name what went missing.
 
@@ -21,7 +21,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-WORKFLOW = os.path.join(ROOT, ".github", "workflows", "docs-review.yml")
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "review.yml")
 sys.path.insert(0, HERE)
 import review_inputs_check as ric  # noqa: E402
 
@@ -68,7 +68,7 @@ def check_on(edit) -> subprocess.CompletedProcess:
         os.makedirs(target)
         with open(WORKFLOW, encoding="utf-8") as fh:
             text = edit(fh.read())
-        with open(os.path.join(target, "docs-review.yml"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(target, "review.yml"), "w", encoding="utf-8") as fh:
             fh.write(text)
         return subprocess.run([sys.executable, os.path.join(HERE, "review_inputs_check.py"),
                                "--root", tmp], capture_output=True, text=True)

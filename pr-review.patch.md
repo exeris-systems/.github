@@ -10,7 +10,7 @@ last-verified: 2026-09-05
 # Patch for `pr-review.md` (Project routine) — ADR-085 §J.33
 
 > **2026-09-05.** Edit 1 below is now also implemented in CI, as
-> `.github/workflows/docs-review.yml` in this repository. §J.33 placed the step inside `pr-review.md`,
+> `.github/workflows/review.yml` in this repository. §J.33 placed the step inside `pr-review.md`,
 > a Project document outside git, which meant the L2 layer ran only in Cowork sessions and never on a
 > pull request. The workflow is the enforcement; this patch remains the Project-side half, so a review
 > conducted in a session applies the same routine. Both read the same

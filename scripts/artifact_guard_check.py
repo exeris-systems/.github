@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """A guard whose condition cannot fail is not a guard — ADR-087 §B.10.
 
-`publish-verdict.yml` fetches each artefact behind `if: inputs.<name>-artifact != ''`, which says
-the caller omits the name when there is nothing to fetch. That is a contract between two files, and
+The `verdict` job of `review.yml` fetches each artefact behind
+`if: needs.handover.outputs.<name>-artifact != ''`, which says the `handover` job leaves the name
+empty when there is nothing to fetch. That is a contract between two files, and
 only one of them can keep it: if the caller builds the name from the pull-request number alone, the
 input is never empty, the step always runs, and a skipped producing job leaves it fetching an
 artefact that was never uploaded.
 
-Neither file is wrong by itself. The pair is. So this reads both: every `*-artifact` input the
-routine passes must be conditional on something the producing job reports, and every one the publish
-half consumes must be guarded on being non-empty.
+Neither job is wrong by itself. The pair is. So this reads both: every `*-artifact` output the
+`handover` job carries must be conditional on something the producing job reports, and every one the
+publishing jobs consume must be guarded on being non-empty.
 
 Usage: artifact_guard_check.py [--root .]
 """
@@ -21,8 +22,11 @@ import sys
 
 import yaml
 
-ROUTINE = "docs-review.yml"
-PUBLISH = "publish-verdict.yml"
+ROUTINE = "review.yml"
+# The publishing jobs are jobs of the routine's own file: `verdict` must be one, for the required
+# check to be named `review / verdict`. `publish_twin_check.py` holds `publish-verdict.yml` to them.
+PUBLISH = "review.yml"
+HANDOVER = "needs.handover.outputs"
 
 
 def load(root: str, name: str) -> dict:
@@ -41,18 +45,20 @@ def main() -> int:
     routine, publish = load(root, ROUTINE), load(root, PUBLISH)
     bad: list[str] = []
 
-    handed = (routine.get("jobs", {}).get("publish", {}).get("with") or {})
+    handed = (routine.get("jobs", {}).get("handover", {}).get("outputs") or {})
     names = sorted(k for k in handed if k.endswith("-artifact"))
     if not names:
-        print("artifact_guard_check: the routine hands over no artefact names")
-        return 0
+        print("::error::artifact_guard_check: the `handover` job carries no artefact names, so "
+              "there is nothing to compare — it moved, and a check that cannot find what it "
+              "checks is not a check")
+        return 1
 
     produced = set((routine.get("jobs", {}).get("produce", {}).get("outputs") or {}))
     for key in names:
         expr = flat(handed[key])
         if "needs.produce.outputs." not in expr:
             bad.append(f"`{key}` is handed over unconditionally, so the publish half's "
-                       f"`inputs.{key} != ''` can never be false and a skipped producing job "
+                       f"`{HANDOVER}.{key} != ''` can never be false and a skipped producing job "
                        f"leaves it fetching an artefact nobody uploaded")
             continue
         named = [o for o in produced if f"needs.produce.outputs.{o}" in expr]
@@ -70,7 +76,7 @@ def main() -> int:
              for job in (publish.get("jobs") or {}).values()
              for step in ((job or {}).get("steps") or [])]
     for key in names:
-        ref = f"inputs.{key}"
+        ref = f"{HANDOVER}.{key}"
         users = [s for s in steps if ref in flat(s.get("with") or {})]
         for step in users:
             if ref not in flat(step.get("if") or ""):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The gate-result mapping speaks the verdict's vocabulary — and keeps speaking it.
 
-`docs-review.yml` hands the L1 gate results to the reviewer and tells it to copy them into
+`review.yml` hands the L1 gate results to the reviewer and tells it to copy them into
 `checks_run` as they are. They arrive in GitHub's words (`success`, `failure`, `cancelled`) and
 `verdict.base.schema.json` requires `pass`, `fail`, `not-run` under a `check` key, so the workflow
 maps between them. Two things can drift apart afterwards and neither shows up until a verdict is
@@ -33,7 +33,7 @@ def jq_program(workflow: str) -> str:
     m = re.search(r"jq -c '(\[to_entries\[\].*?)'\s*>", text, re.S)
     if not m:
         raise SystemExit("gate_vocabulary_check: the mapping is not where this check looks for it "
-                         "in docs-review.yml — it moved, and a check that cannot find what it "
+                         "in review.yml — it moved, and a check that cannot find what it "
                          "checks is not a check")
     return m.group(1)
 
@@ -65,7 +65,7 @@ def main() -> int:
     p.add_argument("--root", default=".")
     args = p.parse_args()
 
-    program = jq_program(os.path.join(args.root, ".github", "workflows", "docs-review.yml"))
+    program = jq_program(os.path.join(args.root, ".github", "workflows", "review.yml"))
     allowed = enum_of(vendored_base(args.root))
     sample = json.dumps({f"gate-{i}": v for i, v in enumerate(GITHUB_RESULTS)})
     out = subprocess.run(["jq", "-c", program], input=sample, capture_output=True, text=True)

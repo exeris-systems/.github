@@ -58,7 +58,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=".")
     root = os.path.abspath(ap.parse_args().root)
-    with open(os.path.join(root, ".github", "workflows", "docs-review.yml"), encoding="utf-8") as fh:
+    with open(os.path.join(root, ".github", "workflows", "review.yml"), encoding="utf-8") as fh:
         routine = yaml.safe_load(fh)
     steps = (routine.get("jobs", {}).get("produce", {}).get("steps") or [])
     renders = [s for s in steps if str(s.get("id") or "") == PROMPT_STEP]

@@ -35,8 +35,8 @@ GUARDRAILS = """
 name: guardrails
 on: { pull_request: {} }
 jobs:
-  docs-review:
-    uses: ./.github/workflows/docs-review.yml
+  review:
+    uses: ./.github/workflows/review.yml
     with:
       repo-checks: >-
         pip install --quiet pyyaml jsonschema;
@@ -52,7 +52,7 @@ jobs:
 """
 
 ROUTINE = """
-name: docs-review
+name: review
 on: { workflow_call: {} }
 jobs:
   produce:
@@ -73,7 +73,7 @@ def build(root: str, guardrails: str = GUARDRAILS, routine: str = ROUTINE) -> No
     with open(os.path.join(d, "guardrails.yml"), "w", encoding="utf-8") as fh:
         fh.write(guardrails)
     if routine is not None:
-        with open(os.path.join(d, "docs-review.yml"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(d, "review.yml"), "w", encoding="utf-8") as fh:
             fh.write(routine)
 
 
@@ -125,7 +125,7 @@ def _(root):
 @case("and so is setting it up afterwards — order is the property")
 def _(root):
     build(root, routine="""
-name: docs-review
+name: review
 on: { workflow_call: {} }
 jobs:
   produce:
@@ -145,7 +145,7 @@ jobs:
 @case("a routine with no step running repo-checks at all is a broken rule")
 def _(root):
     build(root, routine="""
-name: docs-review
+name: review
 on: { workflow_call: {} }
 jobs:
   produce:
@@ -167,8 +167,8 @@ def _(root):
 name: guardrails
 on: { pull_request: {} }
 jobs:
-  docs-review:
-    uses: ./.github/workflows/docs-review.yml
+  review:
+    uses: ./.github/workflows/review.yml
 """)
     code, out = run(root)
     assert code == 0, out

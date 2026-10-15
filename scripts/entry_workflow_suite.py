@@ -24,7 +24,7 @@ CASES = [
     ("the entry workflow itself, among others",
      ENTRY, REPO, [".github/workflows/guardrails.yml", "README.md"], "true"),
     ("a reusable workflow the run only calls",
-     ENTRY, REPO, [".github/workflows/docs-review.yml"], "false"),
+     ENTRY, REPO, [".github/workflows/review.yml"], "false"),
     ("the entry workflow of a DIFFERENT repository, same file name",
      "exeris-systems/exeris-docs/.github/workflows/guardrails.yml@refs/pull/9/merge",
      "exeris-systems/exeris-docs", [".github/workflows/guardrails.yml"], "true"),

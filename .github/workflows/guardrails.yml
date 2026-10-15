@@ -18,7 +18,7 @@ concurrency:
   # `unlabeled` event that starts a second run — which under a plain `cancel-in-progress: true`
   # cancels the run still finishing the publication that triggered it. The two overlap to the
   # second, so a run whose every job came out `success` can still be recorded as `cancelled`; a
-  # review a few seconds slower loses its `publish / verdict` job to the cancel, and a cancelled
+  # review a few seconds slower loses its `verdict` job to the cancel, and a cancelled
   # required
   # check blocks the pull request for a reason no human can act on.
   #
@@ -33,7 +33,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
-  # The union the docs-review job's chain declares, which `caller_permissions_check.py` now verifies
+  # The union the review job's chain declares, which `caller_permissions_check.py` now verifies
   # by walking the nested call rather than stopping at the first level. `issues: read` lets the
   # routine see the debt issues of issue-conventions.md rule 6; `id-token: write` is the runner
   # action's own token exchange. Neither job writes with them — every write goes through the App.
@@ -54,13 +54,12 @@ jobs:
   #
   # `verdict-authors` is not passed and stays empty, which keeps §B.10's fenced fallback off: the
   # only identity it could otherwise trust is one every workflow in this repository can write under.
-  # It gets a value, through a new `docs-review.yml` input, when a run has shown what that value is.
+  # It gets a value, through a new `review.yml` input, when a run has shown what that value is.
   #
-  # The relative path checks this pull request's `docs-review.yml`. The publishing half still comes
-  # from `@main` — a reusable workflow cannot name another by relative path — so this run tests the
-  # producing half as proposed and the deciding half as released. That limit is named in
-  # `publish-verdict.yml`'s own header and is not closed here.
-  docs-review:
+  # The relative path checks this pull request's `review.yml`, `verdict` job included: the job that
+  # decides is a job of that file, so this run tests the deciding half as proposed. The job id is
+  # the first segment of the required check, `review / verdict`.
+  review:
     # WAITS ON THE L1 GATES, and that is an ordering decision rather than a dependency. A review is
     # the layer that judges what the gates cannot, so running it on a pull request whose commit
     # message does not lint spends eight minutes of a model to say something a script already said.
@@ -85,7 +84,7 @@ jobs:
     # `always()` stands for every event: a review that vanishes from the checks because its gates
     # went red is the failure mode this file exists to prevent.
     if: ${{ always() }}
-    uses: ./.github/workflows/docs-review.yml
+    uses: ./.github/workflows/review.yml
     with:
       publish: true
       # THE ROUTINE IN PARTS, here first, as publication was. This repository captures
@@ -141,6 +140,8 @@ jobs:
         python3 scripts/review_plan_suite.py;
         python3 scripts/review_aggregate_suite.py;
         python3 scripts/caller_permissions_check.py;
+        python3 scripts/review_check_name_check.py --root .;
+        python3 scripts/review_check_name_check_suite.py;
         python3 scripts/comment_history_suite.py;
         python3 scripts/gate_vocabulary_check_suite.py;
         python3 scripts/review_surface_suite.py;
@@ -285,6 +286,17 @@ jobs:
       - name: The environment comparison, one case per way of getting it wrong
         if: ${{ !cancelled() }}
         run: python scripts/repo_checks_env_check_suite.py
+      # The name of the required check is a function of a caller's job id, the layout of the workflow
+      # it calls and the string a ruleset requires — three places that part silently, and a required
+      # check whose name no run produces leaves every pull request waiting for ever. This derives the
+      # name from the files, compares the wrapper and the frozen copy with `review.yml`, and reads
+      # the rulesets.
+      - name: The required check's name is the one the callers and the rulesets say
+        if: ${{ !cancelled() }}
+        run: |
+          pip install --quiet pyyaml
+          python scripts/review_check_name_check.py --root .
+          python scripts/review_check_name_check_suite.py
       # An artefact name and the guard that reads it live in two files. Each is correct alone and
       # the pair decides whether a skipped producing job leaves the publish half fetching something
       # nobody uploaded, so the pair is what this reads.

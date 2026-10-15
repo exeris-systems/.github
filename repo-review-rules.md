@@ -28,7 +28,7 @@ R1. **A required check may not go green without a stated reason.** Any change th
     `publish_verdict.py` conclude `green` on a path where no verdict was read → `[HARD BLOCK]`
     unless the pull request names the §B.8 clause that permits it. Green is stated, never inferred,
     and this is the file where a green that nobody stated is written. Measured 2026-09-17: a pull
-    request changing only `scripts/*.py` took `docs-review / publish / verdict` to **pass** with no
+    request changing only `scripts/*.py` took the required check to **pass** with no
     review and no comment — the deterministic path filter answered "nothing to read" and the check
     reported that as a pass.
 
