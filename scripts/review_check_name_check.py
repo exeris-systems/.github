@@ -18,7 +18,8 @@ What is asserted:
 3. `publish-verdict.yml`, kept for callers that pin an old `docs-review.yml` by commit, carries the
    same `verdict` and `capture` jobs as `review.yml` once the one substitution between them is made.
 4. The caller in this repository and the caller example call `review.yml` from a job called `review`.
-5. Each ruleset names a check some caller can produce, and no repository sits in two of them.
+5. The one ruleset requires exactly `review / verdict` from the Actions integration, and its
+   `include` lists `.github` and only repositories whose caller job is `review`.
 
 Usage: review_check_name_check.py [--root .]
 """
@@ -202,29 +203,28 @@ def main() -> int:
              "caller-example/guardrails.yml has no job `review` calling review.yml@main; every "
              "repository copies it, and its job id is the first segment of the check")
 
-    # 5. The rulesets.
-    produced = {"exeris-code-review.json": NEW_NAME, "exeris-code-verdict.json": OLD_NAME}
-    includes: dict[str, set[str]] = {}
-    for path in sorted(glob.glob(os.path.join(root, "rulesets", "exeris-code-*.json"))):
-        base = os.path.basename(path)
-        if base not in produced:
-            continue
+    # 5. The ruleset: one file, one name, and the repositories whose caller job is `review`.
+    path = os.path.join(root, "rulesets", "exeris-code-verdict.json")
+    if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
             ruleset = json.load(fh)
         contexts = [(c["context"], c.get("integration_id"))
                     for r in ruleset["rules"] if r["type"] == "required_status_checks"
                     for c in r["parameters"]["required_status_checks"]]
-        rule(contexts == [(produced[base], INTEGRATION)],
-             f"{base} requires {contexts}, not `{produced[base]}` from the Actions integration "
-             f"({INTEGRATION}); a repository requires one name, never both")
-        includes[base] = set(ruleset["conditions"]["repository_name"]["include"])
-    if len(includes) == 2:
-        both = sorted(includes["exeris-code-review.json"] & includes["exeris-code-verdict.json"])
-        rule(not both, f"{both} sit in both rulesets, so each requires both names and one never reports")
-        rule(".github" in includes["exeris-code-review.json"]
-             and ".github" not in includes["exeris-code-verdict.json"],
-             "`.github` calls review.yml from a job `review`, so it belongs to exeris-code-review.json "
-             "and not to exeris-code-verdict.json")
+        rule(contexts == [(NEW_NAME, INTEGRATION)],
+             f"exeris-code-verdict.json requires {contexts}, not exactly `{NEW_NAME}` from the "
+             f"Actions integration ({INTEGRATION}); a repository requires one name, never both")
+        include = set(ruleset["conditions"]["repository_name"]["include"])
+        rule(".github" in include,
+             "`.github` calls review.yml from a job `review`, so it belongs to the `include` of "
+             "exeris-code-verdict.json")
+        # `include` lists exactly the repositories whose caller job is `review`. This checkout
+        # sees one caller, its own; the others are read from their repositories when they move.
+        rule(".github" not in include
+             or str(((own.get("jobs") or {}).get("review") or {}).get("uses", ""))
+             == "./.github/workflows/review.yml",
+             "a repository in the `include` of exeris-code-verdict.json does not call review.yml "
+             "from a job `review`, so its required check is never reported")
 
     for said in bad:
         print(f"::error::review_check_name_check: {said}")

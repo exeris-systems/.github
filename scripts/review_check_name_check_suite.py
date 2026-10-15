@@ -166,8 +166,8 @@ def _(tmp):
 @case("a ruleset that requires the wrong name is refused")
 def _(tmp):
     copy(tmp)
-    edit(tmp, "rulesets/exeris-code-review.json", '"review / verdict"', '"review / publish / verdict"')
-    refused(tmp, "exeris-code-review.json requires")
+    edit(tmp, "rulesets/exeris-code-verdict.json", '"review / verdict"', '"docs-review / publish / verdict"')
+    refused(tmp, "exeris-code-verdict.json requires")
 
 
 @case("a ruleset that requires a check from another integration is refused")
@@ -177,23 +177,31 @@ def _(tmp):
     refused(tmp, "exeris-code-verdict.json requires")
 
 
-@case("a repository in both rulesets is refused: it would require two names and one never reports")
+@case("`.github` missing from the ruleset's include is refused: its own caller reports the check")
 def _(tmp):
     copy(tmp)
-    path = os.path.join(tmp, "rulesets", "exeris-code-review.json")
+    edit(tmp, "rulesets/exeris-code-verdict.json", '"include": [".github"]', '"include": ["exeris-docs"]')
+    refused(tmp, "belongs to the `include`")
+
+
+@case("a second required context is refused: a repository requires one name, never both")
+def _(tmp):
+    copy(tmp)
+    path = os.path.join(tmp, "rulesets", "exeris-code-verdict.json")
     with open(path, encoding="utf-8") as fh:
         ruleset = json.load(fh)
-    ruleset["conditions"]["repository_name"]["include"].append("exeris-docs")
+    ruleset["rules"][0]["parameters"]["required_status_checks"].append(
+        {"context": "docs-review / publish / verdict", "integration_id": 15368})
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(ruleset, fh)
-    refused(tmp, "sit in both rulesets")
+    refused(tmp, "exeris-code-verdict.json requires")
 
 
-@case("`.github` left in the old ruleset is refused: its own caller reports the new name")
+@case("`.github` in include while its caller job is not `review` is refused")
 def _(tmp):
     copy(tmp)
-    edit(tmp, "rulesets/exeris-code-verdict.json", '"exeris-agent-harness",', '".github",\n        "exeris-agent-harness",')
-    refused(tmp, "belongs to exeris-code-review.json")
+    edit(tmp, WF + "guardrails.yml", "\n  review:\n    # WAITS ON", "\n  docs-review:\n    # WAITS ON")
+    refused(tmp, "does not call review.yml from a job `review`")
 
 
 def main() -> int:

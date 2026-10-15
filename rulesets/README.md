@@ -9,7 +9,7 @@ last-verified: 2026-10-15
 
 # Organisation rulesets
 
-Three rulesets, applied at organisation level, versioned here because a rule that exists only in a
+Two rulesets, applied at organisation level, versioned here because a rule that exists only in a
 settings page is a rule nobody reviews (ADR-085 §C.11: shared enforcement lives in this
 repository). They are the "capability absence" half of RFC-2026-09-17 Q6: what the `exeris-agent`
 App structurally cannot do is decided by these files and by the App's permission set, not by a
@@ -18,43 +18,43 @@ sentence in `AGENTS.md`.
 | File | Targets | What it says |
 |:--|:--|:--|
 | `exeris-code-base.json` | every repository's default branch, except the three data repositories: the two inboxes (`exeris-ai-execution`, `-enterprise`), which carry ADR-086 §G.33's validator as their own required check, and `exeris-ai-execution-streams`, whose `main` the pen commits streams to directly (ADR-087 §A.1, §C.13) | no deletion, no force-push, **every change through a pull request**, **no bypass actors — the founder included**, stale approvals dismissed on push; approval of the most recent push by someone other than its pusher is one of the three switches below |
-| `exeris-code-verdict.json` | the repositories whose `guardrails.yml` sets `publish: true` and whose review job is still called `docs-review` | the required check `docs-review / publish / verdict` (ADR-087 §B.8), pinned to the GitHub Actions integration so another App cannot report a check by that name |
-| `exeris-code-review.json` | the repositories whose `guardrails.yml` sets `publish: true` and whose review job is called `review` | the same check under its new name, `review / verdict`, with the same pin |
+| `exeris-code-verdict.json` | the repositories whose `guardrails.yml` calls `review.yml` from a job `review`: `.github` today | the required check `review / verdict` (ADR-087 §B.8), pinned to the GitHub Actions integration so another App cannot report a check by that name |
 
-Why a ruleset per check name: a required status check that no workflow reports leaves a pull request
-unable to merge forever. Publication is opt-in per repository (`caller-example/guardrails.yml`), so
-the check exists only where it is switched on, and a ruleset that requires it lists exactly those
-repositories. **`include` must list every repository whose `guardrails.yml` sets `publish: true`**,
-in the ruleset whose check name that repository's review job produces. A repository that publishes
-and is in neither file merges unprotected; one that is in the wrong file waits for a check its
-workflow never reports. **Turning `publish: true` on in a repository and adding it to a ruleset's
-`include` is one change**, in that order.
+`exeris-code-verdict` is the only source of the required review check, for every publishing
+repository: no per-repository branch protection and no repository ruleset carries it.
+
+Why `include` is a list and not `~ALL`: a required status check that no workflow reports leaves a
+pull request unable to merge forever. Publication is opt-in per repository
+(`caller-example/guardrails.yml`), so the check exists only where it is switched on, and only once
+the repository's caller job is `review`. **`include` lists only repositories whose `guardrails.yml`
+calls `review.yml` from a job `review`.** The end state is every repository whose `guardrails.yml`
+sets `publish: true`. Until a repository is listed it has no required review check; one that is
+listed while its caller still reports `docs-review / publish / verdict` could never merge.
 
 ### Moving a repository to `review / verdict`
 
 The check is named `<caller job> / <job>`, so the name follows the caller's job id: a job called
 `review` calling `review.yml` reports `review / verdict`, and a job called `docs-review` calling
-`docs-review.yml` reports `docs-review / publish / verdict`. A repository requires one of the two,
-never both, and both rulesets stay while any caller has not moved. For each repository, in this order:
+`docs-review.yml` reports `docs-review / publish / verdict`. For each repository, in this order:
 
 1. Open the caller change (`README.md`, step 5). Its own checks report `review / verdict`, because
    the run that decides a pull request is the one its branch carries.
-2. Move the repository's name from `exeris-code-verdict.json`'s `include` to
-   `exeris-code-review.json`'s, and apply both files (`PUT`, below). The pull request now requires
-   the name it reports; before this it would wait for `docs-review / publish / verdict`, which its
-   branch no longer produces.
-3. Merge it. A pull request still open in that repository carries the old job id until it takes the
-   merge, so it reports the old name and waits on the new one: update its branch from the base.
-4. Confirm the name against the merge commit's run, as below.
+2. Merge it. A pull request still open in that repository carries the old job id until it takes the
+   merge, so it reports the old name: update its branch from the base.
+3. Confirm the name against the run on the caller pull request's last head, as below. The review
+   runs on pull requests, not on the push to the default branch, so the merge commit has no such run.
+4. Add the repository to `include` in `exeris-code-verdict.json` and apply the file (`PUT`, below).
+   Only now do its pull requests require the name its caller reports.
 
-`.github` is the first repository to move, and its pull request is the one that adds
-`exeris-code-review.json`: its own required check changes at merge time, so the ruleset change and
-the merge are made together.
+`.github` is the first repository: its caller is in this repository, so the pull request that
+introduces the job `review` also lists `.github` in the file, and the owner applies the file after
+that merge, once the run on that pull request's last head reported `review / verdict`.
 
-When the last repository has moved, `exeris-code-verdict.json` is deleted and `docs-review.yml` and
-`publish-verdict.yml` go with it. `scripts/review_check_name_check.py` fails when a repository is
-listed in both files, when a file's context is not a name some caller job can produce, and when
-`.github`, whose caller is in this repository, is listed in the wrong one.
+When the last repository has moved, `docs-review.yml` and `publish-verdict.yml` are deleted.
+`scripts/review_check_name_check.py` fails when the ruleset requires anything but exactly
+`review / verdict` from the Actions integration, when `.github` is not in `include`, and when a
+repository in `include` that the checkout can see (`.github` itself) does not call `review.yml` from
+a job `review`.
 
 To list the repositories that publish, and the job id each one's review job carries, fetch each
 `guardrails.yml` and read it; a code search finds the candidates and nothing in it is the answer,
@@ -94,14 +94,13 @@ An approval by a `Bot` principal never counts, and a push leaves either behind.
 # first time
 gh api -X POST orgs/exeris-systems/rulesets --input rulesets/exeris-code-base.json
 gh api -X POST orgs/exeris-systems/rulesets --input rulesets/exeris-code-verdict.json
-gh api -X POST orgs/exeris-systems/rulesets --input rulesets/exeris-code-review.json
 
 # afterwards: find the id, then PUT the file
 gh api orgs/exeris-systems/rulesets --jq '.[] | "\(.id)\t\(.name)"'
-gh api -X PUT orgs/exeris-systems/rulesets/<id> --input rulesets/exeris-code-base.json
+gh api -X PUT orgs/exeris-systems/rulesets/<id> --input rulesets/exeris-code-verdict.json
 ```
 
-Confirm the check name against a real run before the verdict ruleset goes live on a repository:
+Confirm the check name against a real run before a repository is added to the verdict ruleset:
 
 ```sh
 gh api repos/exeris-systems/<repo>/commits/<head-sha>/check-runs --jq '.check_runs[].name'
