@@ -159,8 +159,9 @@ docs/adr/ADR-087.link.md           link stub for the ADR this enforcement implem
    `review.yml` that holds the steps, so a job not called `review` reports a different name.
 
    **A repository that still has the job `docs-review` calling `docs-review.yml`** reports
-   `docs-review / publish / verdict` and goes on reporting it, and its ruleset names that. It moves
-   in one change, and the ruleset's `include` moves with it (`rulesets/README.md`):
+   `docs-review / publish / verdict` and goes on reporting it; no ruleset requires that name. It
+   moves in one change, and is added to the ruleset's `include` only after that change has merged
+   (`rulesets/README.md`):
 
    ```diff
    -  docs-review:
