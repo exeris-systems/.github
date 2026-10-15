@@ -115,7 +115,7 @@ def _(tmp):
     copy(tmp)
     edit(tmp, WF + "docs-review.yml",
          "      exeris_inbox_private_key: ${{ secrets.exeris_inbox_private_key }}\n", "")
-    refused(tmp, "does not hand secret `exeris_inbox_private_key`")
+    refused(tmp, "does not hand 1 secret(s) to review.yml unchanged")
 
 
 @case("a fix made to review.yml's `verdict` and not to publish-verdict.yml's is refused, step named")

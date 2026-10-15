@@ -165,20 +165,22 @@ def main() -> int:
                 rule((r_in[key] or {}).get(field) == (w_in[key] or {}).get(field),
                      f"input `{key}` differs in `{field}` between docs-review.yml and review.yml, so "
                      f"the same caller behaves differently through the two")
+        # Messages about secrets carry counts, not names: the names are in both files, and a
+        # check's log is no place to print anything read from a `secrets` block.
         rule(set(r_sec) == set(w_sec),
-             f"docs-review.yml and review.yml declare different secrets: "
-             f"{sorted(set(r_sec) ^ set(w_sec))}")
-        for key in sorted(set(r_sec) & set(w_sec)):
-            rule(bool((r_sec[key] or {}).get("required")) == bool((w_sec[key] or {}).get("required")),
-                 f"secret `{key}` is required in one of docs-review.yml and review.yml and not the other")
+             f"docs-review.yml and review.yml declare different secrets "
+             f"({len(set(r_sec) ^ set(w_sec))} declared in only one)")
+        unequal = [k for k in set(r_sec) & set(w_sec)
+                   if bool((r_sec[k] or {}).get("required")) != bool((w_sec[k] or {}).get("required"))]
+        rule(not unequal,
+             f"{len(unequal)} secret(s) required in one of docs-review.yml and review.yml and not the other")
         given = (jobs.get("publish") or {}).get("with") or {}
         handed = (jobs.get("publish") or {}).get("secrets") or {}
         for key in sorted(r_in):
             rule(flat(given.get(key, "")) == "${{ inputs." + key + " }}",
                  f"docs-review.yml does not hand input `{key}` to review.yml unchanged")
-        for key in sorted(r_sec):
-            rule(flat(handed.get(key, "")) == "${{ secrets." + key + " }}",
-                 f"docs-review.yml does not hand secret `{key}` to review.yml unchanged")
+        altered = [k for k in r_sec if flat(handed.get(k, "")) != "${{ secrets." + k + " }}"]
+        rule(not altered, f"docs-review.yml does not hand {len(altered)} secret(s) to review.yml unchanged")
 
     # 3. The frozen copy stays the same text.
     twin = os.path.join(workflows, "publish-verdict.yml")
