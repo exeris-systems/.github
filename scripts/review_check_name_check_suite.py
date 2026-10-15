@@ -180,7 +180,13 @@ def _(tmp):
 @case("`.github` missing from the ruleset's include is refused: its own caller reports the check")
 def _(tmp):
     copy(tmp)
-    edit(tmp, "rulesets/exeris-code-verdict.json", '"include": [".github"]', '"include": ["exeris-docs"]')
+    path = os.path.join(tmp, "rulesets", "exeris-code-verdict.json")
+    with open(path, encoding="utf-8") as fh:
+        ruleset = json.load(fh)
+    names = ruleset["conditions"]["repository_name"]["include"]
+    ruleset["conditions"]["repository_name"]["include"] = [n for n in names if n != ".github"]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(ruleset, fh, indent=2)
     refused(tmp, "belongs to the `include`")
 
 
