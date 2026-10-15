@@ -30,6 +30,7 @@
         "exeris-caps-upstream-pool",
         "exeris-caps-waf-rules",
         "exeris-docs",
+        "exeris-kernel",
         "exeris-platform",
         "exeris-sdk",
         "exeris-sku-api-gateway",
