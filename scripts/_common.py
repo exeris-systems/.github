@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 # file ships in a public repository where the set itself would otherwise disclose them.
 PRIVATE_REPOS = {
     "exeris-kernel-enterprise", "exeris-benchmarks-enterprise", "exeris-enterprise-observability",
-    "exeris-telemetry-spec",
+    "exeris-telemetry-spec", "exeris-studio", "exeris-control-plane",
 }
 
 DOC_TYPES = {
