@@ -23,6 +23,15 @@ sentence in `AGENTS.md`.
 `exeris-code-verdict` is the only source of the required review check, for every publishing
 repository: no per-repository branch protection and no repository ruleset carries it.
 
+**One bypass actor: the pen.** `exeris-inbox` (Integration `4898140`) bypasses this ruleset
+`always`. `exeris-ai-execution` is both a publishing repository, whose pull requests are reviewed and
+need the check, and a data repository whose `main` the pen commits run records and judgements to
+directly (ADR-087 §C.13). A pen commit is not a pull request and no review reports a check on it,
+so without the bypass every row is refused at the push. The bypass reaches only where the App is
+installed with `contents: write`, which is the data repositories alone (ADR-087 §A.1): what it can
+push is decided by its installation, not by this file. A person and every other App still need the
+check. This is the same exemption the inbox's own ruleset gives the same App for its rules.
+
 Why `include` is a list and not `~ALL`: a required status check that no workflow reports leaves a
 pull request unable to merge forever. Publication is opt-in per repository
 (`caller-example/guardrails.yml`), so the check exists only where it is switched on, and only once
