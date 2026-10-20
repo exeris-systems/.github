@@ -2,7 +2,13 @@
   "name": "exeris-code-verdict",
   "target": "branch",
   "enforcement": "active",
-  "bypass_actors": [],
+  "bypass_actors": [
+    {
+      "actor_id": 4898140,
+      "actor_type": "Integration",
+      "bypass_mode": "always"
+    }
+  ],
   "conditions": {
     "ref_name": { "include": ["~DEFAULT_BRANCH", "refs/heads/development/**"], "exclude": [] },
     "repository_name": {
