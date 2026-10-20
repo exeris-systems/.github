@@ -7,7 +7,10 @@
 name: guardrails
 on:
   pull_request:
-    types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled]
+    # `closed` is not a gate event and is here for one job: the judgement of ADR-087 §C.16, which
+    # reads what the human did with the review once there is a history to read. Every other job
+    # skips it explicitly — a gate on a pull request that can no longer merge decides nothing.
+    types: [opened, edited, synchronize, ready_for_review, labeled, unlabeled, closed]
   # A person's approval is a human review, and it reaches the required check only as an event of its
   # own. Every job runs on it, because the newest run is the one the required checks are read from.
   pull_request_review:
@@ -28,8 +31,10 @@ concurrency:
   #
   # A review never cancels either: it changes no diff, so it has nothing newer to put in place of
   # the run already working, and approving beside a running review would otherwise kill it.
+  # The close is kept out of the collapse by its own clause: the human who merges is no `[bot]`, so
+  # without it the merge cancels the run still publishing the verdict and the judgement after it.
   cancel-in-progress: >-
-    ${{ github.event_name != 'pull_request_review' && !endsWith(github.actor, '[bot]') }}
+    ${{ github.event.action != 'closed' && github.event_name != 'pull_request_review' && !endsWith(github.actor, '[bot]') }}
 permissions:
   contents: read
   pull-requests: read
@@ -39,6 +44,10 @@ permissions:
   # action's own token exchange. Neither job writes with them — every write goes through the App.
   issues: read
   id-token: write
+  # `actions: read` belongs to `judge` alone: the judgement compares the commit a review READ with
+  # the head the pull request ended at, and the first is the reviewing run's own `head_sha`, which
+  # the platform states on the Actions API and nowhere else independent of the record being judged.
+  actions: read
 
 jobs:
   # The L2 review this repository makes mandatory for every other one, run on this repository. Its
@@ -83,13 +92,29 @@ jobs:
     #
     # `always()` stands for every event: a review that vanishes from the checks because its gates
     # went red is the failure mode this file exists to prevent.
-    if: ${{ always() }}
+    if: ${{ always() && github.event.action != 'closed' }}
     uses: ./.github/workflows/review.yml
     with:
       publish: true
-      # THE ROUTINE IN PARTS, here first, as publication was. This repository captures
-      # no rows, so nothing is lost by the parts not writing one yet; and its pull requests touch
+      # CAPTURE IS THE SECOND OPT-IN, and a separate decision from the first. With it on, the run
+      # becomes a row in the organisation's execution dataset (ADR-087 §C.13-§C.17): the runner's
+      # execution log is committed to the streams repository as content, a run record is assembled
+      # from what the producing job exported about itself, and the day's rows reach the inbox as
+      # one pull request per repository per day.
+      #
+      # IT RUNS INSIDE THE PUBLISHING HALF, so it needs `publish: true` as well: with publication
+      # off there is no job for it to be a part of, and `capture: true` alone runs nothing and
+      # says nothing about having run nothing.
+      #
+      # It needs the two EXERIS_INBOX_* secrets below and NO new permission: the capture job reads
+      # the repository and the pull request, both of which the block at the top already grants, and
+      # every write goes through the App's installation token. Without the secrets the job reports
+      # that it has no identity to write under and writes nothing; the review and its gate are
+      # unaffected either way.
+      capture: true
+      # THE ROUTINE IN PARTS, here first, as publication was: this repository's pull requests touch
       # Python, YAML and Markdown in every combination, which is what the plan has to get right.
+      # With capture on, each part's run is its own row and its own stream.
       review-in-parts: true
       l1-results: >-
         {"docs-lint": "${{ needs.docs.result }}",
@@ -158,20 +183,34 @@ jobs:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
       exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
+      # THE PEN, which `capture: true` above writes with. A caller may pass only a secret the called
+      # workflow DECLARES: one it does not declare is not ignored, it makes the whole file an
+      # invalid workflow in the adopting repository, on the first push, with no logs — taking every
+      # gate in this file down with it, not only this job.
+      #
+      # They are optional exactly as the two lines above are: an organisation secret that is not set
+      # arrives as an empty string, and the capture job then says so and writes nothing. They are
+      # named rather than inherited for the reason the others are.
+      exeris_inbox_app_id: ${{ secrets.EXERIS_INBOX_APP_ID }}
+      exeris_inbox_private_key: ${{ secrets.EXERIS_INBOX_PRIVATE_KEY }}
   docs:
+    if: ${{ github.event.action != 'closed' }}
     uses: ./.github/workflows/docs-lint.yml
     with:
       mode: strict
       section-check: true
   commits:
+    if: ${{ github.event.action != 'closed' }}
     uses: ./.github/workflows/commit-lint.yml
   pr-body:
+    if: ${{ github.event.action != 'closed' }}
     uses: ./.github/workflows/pr-body-check.yml
   # caller-example/*.yml is the file every repository copies. When it grants less than one of the
   # workflows it calls declares, GitHub does not run that job with less — it rejects the whole file
   # as invalid, in the adopting repository, on the first push, with no logs. That happened to
   # exeris-kernel; this makes the next one fail here instead, where it is cheap.
   caller-permissions:
+    if: ${{ github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -194,6 +233,7 @@ jobs:
   # One job, and each step runs whatever the one before it did: two worklists behind the first red
   # one is the failure docs-lint.yml's step comments describe, and it is no cheaper here.
   verdict-contract:
+    if: ${{ github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -378,3 +418,17 @@ jobs:
           echo "${VALE_SHA256}  $RUNNER_TEMP/vale.tgz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/vale.tgz" -C "$RUNNER_TEMP" vale
           python scripts/vale_retracted_figures_suite.py --vale "$RUNNER_TEMP/vale"
+  # The other half of the record, and the only job here that runs on `closed`. A review-domain run
+  # record is complete when the review ends and its outcome is `UNKNOWN`: the oracle has not judged
+  # yet. `review-disposition` judges when the pull request closes — per finding, from what the human
+  # did with it — and its verdict is appended as its own record keyed by the run's id (ADR-087
+  # §C.16). It is not a gate: the pull request is closed, it publishes no check a branch protection
+  # rule can name, and it posts nothing to the pull request.
+  judge:
+    if: ${{ github.event.action == 'closed' }}
+    uses: ./.github/workflows/judge-review.yml
+    secrets:
+      exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
+      exeris_bot_private_key: ${{ secrets.EXERIS_BOT_PRIVATE_KEY }}
+      exeris_inbox_app_id: ${{ secrets.EXERIS_INBOX_APP_ID }}
+      exeris_inbox_private_key: ${{ secrets.EXERIS_INBOX_PRIVATE_KEY }}
