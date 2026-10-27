@@ -352,9 +352,16 @@ jobs:
       # what to put in it.
       # Only in the legs that judge the extension: its output is evidence for the repository's own
       # rules, and running it in every leg would run the same scripts once per part for nobody.
+      #
+      # THE MANAGED INTERPRETER IS THE CHECKS' AND NOBODY ELSE'S. `update-environment: false` keeps
+      # it off the job's `PATH`, and the checks step puts it first on its own. Left on the job's
+      # `PATH`, it would also be the interpreter of every later step, the reviewer included, and a
+      # caller's PreToolUse hooks would then run under an interpreter without the packages they
+      # import. A hook that fails closed refuses every `Read`, and the leg reviews nothing.
       - uses: actions/setup-python@v7
+        id: checks-python
         if: ${{ inputs.repo-checks != '' && (matrix.part == 'all' || matrix.part == 'repo') }}
-        with: { python-version: "3.14" }
+        with: { python-version: "3.14", update-environment: false }
       - name: This repository's own checks
         if: ${{ inputs.repo-checks != '' && (matrix.part == 'all' || matrix.part == 'repo') }}
         env:
@@ -362,9 +369,10 @@ jobs:
           # workflow file rather than from pull-request content, but a command assembled by string
           # substitution is the shape of the injection bug regardless of who wrote it today.
           REPO_CHECKS: ${{ inputs.repo-checks }}
+          CHECKS_PYTHON: ${{ steps.checks-python.outputs.python-path }}
         run: |
           set +e
-          bash -c "$REPO_CHECKS" >repo-checks.out 2>&1
+          PATH="$(dirname "$CHECKS_PYTHON"):$PATH" bash -c "$REPO_CHECKS" >repo-checks.out 2>&1
           code=$?
           printf '\n--- repo-checks exit code: %s ---\n' "$code" >>repo-checks.out
           echo "::notice::this repository's own checks exited $code; the reviewer reads repo-checks.out"

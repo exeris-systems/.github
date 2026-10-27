@@ -16,7 +16,9 @@ What this compares, in two halves, because the first alone was not enough. The P
 script `repo-checks` runs that a CI step also runs, the packages that step's job installs before it
 must be installed by `repo-checks` too — not the reverse, since installing more than a job needs is
 its own business. And the INTERPRETER: the job that runs `repo-checks` must set Python up, as every
-job compared against it does.
+job compared against it does, and must hand that interpreter to the checks step alone. Set up for
+the whole job, it is also the interpreter of the reviewer's own hooks, which import packages it does
+not have; a hook that fails closed then refuses every read.
 
 The second half exists because the first passed while the environments still disagreed. The names
 matched; the runner image's system `python3` already carried an older `jsonschema`, `pip install`
@@ -93,6 +95,22 @@ def main() -> int:
                 "review.yml's produce job runs `repo-checks` without setting Python up first, "
                 "so a caller's `pip install` goes to the runner image's system interpreter and "
                 "reports an older package satisfied instead of resolving the one a job resolves")
+        else:
+            setup = steps[sets_up]
+            if str((setup.get("with") or {}).get("update-environment")).lower() != "false":
+                bad_interp.append(
+                    "review.yml's produce job sets Python up for the whole job, so every later "
+                    "step, the reviewer included, runs under it and a caller's hooks lose the "
+                    "packages they import; set `update-environment: false` and put the "
+                    "interpreter on the checks step's PATH alone")
+            checks_step = steps[runs_checks]
+            handed = f"steps.{setup.get('id')}.outputs.python-path"
+            step_text = str(checks_step.get("run") or "") + " " + " ".join(
+                str(v) for v in (checks_step.get("env") or {}).values())
+            if not setup.get("id") or handed not in step_text:
+                bad_interp.append(
+                    "review.yml's produce job sets Python up but the checks step never uses it, "
+                    "so `repo-checks` runs under the runner image's system interpreter")
 
     # What each job installs, and which of the reviewer's scripts it runs. A job installs for all of
     # its steps: `pip install` in one step and the script in the next is the ordinary shape, and is

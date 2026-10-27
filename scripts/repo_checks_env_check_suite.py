@@ -60,10 +60,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
-        with: { python-version: "3.14" }
+        id: checks-python
+        with: { python-version: "3.14", update-environment: false }
       - name: This repository's own checks
         if: ${{ inputs.repo-checks != '' }}
-        run: bash -c "$REPO_CHECKS"
+        env:
+          CHECKS_PYTHON: ${{ steps.checks-python.outputs.python-path }}
+        run: PATH="$(dirname "$CHECKS_PYTHON"):$PATH" bash -c "$REPO_CHECKS"
 """
 
 
@@ -116,7 +119,8 @@ def _(root):
 @case("no setup-python before the checks step is a broken rule")
 def _(root):
     build(root, routine=ROUTINE.replace(
-        '      - uses: actions/setup-python@v7\n        with: { python-version: "3.14" }\n', ""))
+        '      - uses: actions/setup-python@v7\n        id: checks-python\n'
+        '        with: { python-version: "3.14", update-environment: false }\n', ""))
     code, out = run(root)
     assert code == 1, out
     assert "without setting Python up first" in out, out
@@ -140,6 +144,25 @@ jobs:
     code, out = run(root)
     assert code == 1, out
     assert "without setting Python up first" in out, out
+
+
+# THE SCOPE, the second way the interpreter can be wrong. Set up for the whole job, the managed
+# interpreter is also the one the reviewer's hooks run under, and they lose the packages they import.
+@case("a managed interpreter set up for the whole job is a broken rule")
+def _(root):
+    build(root, routine=ROUTINE.replace(', update-environment: false }', ' }'))
+    code, out = run(root)
+    assert code == 1, out
+    assert "for the whole job" in out, out
+
+
+@case("a managed interpreter the checks step never uses is a broken rule")
+def _(root):
+    build(root, routine=ROUTINE.replace(
+        '        env:\n          CHECKS_PYTHON: ${{ steps.checks-python.outputs.python-path }}\n', ""))
+    code, out = run(root)
+    assert code == 1, out
+    assert "never uses it" in out, out
 
 
 @case("a routine with no step running repo-checks at all is a broken rule")
