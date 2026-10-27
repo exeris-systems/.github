@@ -76,7 +76,7 @@ Pages:
 
 6. Type discipline: is each changed page one Diátaxis/record type? A how-to that explains, an explanation with steps → `[STYLE]` with the split proposed.
 7. Boundary and trade-off: does a new or rewritten page say where it does not apply and name one cost? Missing → `[STYLE]`.
-8. `last-verified` bumped on a page whose text changed but whose subject code did not → ask; bumped without checking the code → `[STYLE]`. Not bumped on a page whose subject code changed in this PR → `[DOC DEBT]`.
+8. `last-verified` asserts that the whole page was checked against its subject, so a date is never the fix for a partial edit. A page whose subject code changed in this PR but that was not re-verified in full → `[DOC DEBT]`. Its fix is a tracked re-verification, the `doc-debt` label or a named issue, never a bumped date. `last-verified` bumped after a partial edit with no whole-page pass stated → `[STYLE]`. Bumped together with a stated whole-page verification → no finding.
 9. Terminology: Vale warnings the author dismissed — spot-check three; a dismissed warning that is correct → `[STYLE]`.
 10. Subsystem/module pages touched: do `## Contract / Hot path / Failure modes / Owning ADRs` exist or is the page on the backfill list? Missing and not listed → `[DOC DEBT]`.
 
