@@ -1293,18 +1293,12 @@ jobs:
         run: |
           set -euo pipefail
           files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
-          # THE ENTRY workflow, not any workflow. `GITHUB_WORKFLOW_REF` names the file whose `on:`
-          # started this run — `owner/repo/.github/workflows/guardrails.yml@refs/pull/N/merge` —
-          # and the runner action's guard is about that file: it refuses when the workflow it was
-          # invoked from differs from the default branch's copy. A REUSABLE workflow this run calls
-          # is not that file, and a pull request changing one is reviewed normally.
-          #
-          # Measured 2026-09-17, two runs of different shapes. `exeris-ai-execution#4` changes its
-          # own `guardrails.yml`, the entry: the model step lasted five seconds and produced no
-          # verdict — the refusal. `exeris-systems/.github#56` changes `docs-review.yml`, which this
-          # repository calls but does not enter through: the model step ran six and a half minutes
-          # and produced a full verdict. Both are explained by the entry file and neither by "any
-          # file under .github/workflows/", which is what this test asked before.
+          # THE ENTRY workflow and what it calls locally, not any workflow. `GITHUB_WORKFLOW_REF`
+          # names the file whose `on:` started this run — `owner/repo/.github/workflows/guardrails.yml@refs/pull/N/merge`
+          # — and the runner action refuses to start when that file, or a workflow of the same
+          # repository it calls through `uses: ./.github/workflows/…`, differs from the default
+          # branch's copy. A workflow called from another repository, or one the entry does not
+          # call, is outside that check, and a pull request changing one is reviewed normally.
           #
           # It matters in the direction of the override. `workflow_touching` is what lets
           # `human-reviewed` green a required check without a review, so a test that is too broad
