@@ -86,8 +86,9 @@ def main() -> int:
     failures = 0
     for name, ref, repo, files, want, *entry in CASES:
         with tempfile.TemporaryDirectory() as tmp:
-            # An entry file is always passed, so no case reaches the network: `None` names one
-            # that does not exist, which is what a failed read looks like to the script.
+            # No case reaches the network: each passes an entry file, or puts a failing `gh` first
+            # on PATH. `None` names an entry file that does not exist, which is what a failed read
+            # looks like to the script.
             path = os.path.join(tmp, "entry.yml")
             args, env = [SCRIPT, ref, repo, path], None
             if entry and entry[0] is FETCH_FAILS:
