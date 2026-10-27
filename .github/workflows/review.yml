@@ -1767,7 +1767,10 @@ jobs:
           # identity to. Asked of the host rather than written down: an id is the host's to assign,
           # and a hard-coded one attributes the commit to nobody the moment it is wrong.
           uid=$(gh api /users/exeris-inbox%5Bbot%5D --jq .id)
-          git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/${STREAMS_REPOSITORY}.git" streams
+          # Initialised, not cloned: every read of the remote happens inside the attempts below, so
+          # a transfer the host drops part-way is an attempt spent rather than the step failed.
+          git init --quiet streams
+          git -C streams remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${STREAMS_REPOSITORY}.git"
           # WRITTEN TO A FILE BECAUSE IT IS REPLAYED. Two captures append to one `index.json`, which
           # is one insertion each at one place in one array — a conflict every time, not a rare one,
           # since the concurrency group is per reviewed repository and two repositories capturing at
@@ -1801,11 +1804,17 @@ jobs:
           PY
           message="chore(streams): the execution log of $(jq -r .run_id capture-decision.json)"
           pushed=no
-          for _attempt in 1 2 3; do
+          last=""
+          for attempt in 1 2 3 4 5; do
+            # A pause before every attempt but the first, randomised so that captures which lost
+            # the same race do not meet again at the same instant.
+            if [ "$attempt" -gt 1 ]; then sleep $(( (RANDOM % 5) + 2 * attempt )); fi
             # The append is re-derived from the index as it is on the remote at this moment, so a
             # capture that lost the race loses its commit and not its entry: nothing it wrote is
-            # carried forward, and everything it wanted written is derived again.
-            git -C streams fetch --quiet origin main
+            # carried forward, and everything it wanted written is derived again. A fetch that did
+            # not answer is an attempt spent: `main` always exists, so a failed fetch says only that
+            # this attempt saw nothing.
+            git -C streams fetch --quiet origin main || { last="fetch"; continue; }
             git -C streams reset --quiet --hard origin/main
             python append-stream.py "$LOG" capture-decision.json streams
             git -C streams add -A
@@ -1816,12 +1825,13 @@ jobs:
                 -c "user.email=${uid}+exeris-inbox[bot]@users.noreply.github.com" \
                 commit -qm "$message"
             if git -C streams push --quiet origin HEAD:main; then pushed=yes; break; fi
+            last="push"
           done
           # RED, and deliberately. A stream that was not pushed is a commit no row can reference,
           # and this job reports green whenever it has nothing to write — so a green here would
           # be indistinguishable from a run that had nothing to capture.
           if [ "$pushed" != "yes" ]; then
-            echo "::error::capture: the stream could not be pushed, so no row is written — a row references its stream at a commit, and the commit has to exist"
+            echo "::error::capture: the stream could not be pushed after five attempts, the last ending at the ${last:-assembly} step, so no row is written — a row references its stream at a commit, and the commit has to exist"
             exit 1
           fi
           echo "commit=$(git -C streams rev-parse HEAD)" >> "$GITHUB_OUTPUT"
