@@ -32,6 +32,14 @@ installed with `contents: write`, which is the data repositories alone (ADR-087 
 push is decided by its installation, not by this file. A person and every other App still need the
 check. This is the same exemption the inbox's own ruleset gives the same App for its rules.
 
+**Creating a branch is not enforced.** A new `development/**` line is cut from the release commit
+on the default branch, and that commit is a merge, which no review reports a check on: the review
+runs on a pull request's head, not on the push to the default branch. With the check enforced at
+creation no development line could be opened at all. Creating the branch adds no content that the
+default branch does not already carry, and everything that reaches the line afterwards arrives by
+pull request, where the check is required. The repositories' own `development` rulesets make the
+same choice for their build checks.
+
 Why `include` is a list and not `~ALL`: a required status check that no workflow reports leaves a
 pull request unable to merge forever. Publication is opt-in per repository
 (`caller-example/guardrails.yml`), so the check exists only where it is switched on, and only once
