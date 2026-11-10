@@ -25,6 +25,7 @@
         "exeris-caps-federated-login",
         "exeris-caps-gateway-core",
         "exeris-caps-gateway-observability",
+        "exeris-caps-i18n",
         "exeris-caps-invitations",
         "exeris-caps-jwt-validation",
         "exeris-caps-mfa-totp",
