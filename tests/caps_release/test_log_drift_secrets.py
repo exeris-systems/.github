@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import unittest
 
@@ -188,14 +189,164 @@ class Drift(h.Case):
         self.refused(res, "does not match")
         self.assertIn("+changed", res.out, "the diff is shown for a path that starts with a dash")
 
-    def test_option_shaped_values_do_not_change_what_git_reports(self):
+    OPTION_SHAPED = ("--ignored", "--untracked-files=no", "-uno", "--porcelain=v2", "--help")
+
+    def test_an_option_shaped_value_that_names_no_directory_is_refused_as_such(self):
         self.put("gen/a.txt", "changed\n")
-        for value in ("--ignored", "--untracked-files=no", "-uno", "--porcelain=v2", "--help"):
+        for value in self.OPTION_SHAPED:
             with self.subTest(value):
-                res = h.run_main(self.S, ["--repo", self.repo, f"--generated={value}"])
-                self.assertEqual(res.rc, 0 if "does not match" not in res.err else 1, res)
-                # the drifted file under gen/ is not under that path: never the answer to a flag
+                res = self.check(value)
+                self.refused(res, "is not a directory in the repository")
+                self.assertEqual(len(res.errors()), 1)
+                self.assertNotIn("a.txt", res.out, "no git report is produced for a value that names nothing")
+
+    def test_a_directory_named_like_an_option_is_a_directory_and_never_an_option(self):
+        for value in self.OPTION_SHAPED:
+            with self.subTest(value):
+                self.put(f"{value}/f.txt", "tracked\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "option-named directories")
+        for value in self.OPTION_SHAPED:
+            with self.subTest("clean " + value):
+                res = self.check(value)
+                self.accepted(res)
+                self.assertIn(f"ok - {value} is what this build produces", res.out)
+        for value in self.OPTION_SHAPED:
+            with self.subTest("drift " + value):
+                git(self.repo, "reset", "-q", "--hard")
+                git(self.repo, "clean", "-qfdx")
+                self.put("gen/a.txt", "drifted elsewhere\n")
+                self.accepted(self.check(value))                    # drift under gen/ is not drift under this path
+                self.put(f"{value}/f.txt", "changed\n")
+                res = self.check(value)
+                self.refused(res, "does not match what this build produced")
+                self.assertIn("f.txt", res.out)
+                self.assertIn("+changed", res.out, "the diff is shown, so git read the value as a path")
                 self.assertNotIn("a.txt", res.out)
+        for value in self.OPTION_SHAPED:
+            with self.subTest("untracked " + value):
+                git(self.repo, "reset", "-q", "--hard")
+                git(self.repo, "clean", "-qfdx")
+                self.put(f"{value}/new/deeper/added.txt", "new\n")
+                res = self.check(value)
+                self.refused(res, "does not match")
+                self.assertIn("added.txt", res.out, "-uno or --ignored would hide the added file")
+
+    def test_a_symlink_inside_the_repository_is_followed_to_the_directory_it_names(self):
+        os.symlink("gen", os.path.join(self.repo, "link"))
+        self.accepted(self.check("link"))
+        self.put("gen/a.txt", "changed\n")
+        res = self.check("link")
+        self.refused(res, "does not match")
+        self.assertIn("gen/a.txt", res.out, "git is asked about the resolved directory, not the link")
+
+    def test_a_symlink_to_a_file_or_to_nothing_is_refused(self):
+        os.symlink("gen/a.txt", os.path.join(self.repo, "filelink"))
+        os.symlink("nowhere", os.path.join(self.repo, "dangling"))
+        for value in ("filelink", "dangling"):
+            with self.subTest(value):
+                self.refused(self.check(value), "is not a directory in the repository")
+
+    def test_a_symlinked_component_leaving_the_repository_is_refused_by_name(self):
+        outside = self.path("outside")
+        os.makedirs(os.path.join(outside, "gen"))
+        os.symlink(outside, os.path.join(self.repo, "out"))
+        res = self.check("out/gen")
+        self.refused(res, "leaves the repository")
+
+    def test_a_path_that_is_a_file_is_refused(self):
+        self.refused(self.check("gen/a.txt"), "is not a directory in the repository")
+        self.refused(self.check("src.txt"), "is not a directory in the repository")
+
+    def test_an_untracked_directory_and_a_directory_without_a_tracked_file_are_refused(self):
+        self.put("fresh/new.txt")
+        os.makedirs(os.path.join(self.repo, "emptydir"))
+        self.put(".gitignore", "ign/\n")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-q", "-m", "ignore")
+        self.put("ign/only.txt")
+        for value in ("fresh", "emptydir", "ign", ".git"):
+            with self.subTest(value):
+                res = self.check(value)
+                self.refused(res)
+                self.assertIn("holds no tracked file", "\n".join(res.errors()) if value != ".git" else "holds no tracked file")
+
+    def test_pathspec_magic_and_globs_are_file_names_not_instructions(self):
+        self.put("gen/a.txt", "changed\n")
+        for value in (":(exclude)gen", "*", ":/", ":(top)gen", "gen/*", "g?n", "[g]en", ":!gen", ":^gen"):
+            with self.subTest(value):
+                self.refused(self.check(value), "is not a directory in the repository")
+
+    def test_a_directory_literally_named_like_a_glob_is_that_directory_only(self):
+        self.put("*/star.txt", "s\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "star")
+        self.put("gen/a.txt", "changed\n")
+        self.accepted(self.check("*"))                              # `*` as a glob would match gen/ and report drift
+        self.put("*/star.txt", "changed\n")
+        res = self.check("*")
+        self.refused(res, "does not match")
+        self.assertNotIn("gen/a.txt", res.out)
+
+    def test_the_same_directory_written_four_ways_is_the_same_answer(self):
+        self.put("gen/a.txt", "changed\n")
+        for value in ("gen", "gen/", "./gen", "gen/../gen", "gen//deep/.."):
+            with self.subTest(value):
+                res = self.check(value)
+                self.refused(res, "does not match")
+                self.assertIn("gen/a.txt", res.out)
+        git(self.repo, "reset", "-q", "--hard")
+        for value in ("gen", "gen/", "./gen", "gen/../gen"):
+            with self.subTest("clean " + value):
+                self.accepted(self.check(value))
+
+    def test_every_tracked_file_deleted_from_the_working_tree_is_drift(self):
+        for rel in ("gen/a.txt", "gen/deep/b.txt"):
+            os.remove(os.path.join(self.repo, rel))
+        res = self.check()
+        self.refused(res, "does not match what this build produced")
+        self.assertIn(" D gen/a.txt", res.out)
+        self.assertIn(" D gen/deep/b.txt", res.out)
+
+    def test_a_directory_removed_with_its_files_is_refused_though_not_as_drift(self):
+        """The directory is gone, so the path names nothing: refused, with the message of an unusable path."""
+        shutil.rmtree(os.path.join(self.repo, "gen"))
+        res = self.check()
+        self.refused(res, "is not a directory in the repository")
+        self.assertEqual(res.out, "", "no status is printed for it")
+
+    def test_a_new_file_a_mode_change_and_a_symlink_swap_inside_are_each_drift(self):
+        for label, mutate in (
+                ("new", lambda: self.put("gen/deep/new.txt")),
+                ("mode", lambda: os.chmod(os.path.join(self.repo, "gen/deep/b.txt"), 0o755)),
+                ("symlink", lambda: (os.remove(os.path.join(self.repo, "gen/deep/b.txt")),
+                                     os.symlink("a.txt", os.path.join(self.repo, "gen/deep/b.txt"))))):
+            with self.subTest(label):
+                git(self.repo, "reset", "-q", "--hard")
+                git(self.repo, "clean", "-qfdx")
+                mutate()
+                self.refused(self.check(), "does not match what this build produced")
+
+    def test_a_control_character_in_the_path_cannot_forge_a_second_error_line(self):
+        res = self.check("gen\n::error::injected")
+        self.refused(res)
+        self.assertEqual(len(res.errors()), 1)
+        self.assertNotIn("\n::error::injected", res.err)
+        self.assertIn("\\n", res.err)
+
+    def test_the_repository_argument_is_required_and_must_be_a_work_tree(self):
+        self.assertEqual(h.run_proc(self.S, ["--generated", "gen"]).rc, 2)
+        self.assertEqual(h.run_main(self.S, ["--generated", "gen"]).rc, 2)
+        bare = self.path("bare.git")
+        git(self.tmp, "init", "-q", "--bare", bare)
+        self.refused(self.both(self.S, ["--repo", bare, "--generated", "refs"]))   # a directory, but no work tree
+        self.refused(self.both(self.S, ["--repo", os.path.join(self.repo, ".git"), "--generated", "gen"]))
+
+    def test_git_unable_to_run_ends_in_one_error_line(self):
+        res = h.run_proc(self.S, ["--repo", self.repo, "--generated", "gen"], env={"PATH": self.tmp, "LC_ALL": "C.UTF-8"})
+        self.refused(res)
+        self.assertEqual(len(res.errors()), 1)
+        self.assertEqual(res.rc, 1)
 
     def test_a_submodule_with_a_modified_file_is_drift(self):
         sub = self.path("subsrc")

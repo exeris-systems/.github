@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import unicodedata
 import unittest
 
 import caps_release_helpers as h
@@ -26,6 +27,17 @@ def argv(base, **over):
         if key in values and values[key] is not None:
             out += ["--" + key.replace("_", "-"), values[key]]
     return out
+
+
+def message_class(value):
+    """The refusal a value earns: a control character, a non-printing or unassigned one, or a shape that is no tag."""
+    for ch in value:
+        category = unicodedata.category(ch)
+        if category == "Cc":
+            return "control character"
+        if category in ("Cf", "Zl", "Zp", "Cn"):
+            return "non-printing or unassigned character"
+    return "release tag"
 
 
 def c0_c1():
@@ -77,7 +89,8 @@ class Accepts(h.Case):
                                              ref="refs/heads/rel/1")))
 
     def test_generated_path_shapes_the_contract_allows(self):
-        for g in ("src/main/generated/", "a b/c", "./x", "a//b", "~", "a\\b", "C:\\x", "x/", ".hidden", "a.b/c"):
+        for g in ("src/main/generated/", "a b/c", "./x", "a//b", "~", "a\\b", "C:\\x", "x/", ".hidden", "a.b/c",
+                  "a..b", "..a", "a..", "...", "a/..b/c", "a/b..", "a:b", "gen:x", "a\\..b"):
             with self.subTest(g):
                 self.accepted(self.both(SCRIPT, argv(BRANCH, generated_path=g)))
 
@@ -88,7 +101,8 @@ class Accepts(h.Case):
         self.accepted(self.both(SCRIPT, args + ["--generated-path=-x"]))
 
     def test_version_shapes_the_contract_allows(self):
-        for v in ("0.0.0", "10.20.30", "01.02.03", "9" * 400 + ".0.0"):
+        for v in ("0.0.0", "10.20.30", "0.10.0", "9" * 9 + ".0.0", "0." + "9" * 9 + ".0", "0.0." + "9" * 9,
+                  "9" * 9 + "." + "9" * 9 + "." + "9" * 9, "1" + "0" * 8 + ".0.0"):
             with self.subTest(v[:12]):
                 res = self.both(SCRIPT, argv(BRANCH, version=v))
                 self.accepted(res)
@@ -132,7 +146,9 @@ class Refuses(h.Case):
                 self.check(BRANCH, upload=u)
 
     def test_generated_path(self):
-        for g in ("", "/abs", "/", "..", "../x", "a/../b", "a/..", "x/..\\y", "a/../../b"):
+        for g in ("", "/abs", "/", "..", "../x", "a/../b", "a/..", "x/..\\y", "a/../../b", "..\\x", "a\\..\\b", "a\\..",
+                  "*", "?", "[", "]", "gen/*", "gen/?.java", "gen/[ab]", "a]", ":", ":/", ":(exclude)gen", ":!gen", ":^gen",
+                  ":(top)gen", "*.java"):
             with self.subTest(repr(g)):
                 self.check(BRANCH, "generated-path", generated_path=g)
 
@@ -142,7 +158,7 @@ class Refuses(h.Case):
                "v\uff11.\uff12.\uff13", "v\u0661.\u0662.\u0663", "v1.2.3\u2028", "v1.2.3\u202e"]
         for t in bad:
             with self.subTest(repr(t)):
-                self.check(TAG, None if any(c in t for c in c0_c1()) else "release tag", ref_name=t)
+                self.check(TAG, message_class(t), ref_name=t)
 
     def test_tag_and_version_must_agree(self):
         for v in ("1.2.4", "v1.2.3", "1.2.3 ", "1.2", "0.0.0"):
@@ -208,6 +224,80 @@ class Refuses(h.Case):
             with self.subTest(repr(rt)):
                 self.check(BRANCH, "MAJOR.MINOR.PATCH", ref_type=rt, version="v1.2.3")
 
+    def test_version_numbers_with_a_leading_zero_or_more_than_nine_digits_are_refused(self):
+        bad = ["01.02.03", "1.02.3", "1.2.03", "00.0.0", "0.00.0", "0.0.00", "9" * 400 + ".0.0",
+               "1" + "0" * 9 + ".0.0", "0." + "1" + "0" * 9 + ".0", "0.0." + "1" + "0" * 9, "0" * 10 + ".0.0", "000.0.0"]
+        for v in bad:
+            with self.subTest(v[:14]):
+                res = self.check(BRANCH, "MAJOR.MINOR.PATCH", version=v)
+                self.assertNotIn("resolved", res.out)
+
+    def test_a_tag_with_a_leading_zero_or_ten_digits_is_no_release_tag(self):
+        for t in ("v01.2.3", "v1.02.3", "v1.2.03", "v" + "1" + "0" * 9 + ".0.0", "v0.0." + "9" * 10, "v" + "9" * 400 + ".0.0"):
+            with self.subTest(t[:16]):
+                self.check(TAG, "release tag", ref_name=t)
+
+    def test_the_boundaries_of_a_tag(self):
+        self.accepted(self.both(SCRIPT, argv(TAG, ref_name="v0.0.0")))
+        self.accepted(self.both(SCRIPT, argv(TAG, ref_name="v" + ".".join(["9" * 9] * 3))))
+        self.check(TAG, "release tag", ref_name="v" + "1" + "0" * 9 + ".0.0")
+
+    def test_dot_dot_is_a_segment_not_a_substring(self):
+        for g in ("a/..", "../a", "a/../b", "a\\..\\b", "a/..\\b"):
+            with self.subTest(g):
+                self.check(BRANCH, "generated-path", generated_path=g)
+        for g in ("a..b", "..a", "a..", "a/..b", "a/b..c/d"):
+            with self.subTest(g):
+                self.accepted(self.both(SCRIPT, argv(BRANCH, generated_path=g)))
+
+    def test_a_comparison_that_raises_is_a_refusal_naming_the_comparison(self):
+        for exc in (RuntimeError("boom"), ValueError("x"), TimeoutError("slow"), OSError(5, "io"), Exception("plain")):
+            with self.subTest(type(exc).__name__):
+                out = self.path("out-" + type(exc).__name__)
+                res = self.both(SCRIPT, argv(TAG, compare_status="", output=out), compare=lambda *_a, e=exc: (_ for _ in ()).throw(e))
+                self.refused(res, "comparison")
+                self.assertEqual(len(res.errors()), 1)
+                self.assertFalse(os.path.exists(out))
+
+    def test_an_interrupt_during_the_comparison_is_not_turned_into_an_answer(self):
+        """KeyboardInterrupt is not an Exception: it leaves main() and is neither a refusal nor a pass."""
+        out = self.path("out")
+
+        def interrupted(*_a):
+            raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            h.run_main(SCRIPT, argv(TAG, compare_status="", output=out), compare=interrupted)
+        self.assertFalse(os.path.exists(out), "an interrupted run writes nothing")
+
+    def test_a_comparison_returning_something_that_is_not_identical_or_behind_is_refused(self):
+        for value, fragment in (("ahead", "NOT on"), ("diverged", "NOT on"), ("", "NOT on"), ("identical ", "NOT on"),
+                                (" behind", "NOT on"), ("identical\n", "control character"), ("behind\r", "control character"),
+                                ("identical\u200b", "non-printing"), ("Identical", "NOT on"), ("identical\x00", "control character")):
+            with self.subTest(repr(value)):
+                out = self.path("out")
+                res = self.both(SCRIPT, argv(TAG, compare_status="", output=out), compare=lambda *_a, v=value: v)
+                self.refused(res, fragment)
+                self.assertEqual(len(res.errors()), 1)
+                self.assertFalse(os.path.exists(out))
+
+    def test_a_comparison_returning_a_non_string_ends_in_one_error_line(self):
+        for value in (None, 0, b"identical", ["identical"], True):
+            with self.subTest(repr(value)):
+                res = self.both(SCRIPT, argv(TAG, compare_status=""), compare=lambda *_a, v=value: v)
+                self.refused(res)
+                self.assertEqual(len(res.errors()), 1)
+                self.assertNotIn("resolved", res.out)
+
+    def test_an_unwritable_output_ends_in_one_error_line_and_exit_one(self):
+        for bad in (self.path("absent-dir", "out"), self.tmp):
+            for run in (h.run_main, h.run_proc):
+                with self.subTest(bad, run=run.__name__):
+                    res = run(SCRIPT, argv(BRANCH, output=bad))
+                    self.refused(res, "failed unexpectedly")
+                    self.assertEqual(len(res.errors()), 1)
+                    self.assertNotIn("resolved:", res.out)
+
+
 
 class ControlCharacters(h.Case):
     """Any C0, DEL or C1 character, in any field, in any position, is refused before a pattern is tried."""
@@ -262,6 +352,66 @@ class ControlCharacters(h.Case):
                 with self.subTest(repr(v)):
                     self.refused(self.both(SCRIPT, argv(BRANCH, version=v)))
                     self.refused(self.both(SCRIPT, argv(TAG, ref_name="v" + v)))
+
+
+NON_PRINTING = {
+    "zero width space": "\u200b", "zero width joiner": "\u200d", "word joiner": "\u2060", "byte order mark": "\ufeff",
+    "right-to-left override": "\u202e", "left-to-right isolate": "\u2066", "soft hyphen": "\u00ad",
+    "line separator": "\u2028", "paragraph separator": "\u2029", "unassigned": "\u0378", "noncharacter": "\U0010ffff",
+}
+
+
+class NonPrinting(h.Case):
+    """Cf, Zl, Zp, Cn and an undecodable byte are refused in every input, --output included, before any pattern."""
+
+    ALL = FIELDS + ["output"]
+
+    def base_for(self, field):
+        return TAG if field in ("ref_name", "compare_status") else BRANCH
+
+    def test_every_category_in_every_input_names_the_input(self):
+        for field in self.ALL:
+            for label, ch in NON_PRINTING.items():
+                for shape in ("{c}", "x{c}", "x{c}x"):
+                    value = shape.format(c=ch)
+                    with self.subTest(field=field, char=label, shape=shape):
+                        out = self.path("o") if field != "output" else value
+                        extra = {} if field == "output" else {"output": out}
+                        res = h.run_main(SCRIPT, argv(self.base_for(field), **{field: value}, **extra))
+                        self.refused(res, field.replace("_", "-") + " holds a non-printing or unassigned character")
+                        self.assertEqual(len(res.errors()), 1)
+                        self.assertNotIn("resolved", res.out)
+                        self.assertFalse(os.path.exists(out), "a refusal writes no output")
+
+    def test_a_lone_surrogate_in_every_input(self):
+        for field in self.ALL:
+            with self.subTest(field):
+                value = "x\udc80x"
+                res = h.run_main(SCRIPT, argv(self.base_for(field), **{field: value}))
+                self.refused(res, field.replace("_", "-") + " holds an undecodable byte")
+                self.assertEqual(len(res.errors()), 1)
+
+    def test_the_subprocess_refuses_the_same_characters_in_every_input(self):
+        for field in self.ALL:
+            for ch in ("\u200b", "\u202e", "\u2028", "\u0378"):
+                with self.subTest(field=field, char=hex(ord(ch))):
+                    value = f"x{ch}x"
+                    res = h.run_proc(SCRIPT, argv(self.base_for(field), **{field: value}))
+                    self.refused(res, field.replace("_", "-") + " holds a non-printing or unassigned character")
+                    self.assertEqual(len(res.errors()), 1)
+                    self.assertEqual(res.rc, 1)
+
+    def test_a_character_that_only_looks_empty_in_the_tag_is_refused_before_the_shape(self):
+        for ch in ("\u200b", "\u2028", "\u202e", "\u0378"):
+            with self.subTest(hex(ord(ch))):
+                self.refused(self.both(SCRIPT, argv(TAG, ref_name="v1.2.3" + ch)), "non-printing or unassigned character")
+
+    def test_printable_non_ascii_is_not_a_control_character(self):
+        """The class is Cc, Cf, Zl, Zp, Cn: a printable letter or a space-like Zs is judged by the pattern."""
+        for ch in ("\u00e9", "\u00a0", "\u3000", "\u0661"):
+            with self.subTest(hex(ord(ch))):
+                res = h.run_main(SCRIPT, argv(BRANCH, repository="o/r" + ch))
+                self.accepted(res)
 
 
 class Output(h.Case):
