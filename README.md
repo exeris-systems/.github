@@ -63,7 +63,9 @@ does not run is a gate nobody has tested.
                          Every decision it makes is a script of `scripts/caps_release/`, fetched at the
                          commit the running workflow came from (`github.job_workflow_sha`), copied out
                          of the workspace into `$RUNNER_TEMP` and verified against a digest taken
-                         before any project code ran
+                         before any project code ran. The readiness gate closes the set of releasable
+                         files, binds the Central bundle to what was built, and stages exactly the files
+                         it gated: the run artifact and the attestation are that set and nothing else
     caps-release-tests.yml  the tests of those scripts, on every pull request and every push; fails
                          when it collects none
     guardrails.yml       this repository's OWN caller — it runs its gates, and the review in parts, on itself
@@ -104,7 +106,9 @@ scripts/
                          check_release_profile, check_pom_version, scan_snapshots, check_auto_publish,
                          check_dry_run_log, check_drift, check_release_readiness, check_secrets,
                          remove_signing_key. Each reports through its exit status (0 ok, 1 refused,
-                         2 usage) and a `::error::` line on stderr
+                         2 usage) and ends every failure, an unexpected exception included, with a
+                         `::error::` line on stderr. The scripts that read a POM refuse a DOCTYPE
+                         before any entity is read
   run_caps_release_tests.py  runs `tests/caps_release/`; fails when it collects no test
   (the agent-layer tooling is NOT here — the bundle owns it. docs-lint.yml checks exeris-agents out
    into .agents-tools/ and runs it from there; `.agents/` below is this repository's vendored copy)

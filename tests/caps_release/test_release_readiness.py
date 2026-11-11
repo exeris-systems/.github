@@ -245,33 +245,20 @@ class Complete(Fixture):
 
     # --- gaps ---------------------------------------------------------------------------------
 
-    @h.known_defect("D-READY-OTHER-JARS",
-                    "only `-sources`, `-javadoc` and `-tests` jars are skipped and only main jars are inspected "
-                    "(check_release_readiness.py:98-99): a `-tests.jar`, or a `-SNAPSHOT-sources.jar` with no main jar of "
-                    "that version, is never checked for a signature or a SNAPSHOT yet sits in target/*.jar")
     def test_an_unsigned_tests_jar_beside_a_signed_coordinate_is_refused(self):
         self.coordinate()
         make_zip(os.path.join(self.target, "a-1.0.0-tests.jar"), ["T.class"])
         self.refused(self.check())
 
-    @h.known_defect("D-READY-SNAPSHOT-CLASSIFIER",
-                    "a SNAPSHOT-versioned attached jar is invisible to the gate because only a main jar's own name is tested "
-                    "(check_release_readiness.py:114)")
     def test_a_snapshot_sources_jar_is_refused(self):
         self.coordinate()
         make_zip(os.path.join(self.target, "a-1.0.0-SNAPSHOT-sources.jar"), ["x"])
         self.refused(self.check())
 
-    @h.known_defect("D-READY-TIMESTAMPED",
-                    "a timestamped snapshot main jar (a-1.0-20260101.120000-1.jar) is not recognised as a SNAPSHOT "
-                    "(check_release_readiness.py:114 tests the suffix -SNAPSHOT only)")
     def test_a_timestamped_snapshot_main_jar_is_refused(self):
         self.coordinate("a-1.0-20260101.120000-1")
         self.refused(self.check())
 
-    @h.known_defect("D-READY-SYMLINK",
-                    "a main jar that is a symlink is followed (os.path.isfile, check_release_readiness.py:98), so a file "
-                    "outside target/ can stand for the build output")
     def test_a_symlinked_main_jar_is_refused(self):
         self.coordinate()
         outside = self.path("outside.jar")
@@ -364,9 +351,6 @@ class Bundle(Fixture):
 
     # --- gaps ---------------------------------------------------------------------------------
 
-    @h.known_defect("D-READY-BUNDLE-TRAVERSAL",
-                    "an entry with `..` segments or a leading `/` is accepted as a 'coordinate' when the directory has the "
-                    "<g>/<a>/<v> shape and a pom of the derived name (check_release_readiness.py:48-53)")
     def test_entries_that_escape_the_bundle_root_are_stray(self):
         base = self.good_bundle()
         for evil in ("g/../../..-...pom", "/abs/a/1.0.0/a-1.0.0.pom"):
@@ -374,16 +358,10 @@ class Bundle(Fixture):
                 self.bundle(base + [evil])
                 self.refused(self.check("--expect-bundle", "true"))
 
-    @h.known_defect("D-READY-BUNDLE-FOREIGN",
-                    "the bundle's coordinates are not compared with the coordinates built in target/: a bundle holding "
-                    "only another artifact at another version passes (check_release_readiness.py:130-139)")
     def test_a_bundle_for_a_different_coordinate_than_the_one_built_is_refused(self):
         self.bundle(self.good_bundle(a="other", v="9.9.9"))
         self.refused(self.check("--expect-bundle", "true"))
 
-    @h.known_defect("D-READY-BUNDLE-DUPLICATE",
-                    "two entries of the same name in the bundle are not detected (check_release_readiness.py:130-139); "
-                    "which one Central reads is up to its unzip")
     def test_duplicate_entries_in_the_bundle_are_refused(self):
         names = self.good_bundle()
         with warnings.catch_warnings():

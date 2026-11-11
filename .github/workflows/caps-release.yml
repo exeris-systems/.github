@@ -102,10 +102,20 @@
 # PRECONDITIONS THE WORKFLOW CHECKS. A capability is a single-module project: a POM that declares
 # `<modules>` is refused, because the readiness gate, the run artifact and the attestation all read
 # the root `target/` and would otherwise disagree about what was released. The version a dry run is
-# given is one MAJOR.MINOR.PATCH line, matched as a whole string. A `-SNAPSHOT` project version is
-# an error on every run. A `-SNAPSHOT` among the DEPENDENCIES refuses any run with `upload: true`; on
-# a dry run (`upload: false`) it is a warning listed in the step summary, because a capability that
-# depends on another capability's snapshot could not otherwise rehearse.
+# given is one MAJOR.MINOR.PATCH line, matched as a whole string. A snapshot project version (Maven's
+# own definition: a `SNAPSHOT` suffix in any case, or the timestamped form) is an error on every run.
+# A snapshot among the DEPENDENCIES, or a floating version (a range, `LATEST`, `RELEASE`) anywhere,
+# refuses any run with `upload: true`; on a dry run (`upload: false`) it is a warning listed in the
+# step summary, because a capability that depends on another capability's snapshot could not
+# otherwise rehearse.
+#
+# WHAT IS UPLOADED AND ATTESTED IS WHAT WAS GATED. The readiness gate closes the set of releasable
+# files (a main jar, its `-sources` and `-javadoc` jars, the pom, their `.asc` signatures, and the
+# Central bundle) and refuses everything else that `target/` holds under those extensions: a `-tests`
+# jar, any other classifier, a symbolic link. It binds the Central bundle to the files that were
+# built, and copies exactly the files it gated into `$RUNNER_TEMP/gated-files` (`--stage`). The run
+# artifact is that directory and nothing else, and the attestation covers the run artifact, so the
+# three cannot disagree about what was released.
 #
 # Actions are pinned by commit, the way the release workflows of the SDK, the kernel and the
 # tooling are, because this workflow handles signing keys; the gates in this directory pin by tag.
@@ -311,18 +321,14 @@ jobs:
           fi
           /usr/bin/python3 -I -B "$S/check_drift.py" --repo . --generated "$GENERATED"
           /usr/bin/python3 -I -B "$S/check_release_readiness.py" --target-dir target \
-            --expect-bundle "$HAS_CENTRAL" --gpg /usr/bin/gpg
+            --expect-bundle "$HAS_CENTRAL" --gpg /usr/bin/gpg --stage "$RUNNER_TEMP/gated-files"
 
       - name: Keep what was built as a run artifact
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-gate-${{ steps.rel.outputs.version }}
-          path: |
-            target/*.jar
-            target/*.asc
-            target/*.pom
-            target/central-publishing/*.zip
+          path: ${{ runner.temp }}/gated-files
           if-no-files-found: warn
           retention-days: 90
 
@@ -527,18 +533,14 @@ jobs:
             || { echo "::error::the gate scripts changed after they were installed. If a deployment was uploaded, DROP it." >&2; exit 1; }
           /usr/bin/python3 -I -B "$S/check_drift.py" --repo . --generated "$GENERATED" --uploaded
           /usr/bin/python3 -I -B "$S/check_release_readiness.py" --target-dir target \
-            --expect-bundle "$EXPECT_BUNDLE" --uploaded --gpg /usr/bin/gpg
+            --expect-bundle "$EXPECT_BUNDLE" --uploaded --gpg /usr/bin/gpg --stage "$RUNNER_TEMP/gated-files"
 
       - name: Keep what was uploaded as a run artifact
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ needs.build.outputs.version }}
-          path: |
-            target/*.jar
-            target/*.asc
-            target/*.pom
-            target/central-publishing/*.zip
+          path: ${{ runner.temp }}/gated-files
           if-no-files-found: warn
           retention-days: 90
 
