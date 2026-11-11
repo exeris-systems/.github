@@ -229,8 +229,8 @@ class Removal(Doubles):
 
 
 @unittest.skipUnless(h.have_gpg(), "gpg is not installed")
-class RealGpg(h.Case):
-    """Real gpg: a throwaway key in a temporary keyring, removed by the script."""
+class RealBase(h.Case):
+    """Real gpg: a throwaway key in a temporary keyring, removed by the script. Holds no test of its own."""
 
     def setUp(self):
         super().setUp()
@@ -298,6 +298,8 @@ class RealGpg(h.Case):
         if agent_was_running:
             self.assertFalse(os.path.exists(sock), "the gpg-agent of the secret home was killed")
 
+@unittest.skipUnless(h.have_gpg(), "gpg is not installed")
+class RealGpg(RealBase):
     def test_the_secret_key_is_gone_and_the_public_key_verifies_in_process(self):
         self.removal(h.run_main)
 
