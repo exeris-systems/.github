@@ -220,9 +220,6 @@ class Removal(Doubles):
         self.assertNotEqual(res.rc, 0)
         self.assertFalse(os.path.exists(self.secret))
 
-    @h.known_defect("D-REMOVE-ENVINJECT",
-                    "the verify-home path is written into the env file unchecked (remove_signing_key.py:52); a newline in it "
-                    "appends a second `NAME=value` line to GITHUB_ENV")
     def test_a_verify_home_holding_a_control_character_is_refused(self):
         self.prepare()
         evil = self.verify + "\nEVIL=1"
@@ -316,9 +313,6 @@ class RealGpg(h.Case):
         self.assertFalse(os.path.exists(self.secret))
         self.assertFalse(os.path.exists(self.key))
 
-    @h.known_defect("D-REMOVE-SECRET-LEFT",
-                    "when a secret key was imported into the verify home the script exits 1 but leaves it there, and "
-                    "GNUPGHOME in the env file points at it (remove_signing_key.py:57-76 never deletes the verify home on failure)")
     def test_after_a_refusal_no_secret_key_is_left_anywhere(self):
         self.export(secret=True)
         h.run_main(S, self.argv(), env=self.env)
