@@ -39,6 +39,10 @@ Usage:
                     --sha and GH_TOKEN in the environment). Tests replace `compare_status` or
                     pass this flag.
 
+A version, given or tagged, is ASCII: any other character refuses it (Maven's case-insensitive SNAPSHOT
+test folds characters a Python `lower()` does not). The `gh` call is bounded by a timeout; its expiry
+refuses.
+
 Exit status: 0 resolved; 1 refused (reason on stderr as `::error::`); 2 usage error.
 Output: stdout carries one human line `resolved: ...`. With --output, `version=<v>` and
 `publish=<true|false>` are appended to that file, one per line, and only on success.
@@ -51,6 +55,7 @@ import subprocess
 import sys
 import unicodedata
 
+GH_TIMEOUT = 120
 NUMBER = r"(?:0|[1-9][0-9]{0,8})"
 SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}")
 TAG = re.compile(rf"v{NUMBER}\.{NUMBER}\.{NUMBER}")
@@ -87,7 +92,7 @@ def compare_status(repository: str, sha: str, default_branch: str) -> str:
     """Ask GitHub how the commit relates to the default branch. The one place this script uses the network."""
     out = subprocess.run(
         ["gh", "api", f"repos/{repository}/compare/{default_branch}...{sha}", "--jq", ".status"],
-        check=True, capture_output=True, text=True)
+        check=True, capture_output=True, text=True, timeout=GH_TIMEOUT)
     return out.stdout.strip()
 
 
@@ -112,6 +117,8 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
         if not TAG.fullmatch(tag):
             raise Refused("the tag is not a release tag (expected vMAJOR.MINOR.PATCH). Nothing released.")
         version = tag[1:]
+        if not a.version.isascii():
+            raise Refused("the version holds a non-ASCII character; a release version is ASCII only.")
         if a.version and a.version != version:
             raise Refused(f"tag {tag} and version input '{a.version}' disagree. On a tag the version is the tag.")
         if not a.default_branch:
@@ -132,6 +139,8 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
         print(f"tag {tag} points at a commit on {a.default_branch} ({status})")
     else:
         version = a.version
+        if not version.isascii():
+            raise Refused("the version holds a non-ASCII character; a release version is ASCII only.")
         if not SEMVER.fullmatch(version):
             raise Refused(f"version '{version}' is not MAJOR.MINOR.PATCH. A dry run needs one, and never a -SNAPSHOT.")
 

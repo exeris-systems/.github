@@ -22,6 +22,11 @@ path; any other element is judged by the literal `-SNAPSHOT`. Three classes:
 
 A property is judged where it is consumed, so it is not a class of its own.
 
+A `<version>` that holds a non-ASCII character is a hard hit, in the POM and in the dependency list:
+Maven's case-insensitive SNAPSHOT test folds characters (U+017F to S) that `str.lower()` does not, so
+a release version is ASCII or it is refused. The POM is read with a size bound and a nesting bound; a
+document beyond either is unreadable.
+
 Usage: scan_snapshots.py --effective-pom FILE --dependencies FILE --upload {true,false} [--summary FILE]
 
 Exit status: 0 none, or soft or floating hits on a dry run; 1 a hard hit, a soft or floating hit with
@@ -38,6 +43,9 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.parsers import expat
 
+MAX_XML_BYTES = 16 * 1024 * 1024
+MAX_XML_DEPTH = 200
+
 SNAPSHOT_TIMESTAMP = re.compile(r"(.*)-([0-9]{8}\.[0-9]{6})-([0-9]+)")
 VERSION_PARENTS = {"project", "parent", "dependency", "plugin", "extension", "path"}
 TOKEN = re.compile(r"[\s,\[\]()]+")
@@ -45,7 +53,10 @@ FLOATING = {"LATEST", "RELEASE"}
 
 
 def is_snapshot(version: str) -> bool:
-    return version[-8:].lower() == "snapshot" or SNAPSHOT_TIMESTAMP.fullmatch(version) is not None
+    """True when Maven says so. The suffix is compared the way Java's `regionMatches(ignoreCase)` does,
+    which folds U+017F to S as `upper()` does and `lower()` does not; a non-ASCII version is refused
+    separately, before this is asked."""
+    return version[-8:].upper().lower() == "snapshot" or SNAPSHOT_TIMESTAMP.fullmatch(version) is not None
 
 
 def floating(version: str) -> bool:
@@ -54,15 +65,31 @@ def floating(version: str) -> bool:
 
 
 def read_xml(path: str) -> ET.Element:
-    """Parse a POM. A DOCTYPE is refused before any entity is read; a POM never needs one."""
+    """Parse a POM. A DOCTYPE is refused before any entity is read, and so is a document over
+    MAX_XML_BYTES or nested deeper than MAX_XML_DEPTH; a POM needs none of that."""
     with open(path, "rb") as fh:
-        data = fh.read()
+        data = fh.read(MAX_XML_BYTES + 1)
+    if len(data) > MAX_XML_BYTES:
+        raise ET.ParseError(f"the document is larger than {MAX_XML_BYTES} bytes")
+    depth = 0
 
     def refuse(*_args):
         raise ET.ParseError("the document declares a DOCTYPE; a POM never needs one")
 
+    def start(*_args):
+        nonlocal depth
+        depth += 1
+        if depth > MAX_XML_DEPTH:
+            raise ET.ParseError(f"the document is nested deeper than {MAX_XML_DEPTH} elements")
+
+    def end(*_args):
+        nonlocal depth
+        depth -= 1
+
     parser = expat.ParserCreate()
     parser.StartDoctypeDeclHandler = refuse
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
     try:
         parser.Parse(data, True)
     except expat.ExpatError as exc:
@@ -89,6 +116,10 @@ def scan(effective_pom: str, dependencies: str) -> tuple[list[str], list[str], l
             up.append(local(e.tag))
         if "properties" in up:
             continue
+        if local(el.tag) == "version" and not el.text.isascii():
+            hard.append(f"effective pom: <version> {el.text.strip().encode('unicode_escape').decode('ascii')} "
+                        "is not ASCII; a release version is ASCII only")
+            continue
         is_version = local(el.tag) == "version" and up[:1] and up[0] in VERSION_PARENTS
         if is_version and floating(el.text):
             floats.add(f"floating version: <version> {el.text.strip()}")
@@ -104,6 +135,10 @@ def scan(effective_pom: str, dependencies: str) -> tuple[list[str], list[str], l
         for raw in fh:
             # `group:artifact:type[:classifier]:version:scope`; only those fields can be a version
             fields = [f.split()[0] for f in raw.split(":")[3:] if f.split()]
+            if not all(f.isascii() for f in fields):
+                hard.append("dependency: " + raw.strip().encode("unicode_escape").decode("ascii") +
+                            " has a version field that is not ASCII; a release version is ASCII only")
+                continue
             if "-SNAPSHOT" in raw or any(is_snapshot(f) for f in fields):
                 soft.add(f"dependency: {raw.strip()}")
     return hard, sorted(soft), sorted(floats)

@@ -401,9 +401,6 @@ class MavenRule(h.Case):
                     with self.subTest(script=name, version=version):
                         self.assertTrue(module.is_snapshot(version))
 
-    @known_defect("snapshot-case-fold", "Maven compares the SNAPSHOT suffix with String.regionMatches(ignoreCase), which folds U+017F "
-                                        "(long s) to S; `str.lower()` does not, so `1.0-\u017fNAPSHOT` is a snapshot to Maven and a "
-                                        "final version to both scripts")
     def test_the_case_folding_of_the_suffix_is_maven_s(self):
         versions = LONG_S
         truth = java_truth(versions)
