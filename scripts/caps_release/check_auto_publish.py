@@ -12,6 +12,11 @@ element at any depth (plugin configuration and each execution's):
   <waitUntil>    must be `validated`, compared case-insensitively; `uploaded` would not wait for
                  validation and `published` would wait for a publication that never happens.
 
+The same two values are required of a `<properties>` entry named `autoPublish` or `waitUntil`
+anywhere in the document: the plugin reads them as user properties, and a command-line
+`-DautoPublish=false` does not override a value the POM configures explicitly. A document that
+declares a DOCTYPE is refused before any entity is read.
+
 An absent element is accepted: the plugin's default is `false` / `VALIDATED`, and the workflow
 also passes both on the command line, which decides a parameter the POM leaves unset.
 A POM without the plugin passes: nothing is published through it.
@@ -26,8 +31,26 @@ from __future__ import annotations
 import argparse
 import sys
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 
 PLUGIN = "central-publishing-maven-plugin"
+
+
+def read_xml(path: str) -> ET.Element:
+    """Parse a POM. A DOCTYPE is refused before any entity is read; a POM never needs one."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+
+    def refuse(*_args):
+        raise ET.ParseError("the document declares a DOCTYPE; a POM never needs one")
+
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = refuse
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError as exc:
+        raise ET.ParseError(str(exc)) from exc
+    return ET.fromstring(data)
 
 
 def local(tag: str) -> str:
@@ -35,7 +58,7 @@ def local(tag: str) -> str:
 
 
 def contrary(effective_pom: str) -> tuple[list[str], int]:
-    root = ET.parse(effective_pom).getroot()
+    root = read_xml(effective_pom)
     problems: list[str] = []
     plugins = 0
     for plugin in root.iter():
@@ -50,17 +73,40 @@ def contrary(effective_pom: str) -> tuple[list[str], int]:
                 problems.append(f"<autoPublish>{value}</autoPublish> in the {PLUGIN} configuration; it must be false")
             if local(el.tag) == "waitUntil" and value.lower() != "validated":
                 problems.append(f"<waitUntil>{value}</waitUntil> in the {PLUGIN} configuration; it must be validated")
+    # The plugin reads the user properties `autoPublish` and `waitUntil` for a parameter its
+    # configuration leaves unset, and a POM <properties> entry of that name sets them. They are
+    # held to the same values, so the guard does not depend on what the command line passes.
+    for properties in root.iter():
+        if local(properties.tag) != "properties":
+            continue
+        for el in properties:
+            value = (el.text or "").strip()
+            if local(el.tag) == "autoPublish" and value != "false":
+                problems.append(f"<properties><autoPublish>{value}</autoPublish> in the POM; it must be false")
+            if local(el.tag) == "waitUntil" and value.lower() != "validated":
+                problems.append(f"<properties><waitUntil>{value}</waitUntil> in the POM; it must be validated")
     return problems, plugins
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return run(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"::error::the auto-publish guard failed unexpectedly ({type(exc).__name__}: {' '.join(str(exc).split())}).",
+              file=sys.stderr)
+        return 1
+
+
+def run(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--effective-pom", required=True)
     a = p.parse_args(argv)
     try:
         problems, plugins = contrary(a.effective_pom)
     except (OSError, ET.ParseError) as exc:
-        print(f"::error::{a.effective_pom} cannot be read ({exc}).", file=sys.stderr)
+        print(f"::error::{a.effective_pom} cannot be read ({' '.join(str(exc).split())}).", file=sys.stderr)
         return 1
     for problem in problems:
         print(f"::error::{problem}", file=sys.stderr)
