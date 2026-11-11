@@ -30,21 +30,48 @@
 #   CENTRAL_TOKEN_PASSWORD   the deploy step only, and only for `target: central`.
 #   GITHUB_TOKEN (packages)  the deploy step only, and only for `target: github-packages`.
 #
-# No step that runs the repository's build logic holds a secret except the deploy itself. The seed
-# pass, the version edit, the tests and the drift check all run before the key is imported, and the
-# deploy skips the tests.
+# STEPS OF `publish`, IN ORDER, AND WHAT EACH CAN REACH
+#
+#   1  check the secrets exist          booleans only; no secret value in the environment
+#   2  JDK, version edit, seed pass     the repository's build logic, no key and no secret
+#   3  write the Maven settings         a file of `${env.*}` placeholders; no secret value
+#   4  import the signing key           PRIVATE KEY IMPORTABLE from here: runs `gpg` and nothing else
+#   5  build, sign and upload           PRIVATE KEY, PASSPHRASE and the upload credential; the only
+#                                       step that runs the project's POM with a secret
+#   6  remove the signing key           `if: always()`. Stops the agent, deletes the private keyring
+#                                       and leaves a keyring holding the PUBLIC key alone
+#   7  drift check, readiness gate,     no private key and no secret in the runner: the gate
+#      run artifact                     verifies signatures with the public key only
+#
+# The private key is therefore importable in steps 4 and 5 and in no other step. The passphrase and
+# the upload credentials are in step 5 alone. `publish` runs NO tests: step 5 passes `-DskipTests`
+# and the seed pass only compiles. It relies on `build`, which runs the tests on the same commit
+# before `publish` can start (`needs: build`), and which a failing test stops. Nothing in `publish`
+# re-checks that the tests passed; the dependency does.
+#
+# `build` runs no step that holds a secret at all: its key is generated in the job.
 #
 # WHAT CANNOT BE AVOIDED. `deploy` is the project's own POM: Maven loads every plugin, extension and
 # annotation processor the effective build names — the repository's POM, its parents, the codegen
 # plugin and the processor, and whatever those resolve — into one JVM with the step's environment
 # and with the imported key in the runner's keyring. Any of them can read the passphrase, the
-# Central token or the GitHub token, and use the key. Signing outside Maven would not change that
+# Central token or the GitHub token, and use the key. The signing step cannot be moved out of that
+# JVM: the signature is made by the plugin during the build, which is also what puts the signed
+# files into the bundle. Signing outside Maven would not change that
 # for the token, because `central-publishing-maven-plugin` is what uploads. What bounds it: the
 # secrets live in `publish` alone; `publish` restores no build cache, so nothing a pull request
 # could have written is on its classpath; the Central deployment is created with `autoPublish`
 # false in the POM, so a person still presses Publish and an unpublished deployment can be dropped;
 # the GitHub token is repository-scoped and expires with the job. The release POM is therefore code
 # that runs with the secrets and has to be reviewed as such.
+#
+# PRECONDITIONS THE WORKFLOW CHECKS. A capability is a single-module project: a POM that declares
+# `<modules>` is refused, because the readiness gate, the run artifact and the attestation all read
+# the root `target/` and would otherwise disagree about what was released. The version a dry run is
+# given is one MAJOR.MINOR.PATCH line, matched as a whole string. A `-SNAPSHOT` project version is
+# an error on every run. A `-SNAPSHOT` among the DEPENDENCIES refuses any run with `upload: true`; on
+# a dry run (`upload: false`) it is a warning listed in the step summary, because a capability that
+# depends on another capability's snapshot could not otherwise rehearse.
 #
 # Actions are pinned by commit, the way the release workflows of the SDK, the kernel and the
 # tooling are, because this workflow handles signing keys; the gates in this directory pin by tag.
@@ -92,6 +119,7 @@ jobs:
           IN_VERSION: ${{ inputs.version }}
           IN_UPLOAD: ${{ inputs.upload }}
           IN_TARGET: ${{ inputs.target }}
+          GENERATED: ${{ inputs.generated-path }}
         run: |
           set -euo pipefail
 
@@ -100,12 +128,37 @@ jobs:
             *) echo "::error::target must be 'none', 'central' or 'github-packages', got '$IN_TARGET'." >&2; exit 1 ;;
           esac
 
+          # The whole string is matched, in bash, never line by line: a value with a newline in it
+          # would otherwise pass on one valid line and write a second `key=value` into the output
+          # file. A control character is refused outright, before any pattern is tried.
+          single_line() {
+            case "$1" in
+              *$'\n'*|*$'\r'*) return 1 ;;
+            esac
+          }
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          tag_re='^v[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if ! single_line "$IN_VERSION"; then
+            echo "::error::the version input holds a line break. It is one line, MAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+          if ! single_line "$IN_TARGET" || ! single_line "$IN_UPLOAD" || ! single_line "$GENERATED"; then
+            echo "::error::an input holds a line break." >&2
+            exit 1
+          fi
+          # The committed generated tree is a repository-relative path.
+          if [[ "$GENERATED" = /* || "$GENERATED" = *..* || -z "$GENERATED" ]]; then
+            echo "::error::generated-path must be a non-empty path inside the repository, got '$GENERATED'." >&2
+            exit 1
+          fi
+
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             tag="$GITHUB_REF_NAME"
             # A release tag is exactly vMAJOR.MINOR.PATCH. `v0.1.0-rc1` is not a release and must
             # not become one by matching a glob in the caller's trigger.
-            if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-              echo "::error::$tag is not a release tag (expected vMAJOR.MINOR.PATCH). Nothing released." >&2
+            if ! single_line "$tag" || [[ ! $tag =~ $tag_re ]]; then
+              echo "::error::the tag is not a release tag (expected vMAJOR.MINOR.PATCH). Nothing released." >&2
               exit 1
             fi
             version="${tag#v}"
@@ -125,7 +178,7 @@ jobs:
             esac
           else
             version="$IN_VERSION"
-            if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            if [[ ! $version =~ $semver ]]; then
               echo "::error::version '$version' is not MAJOR.MINOR.PATCH. A dry run needs one, and never a -SNAPSHOT." >&2
               exit 1
             fi
@@ -145,7 +198,9 @@ jobs:
             fi
           fi
 
-          { echo "version=$version"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+          # Both values are validated single lines here: `version` matched the pattern above as a
+          # whole string and `publish` is one of two literals.
+          printf 'version=%s\npublish=%s\n' "$version" "$publish" >> "$GITHUB_OUTPUT"
           echo "resolved: version=$version target=$IN_TARGET publish=$publish"
 
       # Maven treats `-P release` for a profile that does not exist as a warning and builds on,
@@ -161,6 +216,16 @@ jobs:
           missing=""
           add() { missing="${missing:+$missing; }$1"; }
           grep -q '<id>release</id>' pom.xml || add "the 'release' profile in pom.xml"
+          # Single-module is a precondition, not an accident: the readiness gate, the run artifact
+          # and the attestation all read the root `target/` only.
+          if python3 - <<'PY'
+          import sys, xml.etree.ElementTree as E
+          root = E.parse('pom.xml').getroot()
+          sys.exit(0 if root.find('{http://maven.apache.org/POM/4.0.0}modules') is not None else 1)
+          PY
+          then
+            add "a single-module project (pom.xml declares <modules>; a capability release is one module)"
+          fi
           central=false
           if grep -q 'central-publishing-maven-plugin' pom.xml; then central=true; fi
           if [ "$IN_TARGET" = "central" ]; then
@@ -205,22 +270,54 @@ jobs:
       # After the version is final, so a -SNAPSHOT left is a pin on something not released: in the
       # effective POM (a property, a plugin, a processor path) or in the resolved dependency tree.
       # Element values only, read by a parser: a comment that mentions a SNAPSHOT is not a pin.
+      #
+      # Two classes. A SNAPSHOT project version, parent, plugin or processor pin is an error on
+      # every run. A SNAPSHOT DEPENDENCY (declared, managed, or resolved) is an error when the run
+      # uploads and a warning, listed in the step summary, on a dry run: such a capability cannot
+      # otherwise rehearse. A property is judged where it is consumed, so it is not a class of its own.
       - name: Refuse a SNAPSHOT in the release build
+        env:
+          IN_UPLOAD: ${{ inputs.upload }}
         run: |
           set -euo pipefail
           mvn -B -ntp -q -P release org.apache.maven.plugins:maven-help-plugin:3.5.1:effective-pom -Doutput="$RUNNER_TEMP/effective-pom.xml"
           mvn -B -ntp -q -P release org.apache.maven.plugins:maven-dependency-plugin:3.8.1:list -DoutputFile="$RUNNER_TEMP/dependencies.txt"
           hits="$(python3 - "$RUNNER_TEMP/effective-pom.xml" <<'PY'
           import sys, xml.etree.ElementTree as E
-          for el in E.parse(sys.argv[1]).getroot().iter():
+          root = E.parse(sys.argv[1]).getroot()
+          parent = {c: p for p in root.iter() for c in p}
+          def local(e): return e.tag.split('}')[-1]
+          def chain(e):
+              out = []
+              while e in parent:
+                  e = parent[e]
+                  out.append(local(e))
+              return out
+          for el in root.iter():
               if el.text and '-SNAPSHOT' in el.text:
-                  print('effective pom: <' + el.tag.split('}')[-1] + '> ' + el.text.strip())
+                  up = chain(el)
+                  if 'properties' in up:
+                      continue
+                  soft = 'dependency' in up and 'plugin' not in up
+                  print(('SOFT' if soft else 'HARD') + '|effective pom: <' + local(el) + '> ' + el.text.strip())
           PY
-          grep -- '-SNAPSHOT' "$RUNNER_TEMP/dependencies.txt" | sed 's/^ *//; s/^/dependency: /' || true)"
-          if [ -n "$hits" ]; then
-            echo "$hits"
-            echo "::error::SNAPSHOT pins in the release build. Release the upstream first and pin its final version." >&2
+          grep -- '-SNAPSHOT' "$RUNNER_TEMP/dependencies.txt" | sed 's/^ *//; s/^/SOFT|dependency: /' || true)"
+          hard="$(printf '%s\n' "$hits" | grep '^HARD|' | cut -d'|' -f2- || true)"
+          soft="$(printf '%s\n' "$hits" | grep '^SOFT|' | cut -d'|' -f2- | sort -u || true)"
+          if [ -n "$hard" ]; then
+            echo "$hard"
+            echo "::error::SNAPSHOT pins in the release build (project version, parent, plugin or processor). Release the upstream first and pin its final version." >&2
             exit 1
+          fi
+          if [ -n "$soft" ]; then
+            echo "$soft"
+            if [ "$IN_UPLOAD" = "true" ]; then
+              echo "::error::SNAPSHOT dependencies in an uploading run. Release the upstream first and pin its final version." >&2
+              exit 1
+            fi
+            echo "::warning::This dry run depends on SNAPSHOTs. It rehearses the build; it could not be uploaded as it stands."
+            { echo "### WARNING: SNAPSHOT dependencies"; echo; echo "A run with \`upload: true\` would be refused. Dependencies:"; echo; printf '%s\n' "$soft" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           echo "ok — no SNAPSHOT in the effective POM or the resolved dependencies"
 
@@ -247,13 +344,30 @@ jobs:
       # With the Central plugin in the POM the build runs `deploy` with the upload skipped, which
       # writes the bundle a release would upload; without it, `verify`. Either way the gate below
       # inspects what a release would send.
+      #
+      # `skipUpload` is the plugin's own parameter (property `skipUpload`, default false): the
+      # bundle is built and nothing is sent. This job holds no credential for the plugin's server
+      # id and is given an empty settings file, so an upload attempted despite the property would
+      # fail on the missing credential rather than succeed quietly. The step also reads the
+      # plugin's log: success needs the plugin's own statement that it skipped the upload, and a
+      # line saying it began one fails the step.
       - name: Build with the release profile (second pass)
         env:
           HAS_CENTRAL: ${{ steps.profile.outputs.has_central_plugin }}
         run: |
           set -euo pipefail
           if [ "$HAS_CENTRAL" = "true" ]; then
-            mvn -B -ntp -P release deploy -DskipUpload=true
+            printf '%s\n' '<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"/>' > "$RUNNER_TEMP/empty-settings.xml"
+            log="$RUNNER_TEMP/dry-run-deploy.log"
+            mvn -B -ntp -P release deploy -DskipUpload=true --settings "$RUNNER_TEMP/empty-settings.xml" 2>&1 | tee "$log"
+            if grep -q 'Going to upload' "$log"; then
+              echo "::error::the dry run began an upload to Central. It holds no credential, so it cannot have succeeded; treat this as a failure of the dry-run guard." >&2
+              exit 1
+            fi
+            if ! grep -q "Skipping the upload of the bundle at user's request" "$log"; then
+              echo "::error::the Central plugin did not report that it skipped the upload; the dry run cannot be shown to have stayed local." >&2
+              exit 1
+            fi
           else
             mvn -B -ntp -P release verify
           fi
@@ -284,7 +398,9 @@ jobs:
           fail=0
           err() { echo "::error::$1" >&2; fail=1; }
 
-          mapfile -t mains < <(find . -maxdepth 3 -type f -path '*/target/*.jar' \
+          # The root `target/` only, the same files the run artifact keeps and the attestation
+          # covers; the project is single-module (checked before the build).
+          mapfile -t mains < <(find target -maxdepth 1 -type f -name '*.jar' \
             ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' | sort)
           if [ "${#mains[@]}" -eq 0 ]; then
             echo "::error::the build produced no main jar" >&2
@@ -450,18 +566,24 @@ jobs:
           </settings>
           XML
 
-      # The step that runs `gpg` and nothing else. After it the key is in the runner's keyring for
-      # the rest of the job; the passphrase is not, and reaches the deploy step alone.
+      # The step that runs `gpg` and nothing else. After it the private key is in a keyring of its
+      # own until "Remove the signing key" deletes that keyring, directly after the deploy; the
+      # passphrase is never in it and reaches the deploy step alone. The public half is exported to
+      # a file so that the later checks can verify signatures without the private key.
       - name: Import the signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
-          gpg --list-secret-keys --keyid-format long
+          home="$RUNNER_TEMP/publish-gnupg"
+          mkdir -m 700 "$home"
+          echo "GNUPGHOME=$home" >> "$GITHUB_ENV"
+          printf '%s' "$GPG_PRIVATE_KEY" | GNUPGHOME="$home" gpg --batch --import
+          GNUPGHOME="$home" gpg --list-secret-keys --keyid-format long
+          GNUPGHOME="$home" gpg --batch --armor --export > "$RUNNER_TEMP/signing-public.asc"
 
       # The deploy runs the project's POM with the secrets in its environment; see the header for
-      # what that exposes. `autoPublish` is false in the POM, so for Central this creates a
+      # what that exposes. It skips the tests: `build` ran them on this commit. `autoPublish` is false in the POM, so for Central this creates a
       # deployment and stops, and `waitUntil=validated` makes it block until Central has validated.
       # Review the result in the portal and press Publish there; until then it can be dropped,
       # afterwards nothing about it can ever be changed.
@@ -487,6 +609,32 @@ jobs:
               --settings "$settings"
           fi
 
+      # Directly after the deploy, whether it passed or not, and before any later step: stops the
+      # agent that may have cached the passphrase, deletes the keyring that held the private key
+      # and leaves a keyring with the public key alone. The checks below read nothing else, and
+      # `gpg --verify` needs no private key. The step fails if a secret key is still listed.
+      - name: Remove the signing key
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          secret_home="$RUNNER_TEMP/publish-gnupg"
+          if [ -d "$secret_home" ]; then
+            GNUPGHOME="$secret_home" gpgconf --kill gpg-agent || true
+            rm -rf "$secret_home"
+          fi
+          home="$RUNNER_TEMP/verify-gnupg"
+          mkdir -m 700 "$home"
+          echo "GNUPGHOME=$home" >> "$GITHUB_ENV"
+          if [ -s "$RUNNER_TEMP/signing-public.asc" ]; then
+            GNUPGHOME="$home" gpg --batch --import "$RUNNER_TEMP/signing-public.asc"
+          fi
+          rm -f "$RUNNER_TEMP/signing-public.asc"
+          if [ "$(GNUPGHOME="$home" gpg --list-secret-keys --with-colons | grep -c '^sec' || true)" != "0" ]; then
+            echo "::error::a secret key is still in the keyring after removal." >&2
+            exit 1
+          fi
+          echo "ok — the private key is gone; the keyring holds the public key only"
+
       - name: Assert the committed generated tree matches this build
         env:
           GENERATED: ${{ inputs.generated-path }}
@@ -509,7 +657,9 @@ jobs:
           fail=0
           err() { echo "::error::$1" >&2; fail=1; }
 
-          mapfile -t mains < <(find . -maxdepth 3 -type f -path '*/target/*.jar' \
+          # The root `target/` only, the same files the run artifact keeps and the attestation
+          # covers; the project is single-module (checked before the build).
+          mapfile -t mains < <(find target -maxdepth 1 -type f -name '*.jar' \
             ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' | sort)
           if [ "${#mains[@]}" -eq 0 ]; then
             echo "::error::the build produced no main jar" >&2
@@ -611,3 +761,5 @@ jobs:
         with:
           subject-path: |
             uploaded/**/*.jar
+            uploaded/**/*.pom
+            uploaded/**/*.zip
