@@ -80,6 +80,22 @@ MUTATIONS = {
     "upload-from-target:publish": [("          path: ${{ runner.temp }}/gated-files\n", "          path: target/\n", 1),
                                    ("          path: ${{ runner.temp }}/gated-files\n",
                                     "          path: |\n            ${{ runner.temp }}/gated-files\n            target/central-publishing/*.zip\n", 1)],
+    "upload-not-on-success:build": [
+        ("      - name: Keep what was built as a run artifact\n", "      - name: Keep what was built as a run artifact\n        if: always()\n", 0),
+        ("      - name: Keep what was built as a run artifact\n", "      - name: Keep what was built as a run artifact\n        if: ${{ always() }}\n", 0),
+        ("      - name: Keep what was built as a run artifact\n", "      - name: Keep what was built as a run artifact\n        if: ${{ failure() }}\n", 0),
+        ("      - name: Keep what was built as a run artifact\n", "      - name: Keep what was built as a run artifact\n        if: ${{ !cancelled() }}\n", 0)],
+    "upload-not-on-success:publish": [
+        ("      - name: Keep what was uploaded as a run artifact\n", "      - name: Keep what was uploaded as a run artifact\n        if: always()\n", 0),
+        ("      - name: Keep what was uploaded as a run artifact\n", "      - name: Keep what was uploaded as a run artifact\n        if: ${{ always() }}\n", 0),
+        ("      - name: Keep what was uploaded as a run artifact\n", "      - name: Keep what was uploaded as a run artifact\n        if: ${{ failure() || success() }}\n", 0)],
+    "gated-files-written-elsewhere:build": [
+        ("      - name: Keep what was built as a run artifact\n",
+         "      - name: Prepare\n        run: mkdir -p \"$RUNNER_TEMP/gated-files\"\n      - name: Keep what was built as a run artifact\n", 0)],
+    "gated-files-written-elsewhere:publish": [
+        ("      - name: Keep what was uploaded as a run artifact\n",
+         "      - name: Prepare\n        env:\n          D: ${{ runner.temp }}/gated-files\n        run: cp -r target \"$D\"\n"
+         "      - name: Keep what was uploaded as a run artifact\n", 0)],
     "upload-path-not-gated:build": [("          path: ${{ runner.temp }}/gated-files\n", "          path: ${{ runner.temp }}/other\n", 0)],
     "upload-path-not-gated:publish": [("          path: ${{ runner.temp }}/gated-files\n", "          path: ${{ runner.temp }}/other\n", 1)],
     "upload-missing:build": [("        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
@@ -152,6 +168,19 @@ class Real(h.Case):
             self.assertEqual(w.block_lines(uploads[0], "path"), [w.GATED])
             self.assertNotIn("target", uploads[0]["raw"].replace("target:", ""))
 
+    def test_neither_upload_step_has_a_condition_and_nothing_but_the_gate_names_the_staging_directory(self):
+        wf = w.parse(read())["jobs"]
+        for job in ("build", "publish"):
+            steps = wf[job]["steps"]
+            uploads = [s for s in steps if s["uses"].startswith("actions/upload-artifact@")]
+            self.assertEqual(len(uploads), 1, job)
+            self.assertEqual(uploads[0]["if"], "", f"{job}: an upload that runs after a failed gate would keep what was refused")
+            self.assertNotRegex(uploads[0]["raw"], r"\b(always|failure|cancelled)\s*\(")
+            gate = [i for i, s in enumerate(steps) if "check_release_readiness.py" in s["run"]]
+            self.assertEqual(len(gate), 1, job)
+            self.assertLess(gate[0], steps.index(uploads[0]), f"{job}: the upload follows the gate")
+            self.assertEqual([s["name"] for s in steps if "gated-files" in s["run"]], [steps[gate[0]]["name"]], job)
+
     def test_the_attestation_takes_its_subjects_only_from_the_downloaded_artifact(self):
         steps = w.parse(read())["jobs"]["attest"]["steps"]
         download = [s for s in steps if s["uses"].startswith("actions/download-artifact@")]
@@ -199,8 +228,33 @@ class Mutations(h.Case):
         ignore = {"job-missing", "import-step-not-unique", "deploy-step-not-unique", "removal-step-not-unique",
                   "publish-reads-no-secret", "top-level-write-permission", "build-not-read-only",
                   "attestations-outside-attest", "packages-outside-publish", "attest-not-conditional",
-                  "scripts-checkout-ref"}
+                  "scripts-checkout-ref",
+                  "upload-before-gate"}       # reordering needs a rewrite of two steps: test_an_upload_moved_ahead_of_its_gate...
         self.assertEqual(sorted(ids - covered - ignore), [])
+
+    def test_an_upload_moved_ahead_of_its_gate_is_caught_in_each_job(self):
+        text = read()
+        for upload_marker, next_marker, jname in (
+                ("      - name: Keep what was built as a run artifact\n", "  publish:\n", "build"),
+                ("      - name: Keep what was uploaded as a run artifact\n", "  attest:\n", "publish")):
+            with self.subTest(jname):
+                gate_step = self.step_containing(text, "check_release_readiness.py", jname)
+                a, b = gate_step
+                upload_start = text.index(upload_marker)
+                upload_end = text.index(next_marker, upload_start)
+                upload = text[upload_start:upload_end]
+                swapped = text[:a] + upload.rstrip("\n") + "\n\n" + text[a:b] + text[b:upload_start] + text[upload_end:]
+                self.assertNotEqual(swapped, text)
+                self.assertIn(f"upload-before-gate:{jname}", w.violations(swapped))
+
+    @staticmethod
+    def step_containing(text, needle, jname):
+        """(start, end) of the workflow step that holds NEEDLE in the job JNAME ('build' or 'publish')."""
+        job_start = text.index(f"\n  {jname}:\n")
+        at = text.index(needle, job_start)
+        start = text.rindex("\n      - ", job_start, at) + 1
+        end = text.find("\n      - ", at)
+        return start, end + 1
 
     def test_the_parse_notices_a_secret_moved_into_a_comment_only_when_it_is_shell(self):
         text = read()

@@ -131,6 +131,7 @@ def block_lines(s: dict, key: str) -> list[str]:
 
 
 GATED = "${{ runner.temp }}/gated-files"
+OUTCOME_CONDITION = re.compile(r"\b(always|failure|cancelled)\s*\(")
 STAGE_FLAG = re.compile(r'--stage "\$RUNNER_TEMP/gated-files"')
 
 
@@ -266,11 +267,21 @@ def violations(text: str) -> set[str]:
         if len(uploads) != 1:
             out.add(f"upload-missing:{jname}")
         for u in uploads:
+            # an upload runs only after a gate that passed: no condition that also runs it after a failure or a cancellation
+            if OUTCOME_CONDITION.search(u["if"]):
+                out.add(f"upload-not-on-success:{jname}")
+            if gates and steps_.index(u) < steps_.index(gates[0]):
+                out.add(f"upload-before-gate:{jname}")
             paths = block_lines(u, "path")
             if any("target" in p for p in paths):
                 out.add(f"upload-from-target:{jname}")
             if paths != [GATED]:
                 out.add(f"upload-path-not-gated:{jname}")
+        # the staging directory is the gate's to create: nothing else in the job names it
+        for st in steps_:
+            if st not in gates and not st["uses"].startswith("actions/upload-artifact@") and (
+                    "gated-files" in st["run"] or any("gated-files" in v for v in st["env"].values())):
+                out.add(f"gated-files-written-elsewhere:{jname}")
     att = jobs["attest"]["steps"]
     downloads = [i for i, s in enumerate(att) if s["uses"].startswith("actions/download-artifact@")]
     attests = [i for i, s in enumerate(att) if s["uses"].startswith("actions/attest-build-provenance@")]
