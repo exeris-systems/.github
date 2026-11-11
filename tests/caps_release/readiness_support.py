@@ -83,6 +83,22 @@ class Fixture(h.Case):
         os.chmod(self.gpg, 0o755)
         self.log = self.path("gpg.log")
 
+    def use_py_gpg(self):
+        """Replace the gpg double by one that logs its argument vector as JSON, so a name with a newline or a leading dash
+        can be seen intact; returns the log path."""
+        import sys
+        with open(self.gpg, "w") as fh:
+            fh.write(PY_GPG.format(python=sys.executable))
+        os.chmod(self.gpg, 0o755)
+        return self.log
+
+    def gpg_calls(self):
+        import json
+        if not os.path.exists(self.log):
+            return []
+        with open(self.log) as fh:
+            return [json.loads(ln) for ln in fh]
+
     def coordinate(self, base="a-1.0.0", sign=True, skip=(), javadoc_names=("index.html", "a/B.html"), pom_text=None):
         t = self.target
         make_zip(os.path.join(t, f"{base}.jar"), ["a/B.class"])
@@ -197,3 +213,32 @@ def deflate_zeros(total: int, level: int = 1) -> bytes:
         left -= n
     out.append(c.flush())
     return b"".join(out)
+
+
+PY_GPG = """#!{python}
+import hashlib, json, os, stat, sys, time
+args = sys.argv[1:]
+log = os.environ.get("PYGPG_LOG")
+sleep = os.environ.get("PYGPG_SLEEP")
+
+
+def mode(path):
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:
+        return None
+
+
+if log:
+    with open(log, "a") as fh:
+        fh.write(json.dumps({{"argv": args, "dir_modes": [mode(os.path.dirname(a)) for a in args[1:]],
+                             "scratch_modes": [mode(os.path.dirname(os.path.dirname(a))) for a in args[1:]]}}) + "\\n")
+if sleep:
+    time.sleep(float(sleep))
+if len(args) != 3 or args[0] != "--verify":
+    sys.exit(2)
+with open(args[2], "rb") as fh:
+    want = "SIG:" + hashlib.sha256(fh.read()).hexdigest()
+with open(args[1], "r") as fh:
+    sys.exit(0 if fh.read().strip() == want else 1)
+"""
