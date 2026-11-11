@@ -197,8 +197,6 @@ class Binding(Bundle):
         entries[self.named(".jar.sha1")] = hashlib.sha1(entries[self.named(".jar")]).hexdigest().encode()
         self.accepted(self.judge(entries, None, proc=False))
 
-    @known_defect("bundle-extra-unsigned", "a file of a published coordinate directory that has no signature in the bundle is accepted; "
-                                           "only the four built files are required to be signed")
     def test_an_extra_file_without_a_signature_must_not_pass(self):
         entries = self.entries()
         entries[self.named("-extra.jar")] = b"PK unsigned extra jar"
@@ -237,8 +235,6 @@ class Names(Bundle):
         res = self.judge(self.with_extra(self.named(".JAR"), b"upper"), None, proc=False)
         self.assertEqual(res.rc, 0, res)
 
-    @known_defect("bundle-case-collision", "an entry whose name differs from a built file only by case is accepted, and an extractor on a "
-                                           "case-folding file system overwrites the verified file with it")
     def test_names_that_differ_only_by_case_must_not_pass(self):
         res = self.judge(self.with_extra(self.named(".JAR"), b"upper"), None, proc=False)
         self.assertNotEqual(res.rc, 0, res)
@@ -526,8 +522,6 @@ class Headers(Bundle):
                 self.refused(res, "failed unexpectedly (BadZipFile")
                 self.assertEqual(len(res.errors()), 1)
 
-    @known_defect("bundle-local-header", "an entry the gate never reads (an extra file) may carry a local-header name that differs from its "
-                                         "central-directory name; a streaming extractor uses the local name")
     def test_a_local_header_name_that_differs_on_an_unread_entry_must_not_pass(self):
         items = [dict(name=n, data=d) for n, d in self.entries().items()]
         items.append(dict(name=self.named(".module"), data=b"{}", local_name="../../../../tmp/planted"))

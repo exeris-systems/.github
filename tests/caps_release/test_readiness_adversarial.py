@@ -231,13 +231,10 @@ class UnboundGroup(Gate):
     def test_what_a_group_less_pom_does_with_a_matching_bundle(self):
         self.accepted(self.check_bundle(group="eu.exeris.caps"))
 
-    @known_defect("group-unbound", "a release POM always has a groupId; without one the group path of the bundle is unbound, so a "
-                                   "bundle for ANY group passes. The gate must refuse the POM or bind the group some other way.")
     def test_a_bundle_for_a_foreign_group_must_not_pass(self):
         res = self.check_bundle(group="org.attacker.shadow")
         self.assertNotEqual(res.rc, 0, f"a bundle under org/attacker/shadow was accepted: {res}")
 
-    @known_defect("group-unbound", "the same omission for a POM that names no artifactId or no version: the name binding is skipped")
     def test_a_pom_naming_neither_artifact_nor_version_must_not_pass(self):
         with open(os.path.join(self.target, "a-1.0.0.pom"), "w") as fh:
             fh.write("<project><groupId>g</groupId></project>")
@@ -408,8 +405,6 @@ class Staging(Gate):
         self.refused(res, "a-1.0.0-sources.jar is a symbolic link")
         self.assertNotIn("a-1.0.0-sources.jar", self.staged() if os.path.exists(self.stage) else {})
 
-    @known_defect("stage-refused-file", "a file whose own check failed (a signature that does not verify) is copied to the stage of a "
-                                        "failing run, and the workflow uploads that directory with `if: always()`")
     def test_a_failing_run_does_not_stage_a_file_with_a_bad_signature(self):
         with open(os.path.join(self.target, "a-1.0.0.jar.asc"), "w") as fh:
             fh.write("garbage\n")
@@ -419,7 +414,6 @@ class Staging(Gate):
         self.assertNotIn("a-1.0.0.jar", staged)
         self.assertNotIn("a-1.0.0.jar.asc", staged)
 
-    @known_defect("stage-refused-file", "a file that is missing its signature is staged next to the files that were refused with it")
     def test_a_failing_run_does_not_stage_an_unsigned_file(self):
         os.remove(os.path.join(self.target, "a-1.0.0-javadoc.jar.asc"))
         self.refused(self.stage_run(), "has no detached signature")
@@ -455,8 +449,6 @@ exit $rc
         self.swapped_for_a_link()
         self.assertNotIn(b"EVIL BYTES", b"".join(self.staged().values()))
 
-    @known_defect("stage-skips-silently", "a gated file that is no longer a regular file when it is staged is dropped from the stage "
-                                          "without a finding, and the gate still ends `release-readiness: ok`")
     def test_a_gated_file_that_cannot_be_staged_fails_the_gate(self):
         res = self.swapped_for_a_link()
         self.refused(res)
@@ -492,8 +484,6 @@ exit $rc
         self.assertEqual(os.listdir(self.stage), ["x"])
         self.assertEqual(len(found), 1)
 
-    @known_defect("stage-not-bound", "the staged copy is not compared with the bytes that were gated, so a regular file swapped in "
-                                     "after the signature was verified is staged as if it were the signed one")
     def test_a_file_replaced_by_other_bytes_between_gating_and_staging_is_not_staged_as_gated(self):
         evil = self.path("evil.jar")
         with open(evil, "wb") as fh:
@@ -524,7 +514,6 @@ exit $rc
             module.check_bundle = real
         self.assertNotIn(b"EVIL BYTES", b"".join(self.staged().values()))
 
-    @known_defect("stage-not-bound", "the bundle replaced by another regular zip after it was judged is staged as the judged one")
     def test_the_bundle_replaced_by_another_zip_after_it_was_judged_is_not_staged(self):
         self.write_bundle(self.bundle_entries())
         with open(self.bundle_path, "rb") as fh:

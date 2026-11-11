@@ -19,26 +19,46 @@ A main jar is a `*.jar` that is not `-sources`, `-javadoc` or `-tests`. Every co
     (GNUPGHOME in the environment);
   * a version that is not a snapshot (Maven's own definition: a `SNAPSHOT` suffix in any case, or the
     timestamp form `-YYYYMMDD.HHMMSS-N`);
-  * a pom that, where it names an artifactId and a version, names the ones the files are called by.
+  * a pom that yields a groupId, an artifactId and a version (its own, or the group and version of its
+    `<parent>`) and names the ones the files are called by; a pom that does not is refused, so the
+    bundle is always bound to one full coordinate;
+  * a version that is ASCII: any other character refuses the coordinate, because Maven's case-insensitive
+    SNAPSHOT test folds characters that `str.lower()` does not.
 
 With --expect-bundle true, `<target-dir>/central-publishing/central-bundle.zip` must exist, be a
 regular file, stay within the entry and size bounds, and be bound to what was built:
 
-  * every entry name is a relative, normalised path of exactly `<group path>/<artifactId>/<version>/
-    <file>` (directory entries are plain relative paths), with no `.`, `..` or empty segment, no
-    backslash and no control character; a name occurs once; no entry is a symbolic link;
-  * every file is named `<artifactId>-<version>.*` or `<artifactId>-<version>-*` and sits in a
-    directory that holds `<artifactId>-<version>.pom`;
-  * the coordinates in the bundle are exactly the coordinates built, and when a built pom names a
-    groupId (its own or its parent's) the bundle's group path is that groupId; each built coordinate
-    has its pom, main, sources and javadoc jar and their signatures in the bundle;
-  * a bundle file that has a counterpart of the same name in `target/` is byte-identical to it;
+  * the file set is EXACTLY the gated set: for each built coordinate, under
+    `<group path of its pom>/<artifactId>/<version>/`, the four built files, the `.asc` of each, and
+    the `.md5`, `.sha1`, `.sha256` and `.sha512` of those eight; nothing else, and no other coordinate;
+  * every entry name is a relative, normalised path (directory entries are plain relative paths and
+    carry no payload), with no `.`, `..` or empty segment, no backslash and no control character; a
+    name occurs once, and no two names collide under case folding or Unicode normalisation (NFKC); no
+    entry is a symbolic link;
+  * a bundle file has the bytes of its counterpart of the same name in `target/`;
   * each `.asc` in the bundle is a good signature of the bundle's own file, with the same key check;
-  * each `.md5`, `.sha1`, `.sha256` or `.sha512` in the bundle matches the file it names.
+  * each checksum file holds the digest of the file it names, and, when it also holds a file name,
+    that name.
+
+The archive layout is checked entry by entry: the local file header at each central-directory offset
+carries the same name, flags, method and (without a data descriptor) sizes and CRC as the central
+record, the entries follow one another without a gap from offset 0 to the central directory, and the
+end record is the last 22 bytes. An archive comment, data before, between or after the entries, a
+ZIP64 record and encryption refuse the bundle, so a streaming extractor and this gate see the same
+files.
 
 The bundle is only listed and read in bounded streams, never extracted into the tree; the bounds are
 MAX_ENTRIES entries, MAX_TOTAL_BYTES in all, and a compression ratio of at most MAX_RATIO for an entry
 of MIN_RATIO_BYTES or more. All findings are reported before the gate fails; no main jar is fatal at once.
+
+WHAT IS STAGED IS WHAT WAS VERIFIED. Each gated file is opened once (`O_NOFOLLOW|O_NONBLOCK`, `fstat`
+must say regular file), read to the end into a private directory of the gate while its SHA-256 is
+computed, and every check (signature, POM, javadoc, bundle) is made on that private copy. Staging
+re-hashes the live file and refuses on any difference, then copies from the private copy while hashing
+again and refuses unless the digest equals the one taken when the file was read. What is staged is
+byte-identical to what was verified. A run with any finding stages NOTHING (and removes a partial
+stage), so no directory a later step could mistake for a release exists after a refusal. Every
+subprocess call is bounded by a timeout, and an expiry is a refusal.
 
 Usage: check_release_readiness.py --target-dir DIR [--expect-bundle {true,false}] [--uploaded]
                                   [--gpg PATH] [--stage DIR]
@@ -46,9 +66,10 @@ Usage: check_release_readiness.py --target-dir DIR [--expect-bundle {true,false}
   --expect-bundle  default false
   --uploaded       the run has already uploaded: the final refusal also says to drop the deployment
   --gpg            the gpg executable (default `gpg`)
-  --stage          a directory that does not exist yet; the gated files are copied into it (the bundle
-                   as `central-publishing/central-bundle.zip`), so that what a later step uploads or
-                   attests is the set that was gated and nothing else
+  --stage          a directory that does not exist yet; on a run without findings the gated files are
+                   copied into it (the bundle as `central-publishing/central-bundle.zip`), so that what
+                   a later step uploads or attests is the set that was gated and nothing else; on a run
+                   with a finding it is not created
 
 Exit status: 0 ready; 1 any finding; 2 usage error.
 Output: `coordinate: <name> - main, sources, javadoc, pom, signatures` per coordinate without a finding,
@@ -63,18 +84,24 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from xml.parsers import expat
 
 MAX_ENTRIES = 2000
 MAX_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_RATIO = 200
 MIN_RATIO_BYTES = 1024 * 1024
+MAX_XML_BYTES = 16 * 1024 * 1024
+MAX_XML_DEPTH = 200
+SUBPROCESS_TIMEOUT = 120
+BUNDLE_KEY = "central-publishing/central-bundle.zip"
 CHECKSUMS = {".md5": "md5", ".sha1": "sha1", ".sha256": "sha256", ".sha512": "sha512"}
 CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar", "-tests.jar")
 
@@ -85,7 +112,10 @@ TIMESTAMPED = re.compile(r"(.*)-([0-9]{8}\.[0-9]{6})-([0-9]+)")
 
 
 def is_snapshot(version: str) -> bool:
-    return version[-8:].lower() == "snapshot" or TIMESTAMPED.fullmatch(version) is not None
+    """True when Maven says so. The suffix is compared the way Java's `regionMatches(ignoreCase)` does,
+    which folds U+017F to S as `upper()` does and `lower()` does not; a non-ASCII version is refused
+    separately, before this is asked."""
+    return version[-8:].upper().lower() == "snapshot" or TIMESTAMPED.fullmatch(version) is not None
 
 
 def unusual(ch: str) -> bool:
@@ -98,15 +128,31 @@ def shown(name: str) -> str:
 
 
 def read_pom(path: str) -> ET.Element:
-    """Parse a POM. A DOCTYPE is refused before any entity is read; a POM never needs one."""
+    """Parse a POM. A DOCTYPE is refused before any entity is read, and so is a document over
+    MAX_XML_BYTES or nested deeper than MAX_XML_DEPTH; a POM needs none of that."""
     with open(path, "rb") as fh:
-        data = fh.read()
+        data = fh.read(MAX_XML_BYTES + 1)
+    if len(data) > MAX_XML_BYTES:
+        raise ET.ParseError(f"the document is larger than {MAX_XML_BYTES} bytes")
+    depth = 0
 
     def refuse(*_args):
         raise ET.ParseError("the document declares a DOCTYPE; a POM never needs one")
 
+    def start(*_args):
+        nonlocal depth
+        depth += 1
+        if depth > MAX_XML_DEPTH:
+            raise ET.ParseError(f"the document is nested deeper than {MAX_XML_DEPTH} elements")
+
+    def end(*_args):
+        nonlocal depth
+        depth -= 1
+
     parser = expat.ParserCreate()
     parser.StartDoctypeDeclHandler = refuse
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
     try:
         parser.Parse(data, True)
     except expat.ExpatError as exc:
@@ -152,12 +198,39 @@ def regular(path: str) -> bool:
         return False
 
 
-def sha256_of(path: str) -> str:
+def open_regular(path: str) -> int:
+    """A descriptor for PATH, opened without following a link or blocking, that is a regular file."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular file")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def digest_of_file(path: str) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as fh:
+    with os.fdopen(open_regular(path), "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def take(src: str, scratch: str, limit: int | None = None) -> tuple[str, str]:
+    """Read SRC once, to the end: copy it into a private directory under SCRATCH (keeping its base name)
+    while hashing the same bytes. Returns (private path, SHA-256 of what was read)."""
+    h = hashlib.sha256()
+    with os.fdopen(open_regular(src), "rb") as fin:
+        if limit is not None and os.fstat(fin.fileno()).st_size > limit:
+            raise OSError(f"larger than {limit} bytes")
+        private = os.path.join(tempfile.mkdtemp(dir=scratch), os.path.basename(src) or "file")
+        with open(private, "xb") as fout:
+            for chunk in iter(lambda: fin.read(1 << 20), b""):
+                h.update(chunk)
+                fout.write(chunk)
+    return private, h.hexdigest()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -179,7 +252,14 @@ def run(argv: list[str] | None) -> int:
     p.add_argument("--gpg", default="gpg")
     p.add_argument("--stage", default="")
     a = p.parse_args(argv)
+    scratch = tempfile.mkdtemp(prefix="bundle-verify-")
+    try:
+        return gate(a, scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
+
+def gate(a: argparse.Namespace, scratch: str) -> int:
     findings: list[str] = []
 
     def err(msg: str) -> None:
@@ -202,9 +282,17 @@ def run(argv: list[str] | None) -> int:
     def good_signature(asc: str, f: str) -> bool:
         try:
             return subprocess.run([a.gpg, "--verify", asc, f], stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL).returncode == 0
-        except OSError:
+                                  stderr=subprocess.DEVNULL, timeout=SUBPROCESS_TIMEOUT).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
             return False
+
+    held: dict[str, tuple[str, str]] = {}       # name -> (private copy, SHA-256 of the bytes that were read)
+
+    def hold(name: str) -> bool:
+        """Read the file once; every later check and the staging use that read. An unreadable file ends
+        the run through the unexpected-error line."""
+        held[name] = take(os.path.join(t, name), scratch)
+        return True
 
     allowed: set[str] = set()
     built: dict[str, tuple[str | None, str | None, str | None]] = {}    # base -> (group, artifactId, version)
@@ -218,7 +306,9 @@ def run(argv: list[str] | None) -> int:
         before = len(findings)
         base = main_jar[:-len(".jar")]
         shown_base = shown(base)
-        if is_snapshot(base):
+        if not base.isascii():
+            err(f"{shown_base} is not ASCII; a release version is ASCII only")
+        elif is_snapshot(base):
             err(f"{shown_base} is a SNAPSHOT; a release is final")
         files = [main_jar, f"{base}-sources.jar", f"{base}-javadoc.jar", f"{base}.pom"]
         intact = []
@@ -231,35 +321,48 @@ def run(argv: list[str] | None) -> int:
             elif os.path.lexists(path) and not regular(path):
                 err(f"{shown(want)} is not a regular file; only regular files are released")
             elif os.path.lexists(path):
+                if want == f"{base}.pom":
+                    try:
+                        hold(want)
+                    except OSError as exc:
+                        err(f"{shown_base}.pom cannot be read as a POM ({shown(' '.join(str(exc).split()))})")
+                        continue
+                else:
+                    hold(want)
                 intact.append(want)
-        javadoc = os.path.join(t, f"{base}-javadoc.jar")
         if f"{base}-javadoc.jar" in intact:
             try:
-                with zipfile.ZipFile(javadoc) as zf:
+                with zipfile.ZipFile(held[f"{base}-javadoc.jar"][0]) as zf:
                     if "index.html" not in zf.namelist():
                         err(f"{shown_base}-javadoc.jar holds no index.html")
             except zipfile.BadZipFile:
                 err(f"{shown_base}-javadoc.jar is not a zip file")
-        pom_path = os.path.join(t, f"{base}.pom")
         coordinate: tuple[str | None, str | None, str | None] = (None, None, None)
         if f"{base}.pom" in intact:
+            readable = True
             try:
-                coordinate = pom_coordinate(read_pom(pom_path))
+                coordinate = pom_coordinate(read_pom(held[f"{base}.pom"][0]))
             except (OSError, ET.ParseError) as exc:
+                readable = False
                 err(f"{shown_base}.pom cannot be read as a POM ({shown(' '.join(str(exc).split()))})")
             group, artifact, version = coordinate
-            if artifact and version and f"{artifact}-{version}" != base:
+            if readable and not (group and artifact and version):
+                err(f"{shown_base}.pom does not yield a groupId, an artifactId and a version (its own or its "
+                    "parent's); the bundle cannot be bound to a coordinate")
+            if not all(v.isascii() for v in (group, artifact, version) if v):
+                err(f"{shown_base}.pom names a coordinate that is not ASCII; a release version is ASCII only")
+            elif artifact and version and f"{artifact}-{version}" != base:
                 err(f"{shown_base}.pom declares {shown(artifact)}:{shown(version)}, which the files are not named after")
-            if version and is_snapshot(version):
+            if version and version.isascii() and is_snapshot(version):
                 err(f"{shown_base}.pom declares the SNAPSHOT version {shown(version)}; a release is final")
         built[base] = coordinate
         for f in intact:
-            asc = os.path.join(t, f + ".asc")
-            if os.path.islink(asc):
+            asc = f + ".asc"
+            if os.path.islink(os.path.join(t, asc)):
                 err(f"{shown(f)}.asc is a symbolic link; only regular files are released")
-            elif not regular(asc):
+            elif not regular(os.path.join(t, asc)):
                 err(f"{shown(f)} has no detached signature")
-            elif not good_signature(asc, os.path.join(t, f)):
+            elif hold(asc) and not good_signature(held[asc][0], held[f][0]):
                 err(f"{shown(f)}.asc is not a good signature")
         if len(findings) == before:
             print(f"coordinate: {shown_base} - main, sources, javadoc, pom, signatures")
@@ -275,44 +378,160 @@ def run(argv: list[str] | None) -> int:
     bundle_path = os.path.join(t, "central-publishing", "central-bundle.zip")
     bundle_ok = False
     if a.expect_bundle == "true":
-        bundle_ok = check_bundle(t, bundle_path, built, err, good_signature)
-
-    if a.stage:
-        stage(a.stage, t, sorted(f for f in allowed if regular(os.path.join(t, f))),
-              bundle_path if bundle_ok else None, err)
+        bundle_ok = check_bundle(t, bundle_path, built, err, good_signature, held, scratch)
 
     if findings:
         tail = "; if a deployment was uploaded, DROP it in the portal." if a.uploaded else ""
         print(f"::error::release-readiness failed{tail}", file=sys.stderr)
         return 1
+
+    if a.stage:
+        wrote = stage(a.stage, t, sorted(f for f in held if f in allowed), bundle_path if bundle_ok else None, err, held)
+        if findings:
+            if wrote:
+                shutil.rmtree(a.stage, ignore_errors=True)
+            print("::error::release-readiness failed: the gated files could not be staged", file=sys.stderr)
+            return 1
     print("release-readiness: ok")
     return 0
 
 
-def stage(dest: str, t: str, files: list[str], bundle: str | None, err) -> None:
-    """Copy the gated files into DEST. Each is opened without following a link and must be a regular file."""
+def stage(dest: str, t: str, files: list[str], bundle: str | None, err, held=None) -> bool:
+    """Copy the gated files into DEST: what is staged is byte-identical to what was verified.
+
+    A file in HELD (name -> (private copy, digest taken when it was read and verified)) is staged only
+    if the live file still has that digest, and is copied from the private copy while hashing it again;
+    a difference, a link, a special file or a vanished file is an error. A file with no record is
+    copied from the live file, opened without following a link and required to be regular. Returns True
+    when DEST was created here (the caller removes it if any file failed)."""
+    held = held or {}
     if os.path.lexists(dest) and (os.path.islink(dest) or not os.path.isdir(dest) or os.listdir(dest)):
         err(f"{shown(dest)} is not an empty directory; the gated files cannot be staged there")
-        return
+        return False
     os.makedirs(dest, mode=0o700, exist_ok=True)
-    copies = [(os.path.join(t, f), os.path.join(dest, f)) for f in files]
+    copies = [(f, os.path.join(t, f), os.path.join(dest, f)) for f in files]
     if bundle:
         os.makedirs(os.path.join(dest, "central-publishing"), mode=0o700, exist_ok=True)
-        copies.append((bundle, os.path.join(dest, "central-publishing", "central-bundle.zip")))
-    for src, dst in copies:
+        copies.append((BUNDLE_KEY, bundle, os.path.join(dest, "central-publishing", "central-bundle.zip")))
+    for key, src, dst in copies:
         try:
-            fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, "rb") as fin:
-                if not stat.S_ISREG(os.fstat(fin.fileno()).st_mode):
-                    raise OSError("not a regular file")
-                with open(dst, "xb") as fout:
-                    shutil.copyfileobj(fin, fout)
+            copy_gated(src, dst, held.get(key))
         except OSError as exc:
-            err(f"{shown(src)} cannot be staged ({exc})")
+            err(f"{shown(src)} cannot be staged ({shown(' '.join(str(exc).split()))})")
+    return True
 
 
-def check_bundle(t, bundle, built, err, good_signature) -> bool:
-    """Judge the Central bundle against what was built. True when it is a bounded zip that may be kept."""
+def copy_gated(src: str, dst: str, gated: tuple[str, str] | None) -> None:
+    if gated is None:
+        with os.fdopen(open_regular(src), "rb") as fin, open(dst, "xb") as fout:
+            shutil.copyfileobj(fin, fout)
+        return
+    private, digest = gated
+    if digest_of_file(src) != digest:
+        raise OSError("it is not the file that was verified")
+    h = hashlib.sha256()
+    with os.fdopen(open_regular(private), "rb") as fin, open(dst, "xb") as fout:
+        for chunk in iter(lambda: fin.read(1 << 20), b""):
+            h.update(chunk)
+            fout.write(chunk)
+    if h.hexdigest() != digest:
+        os.unlink(dst)
+        raise OSError("the verified copy changed")
+
+
+def layout_problem(path: str, infos: list[zipfile.ZipInfo]) -> str | None:
+    """Why the archive at PATH is not exactly its central directory's entries laid end to end, or None.
+
+    Every offset is bounds-checked by a short read, so any malformed input ends in a reason, not an exception."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            if size < 22:
+                return "it has no end record"
+            fh.seek(size - 22)
+            sig, disk, cd_disk, here, total, cd_size, cd_off, comment = struct.unpack("<4s4H2LH", fh.read(22))
+            if sig != b"PK\x05\x06" or comment:
+                return "its end record is not the last 22 bytes (an archive comment or data after the entries)"
+            if disk or cd_disk or here != total or total != len(infos):
+                return "its end record does not describe one archive of the listed entries"
+            if 0xFFFF in (here, total) or 0xFFFFFFFF in (cd_size, cd_off):
+                return "it is a ZIP64 archive"
+            if size >= 42:
+                fh.seek(size - 42)
+                if fh.read(4) == b"PK\x06\x07":
+                    return "it is a ZIP64 archive"
+            if cd_off + cd_size != size - 22:
+                return "there is data before the entries or between them and the central directory"
+            pos = 0
+            for i in sorted(infos, key=lambda e: e.header_offset):
+                if i.header_offset != pos:
+                    return "its entries do not follow one another from the start (data before, between or overlapping)"
+                if i.flag_bits & 0x1 or i.flag_bits & 0x40 or i.flag_bits & 0x2000:
+                    return "an entry is encrypted"
+                if i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    return "an entry uses a compression method other than stored or deflated"
+                if 0xFFFFFFFF in (i.compress_size, i.file_size, i.header_offset) or zip64_extra(i.extra):
+                    return "an entry has a ZIP64 record"
+                fh.seek(pos)
+                head = fh.read(30)
+                if len(head) < 30:
+                    return "a local header is cut short"
+                (lsig, _ver, flags, method, _t, _d, crc, csize, usize, nlen, elen) = struct.unpack("<4s5H3L2H", head)
+                if lsig != b"PK\x03\x04":
+                    return "a central-directory offset does not point at a local header"
+                raw = fh.read(nlen)
+                extra = fh.read(elen)
+                if len(raw) < nlen or len(extra) < elen:
+                    return "a local header is cut short"
+                try:
+                    name = raw.decode("utf-8" if flags & 0x800 else "cp437")
+                except UnicodeDecodeError:
+                    return "a local header name cannot be decoded"
+                if name != i.orig_filename:
+                    return f"the local header name {shown(name)} differs from the central-directory name {shown(i.orig_filename)}"
+                if flags != i.flag_bits or method != i.compress_type:
+                    return f"the local header of {shown(name)} disagrees with the central record in flags or method"
+                if zip64_extra(extra):
+                    return "an entry has a ZIP64 record"
+                end = pos + 30 + nlen + elen + i.compress_size
+                if flags & 0x8:
+                    fh.seek(end)
+                    tail = fh.read(16)
+                    fields = tail[4:16] if tail[:4] == b"PK\x07\x08" else tail[:12]
+                    if len(fields) < 12 or struct.unpack("<3L", fields) != (i.CRC, i.compress_size, i.file_size):
+                        return f"the data descriptor of {shown(name)} disagrees with the central record"
+                    end += 16 if tail[:4] == b"PK\x07\x08" else 12
+                elif (crc, csize, usize) != (i.CRC, i.compress_size, i.file_size):
+                    return f"the local header of {shown(name)} disagrees with the central record in size or CRC"
+                if end > cd_off:
+                    return "an entry runs into the central directory"
+                pos = end
+            if pos != cd_off:
+                return "there is data between the last entry and the central directory"
+    except (OSError, struct.error, ValueError, OverflowError) as exc:
+        return f"its layout cannot be read ({type(exc).__name__})"
+    return None
+
+
+def zip64_extra(extra: bytes) -> bool:
+    """Whether an extra-field block holds a ZIP64 record (header id 0x0001); a malformed block counts as one."""
+    pos = 0
+    while pos < len(extra):
+        if pos + 4 > len(extra):
+            return True
+        ident, length = struct.unpack("<2H", extra[pos:pos + 4])
+        if ident == 1 or pos + 4 + length > len(extra):
+            return True
+        pos += 4 + length
+    return False
+
+
+def check_bundle(t, bundle, built, err, good_signature, held=None, scratch=None) -> bool:
+    """Judge the Central bundle against what was built. True when it is a bounded zip that may be kept.
+
+    The bundle is read once into a private copy; the layout check, the listing and every read are made
+    on that copy, and its digest is recorded in HELD for staging."""
+    held = held if held is not None else {}
     directory = os.path.dirname(bundle)
     if os.path.islink(directory) or os.path.islink(bundle) or not os.path.lexists(bundle):
         err(f"{shown(bundle)} is missing; the release profile builds it at deploy")
@@ -320,8 +539,19 @@ def check_bundle(t, bundle, built, err, good_signature) -> bool:
     if not regular(bundle):
         err(f"{shown(bundle)} is not a regular file")
         return False
+    own = scratch is None
+    scratch = tempfile.mkdtemp(prefix="bundle-verify-") if own else scratch
     try:
-        zf = zipfile.ZipFile(bundle)
+        held[BUNDLE_KEY] = take(bundle, scratch, MAX_TOTAL_BYTES)
+        return judge_private_copy(t, bundle, held[BUNDLE_KEY][0], built, err, good_signature, held)
+    finally:
+        if own:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+
+def judge_private_copy(t, bundle, copy, built, err, good_signature, held) -> bool:
+    try:
+        zf = zipfile.ZipFile(copy)
     except zipfile.BadZipFile:
         err(f"{shown(bundle)} is not a zip file")
         return False
@@ -338,16 +568,38 @@ def check_bundle(t, bundle, built, err, good_signature) -> bool:
             if i.file_size >= MIN_RATIO_BYTES and i.file_size > MAX_RATIO * max(i.compress_size, 1):
                 err(f"central bundle: {shown(i.filename)} expands by more than {MAX_RATIO} times")
                 return False
-        judge_bundle(t, zf, infos, built, err, good_signature)
+        problem = layout_problem(copy, infos)
+        if problem:
+            err(f"central bundle: {problem}")
+            return False
+        try:
+            judge_bundle(t, zf, infos, built, err, good_signature, held)
+        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+            err(f"central bundle: an entry cannot be read ({type(exc).__name__})")
+            return False
         return True
 
 
-def judge_bundle(t, zf, infos, built, err, good_signature) -> None:
+def fold(name: str) -> str:
+    """A key under which two names that a case-folding or normalising file system would merge are equal."""
+    return unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", name.rstrip("/")).casefold())
+
+
+def judge_bundle(t, zf, infos, built, err, good_signature, held=None) -> None:
+    held = held or {}
     counts: dict[str, int] = {}
     for i in infos:
         counts[i.filename] = counts.get(i.filename, 0) + 1
     for name in sorted(n for n, c in counts.items() if c > 1):
         err(f"central bundle: {shown(name)} occurs {counts[name]} times")
+
+    folded: dict[str, set[str]] = {}
+    for n in counts:
+        folded.setdefault(fold(n), set()).add(n)
+    for names in sorted(folded.values(), key=sorted):
+        if len(names) > 1:
+            err("central bundle: " + ", ".join(shown(n) for n in sorted(names)) +
+                " collide under case folding or Unicode normalisation")
 
     files: dict[str, zipfile.ZipInfo] = {}
     stray: list[str] = []
@@ -357,6 +609,9 @@ def judge_bundle(t, zf, infos, built, err, good_signature) -> None:
             if valid_segments(name, True) is None:
                 stray.append(name)
                 err(f"central bundle: {shown(name)} is not a file of a published coordinate (an unsafe name)")
+            elif i.file_size:
+                stray.append(name)
+                err(f"central bundle: {shown(name)} is a directory entry that carries a payload")
             continue
         if (i.external_attr >> 16) & 0o170000 == 0o120000:
             stray.append(name)
@@ -394,7 +649,9 @@ def judge_bundle(t, zf, infos, built, err, good_signature) -> None:
             err(f"central bundle: {shown(stem)} is in {len(where)} directories")
         else:
             group = built[stem][0]
-            if group and "/".join(where[0].split("/")[:-2]) != group.replace(".", "/"):
+            if not group:
+                err(f"central bundle: {shown(where[0])} cannot be bound to a group: the built pom yields no coordinate")
+            elif "/".join(where[0].split("/")[:-2]) != group.replace(".", "/"):
                 err(f"central bundle: {shown(where[0])} is not under the group {shown(group)} of the built pom")
     for stem in sorted(built):
         if stem not in by_stem:
@@ -406,12 +663,26 @@ def judge_bundle(t, zf, infos, built, err, good_signature) -> None:
                 if f"{d}/{stem}{suffix}{extra}" not in files:
                     err(f"central bundle: {shown(d)} holds no {shown(stem + suffix + extra)}")
 
+    # the file set is exactly the gated set
+    expected: set[str] = set()
+    for stem, (group, artifact, version) in built.items():
+        if group and artifact and version:
+            d = f"{group.replace('.', '/')}/{artifact}/{version}"
+            for suffix in (".pom", ".jar", "-sources.jar", "-javadoc.jar"):
+                for sig in ("", ".asc"):
+                    expected.add(f"{d}/{stem}{suffix}{sig}")
+                    expected.update(f"{d}/{stem}{suffix}{sig}{c}" for c in CHECKSUMS)
+    reported = set(stray)
+    for name in sorted(files):
+        if name not in expected and name not in reported:
+            err(f"central bundle: {shown(name)} is not one of the gated files: only the four built files, their "
+                "signatures and the checksums of those are released")
+
     # the bundle's files are the files that were built
     for name in sorted(files):
         filename = name.rpartition("/")[2]
-        counterpart = os.path.join(t, filename)
-        if name.rpartition("/")[0] in dirs and regular(counterpart):
-            if digest_of(zf, files[name]) != sha256_of(counterpart):
+        if name.rpartition("/")[0] in dirs and filename in held:
+            if digest_of(zf, files[name]) != held[filename][1]:
                 err(f"central bundle: {shown(name)} differs from target/{shown(filename)}")
 
     # signatures and checksums of the bundle's own files
@@ -445,9 +716,12 @@ def judge_bundle(t, zf, infos, built, err, good_signature) -> None:
                         for chunk in iter(lambda: src.read(1 << 20), b""):
                             h.update(chunk)
                     with zf.open(files[name]) as src:
-                        stated = src.read(4096).decode("ascii", "replace").split()
-                    if not stated or stated[0].lower() != h.hexdigest():
-                        err(f"central bundle: {shown(name)} does not match {shown(subject.rpartition('/')[2])}")
+                        raw = src.read(4097)
+                    stated = raw.decode("ascii", "replace").split() if len(raw) <= 4096 else []
+                    subject_name = subject.rpartition("/")[2]
+                    if (len(stated) not in (1, 2) or stated[0].lower() != h.hexdigest()
+                            or (len(stated) == 2 and stated[1].lstrip("*") != subject_name)):
+                        err(f"central bundle: {shown(name)} does not match {shown(subject_name)}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

@@ -117,6 +117,17 @@
 # artifact is that directory and nothing else, and the attestation covers the run artifact, so the
 # three cannot disagree about what was released.
 #
+# Each gated file is read once, into a private directory of the gate, and every check (signature,
+# POM, javadoc, bundle) is made on that read; staging re-hashes the live file, refuses on a
+# difference, and copies from the private read. What is staged is byte-identical to what was
+# verified, and a file swapped in afterwards is a refusal, not a different release.
+#
+# A refused run stages NOTHING: the gate creates `gated-files` only when every check passed, and
+# removes it if staging itself fails. The artifact steps therefore run on success only, so a failed
+# gate leaves no artifact that could be mistaken for a release, and `attest` and any later reader
+# only ever see a directory a passing gate wrote. Diagnosis of a refusal is the gate's log, whose
+# `::error::` lines name every finding.
+#
 # Actions are pinned by commit, the way the release workflows of the SDK, the kernel and the
 # tooling are, because this workflow handles signing keys; the gates in this directory pin by tag.
 # A caller names this workflow `@main` like the gates, or by commit.
@@ -324,7 +335,6 @@ jobs:
             --expect-bundle "$HAS_CENTRAL" --gpg /usr/bin/gpg --stage "$RUNNER_TEMP/gated-files"
 
       - name: Keep what was built as a run artifact
-        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-gate-${{ steps.rel.outputs.version }}
@@ -536,7 +546,6 @@ jobs:
             --expect-bundle "$EXPECT_BUNDLE" --uploaded --gpg /usr/bin/gpg --stage "$RUNNER_TEMP/gated-files"
 
       - name: Keep what was uploaded as a run artifact
-        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ needs.build.outputs.version }}
