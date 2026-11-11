@@ -77,8 +77,6 @@ class Injected(h.Case):
         with open(env) as fh:
             self.assertEqual(fh.read(), "KEEP=1\n")
 
-    @known_defect("no-wrapper", "check_dry_run_log has no handler for an exception other than OSError: it ends in a traceback, "
-                                "not in one ::error:: line")
     def test_the_dry_run_log_check_ends_an_unexpected_exception_with_one_line(self):
         log = self.write("log", "Skipping the upload of the bundle at user's request")
         module = h.load("check_dry_run_log")
@@ -95,7 +93,6 @@ class Injected(h.Case):
             del module.open
         self.assertEqual((res.rc, len(res.errors())), (1, 1))
 
-    @known_defect("no-wrapper", "check_secrets has no handler for an unexpected exception")
     def test_the_secrets_check_ends_an_unexpected_exception_with_one_line(self):
         module = h.load("check_secrets")
 

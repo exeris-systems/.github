@@ -27,16 +27,35 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.parsers import expat
 
+MAX_XML_BYTES = 16 * 1024 * 1024
+MAX_XML_DEPTH = 200
+
 def read_xml(path: str) -> ET.Element:
-    """Parse a POM. A DOCTYPE is refused before any entity is read; a POM never needs one."""
+    """Parse a POM. A DOCTYPE is refused before any entity is read, and so is a document over
+    MAX_XML_BYTES or nested deeper than MAX_XML_DEPTH; a POM needs none of that."""
     with open(path, "rb") as fh:
-        data = fh.read()
+        data = fh.read(MAX_XML_BYTES + 1)
+    if len(data) > MAX_XML_BYTES:
+        raise ET.ParseError(f"the document is larger than {MAX_XML_BYTES} bytes")
+    depth = 0
 
     def refuse(*_args):
         raise ET.ParseError("the document declares a DOCTYPE; a POM never needs one")
 
+    def start(*_args):
+        nonlocal depth
+        depth += 1
+        if depth > MAX_XML_DEPTH:
+            raise ET.ParseError(f"the document is nested deeper than {MAX_XML_DEPTH} elements")
+
+    def end(*_args):
+        nonlocal depth
+        depth -= 1
+
     parser = expat.ParserCreate()
     parser.StartDoctypeDeclHandler = refuse
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
     try:
         parser.Parse(data, True)
     except expat.ExpatError as exc:

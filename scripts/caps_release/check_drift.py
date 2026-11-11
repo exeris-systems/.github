@@ -31,9 +31,16 @@ import subprocess
 import sys
 
 
+GIT_TIMEOUT = 300
+
+
 def git(repo: str, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "GIT_LITERAL_PATHSPECS": "1"}
-    return subprocess.run(["git", "--literal-pathspecs", "-C", repo, *args], capture_output=True, text=True, env=env)
+    try:
+        return subprocess.run(["git", "--literal-pathspecs", "-C", repo, *args], capture_output=True, text=True, env=env,
+                              timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", f"git timed out after {GIT_TIMEOUT} seconds")
 
 
 def main(argv: list[str] | None = None) -> int:

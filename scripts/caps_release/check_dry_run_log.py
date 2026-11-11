@@ -10,7 +10,7 @@ log that proves nothing a failure rather than a pass.
 Usage: check_dry_run_log.py --log FILE
 
 Exit status: 0 skip stated and no upload begun; 1 an upload began, or the skip is not stated, or
-the log is unreadable; 2 usage error.
+the log is unreadable, or the check failed unexpectedly (one `::error::` line); 2 usage error.
 Output: stdout `ok - ...`; the refusal on stderr as `::error::`.
 """
 from __future__ import annotations
@@ -23,6 +23,17 @@ SKIPPED = "Skipping the upload of the bundle at user's request"
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return run(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"::error::the dry-run log check failed unexpectedly ({type(exc).__name__}: "
+              f"{' '.join(str(exc).split())}).", file=sys.stderr)
+        return 1
+
+
+def run(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--log", required=True)
     a = p.parse_args(argv)

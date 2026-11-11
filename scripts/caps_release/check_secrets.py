@@ -10,7 +10,7 @@ Environment (each must be exactly `true` to count as present):
   HAVE_GPG_KEY, HAVE_GPG_PASSPHRASE                         required for every target
   HAVE_CENTRAL_USER, HAVE_CENTRAL_PASSWORD                  required for target `central` only
 
-Exit status: 0 all present; 1 one or more missing (named on stderr); 2 usage error (including a
+Exit status: 0 all present; 1 one or more missing (named on stderr), or the check failed unexpectedly; 2 usage error (including a
 target of `none`, which uploads nothing and has no business here).
 Output: stdout `ok - ...`.
 """
@@ -22,6 +22,17 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return run(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"::error::the secrets check failed unexpectedly ({type(exc).__name__}: "
+              f"{' '.join(str(exc).split())}).", file=sys.stderr)
+        return 1
+
+
+def run(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--target", required=True, choices=["central", "github-packages"])
     a = p.parse_args(argv)
