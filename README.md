@@ -59,7 +59,13 @@ does not run is a gate nobody has tested.
     caps-release.yml     reusable — release of a capability (`eu.exeris.caps:*`): a `build` job with no
                          secret that signs with a throwaway key and runs every gate, a `publish` job that
                          alone holds the secrets and runs only for `upload: true` with a `target` other
-                         than `none`, and an `attest` job for provenance. The default uploads nothing
+                         than `none`, and an `attest` job for provenance. The default uploads nothing.
+                         Every decision it makes is a script of `scripts/caps_release/`, fetched at the
+                         commit the running workflow came from (`github.job_workflow_sha`), copied out
+                         of the workspace into `$RUNNER_TEMP` and verified against a digest taken
+                         before any project code ran
+    caps-release-tests.yml  the tests of those scripts, on every pull request and every push; fails
+                         when it collects none
     guardrails.yml       this repository's OWN caller — it runs its gates, and the review in parts, on itself
     labels-sync.yml      applies labels.yml across the organisation
     issue-hygiene.yml    ages `needs-reproducer` / `needs-evidence`
@@ -93,6 +99,13 @@ scripts/
                          is run rather than wired in
   label_map_check.py     labels-from-verdict.json names only tags in the schema and labels in labels.yml
   caller_bundle_check.py the reviewed repository's bundle pin against this one's (§B.6a)
+  caps_release/          one script per decision of `caps-release.yml`, standard library only, no
+                         dependency on GitHub's environment beyond its arguments: resolve_release,
+                         check_release_profile, check_pom_version, scan_snapshots, check_auto_publish,
+                         check_dry_run_log, check_drift, check_release_readiness, check_secrets,
+                         remove_signing_key. Each reports through its exit status (0 ok, 1 refused,
+                         2 usage) and a `::error::` line on stderr
+  run_caps_release_tests.py  runs `tests/caps_release/`; fails when it collects no test
   (the agent-layer tooling is NOT here — the bundle owns it. docs-lint.yml checks exeris-agents out
    into .agents-tools/ and runs it from there; `.agents/` below is this repository's vendored copy)
 package.json             anchors this checkout as its own Node project — see commit-lint.yml for what walks up without it
@@ -279,6 +292,7 @@ python scripts/caller_permissions_check.py           # the caller blocks and eve
 python scripts/bundle_pin_check.py                   # the vendored bundle is the ref docs-lint uses
 python scripts/label_map_check.py                    # the label map names only what exists
 python scripts/publish_verdict_suite.py --root .     # the publish step's rules, no network, no token
+python scripts/run_caps_release_tests.py             # the capability release scripts, on plain files
 python scripts/vale_retracted_figures_suite.py      # the error-level Vale rule, on the Vale docs-lint pins
 # agent layer: from the bundle, not from here
 git clone https://github.com/exeris-systems/exeris-agents ../exeris-agents
