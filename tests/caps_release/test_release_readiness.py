@@ -14,67 +14,9 @@ import warnings
 import zipfile
 
 import caps_release_helpers as h
+from readiness_support import Fixture, GROUP, make_zip, pom_xml, sig_of, write_zip
 
 S = "check_release_readiness"
-
-FAKE_GPG = """#!/bin/sh
-if [ -n "$FAKE_GPG_LOG" ]; then printf '%s\\t%s\\t%s\\n' "$1" "$2" "$3" >> "$FAKE_GPG_LOG"; fi
-[ $# -eq 3 ] && [ "$1" = "--verify" ] || exit 2
-want="SIG:$(sha256sum "$3" | cut -d' ' -f1)"
-[ "$(cat "$2")" = "$want" ]
-"""
-
-
-def sig_of(path):
-    with open(path, "rb") as fh:
-        return "SIG:" + hashlib.sha256(fh.read()).hexdigest() + "\n"
-
-
-def make_zip(path, names, payload=b"x"):
-    with zipfile.ZipFile(path, "w") as z:
-        for n in names:
-            z.writestr(n, payload)
-
-
-class Fixture(h.Case):
-    """A target/ directory and a gpg double that accepts a signature only of the file it is handed."""
-
-    def setUp(self):
-        super().setUp()
-        self.target = self.path("target")
-        os.makedirs(self.target)
-        self.gpg = self.write("fake-gpg", FAKE_GPG)
-        os.chmod(self.gpg, 0o755)
-        self.log = self.path("gpg.log")
-
-    def coordinate(self, base="a-1.0.0", sign=True, skip=(), javadoc_names=("index.html", "a/B.html")):
-        t = self.target
-        make_zip(os.path.join(t, f"{base}.jar"), ["a/B.class"])
-        make_zip(os.path.join(t, f"{base}-sources.jar"), ["a/B.java"])
-        make_zip(os.path.join(t, f"{base}-javadoc.jar"), list(javadoc_names))
-        with open(os.path.join(t, f"{base}.pom"), "w") as fh:
-            fh.write(f"<project>{base}</project>")
-        for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom"):
-            f = os.path.join(t, base + suffix)
-            if suffix in skip:
-                os.remove(f)
-            elif sign:
-                with open(f + ".asc", "w") as fh:
-                    fh.write(sig_of(f))
-        return base
-
-    def bundle(self, names, payload=b"x"):
-        os.makedirs(os.path.join(self.target, "central-publishing"), exist_ok=True)
-        make_zip(os.path.join(self.target, "central-publishing", "central-bundle.zip"), names, payload)
-
-    @staticmethod
-    def good_bundle(g="eu/exeris/caps", a="a", v="1.0.0"):
-        d = f"{g}/{a}/{v}/{a}-{v}"
-        return [f"{d}.pom", f"{d}.jar", f"{d}-sources.jar", f"{d}-javadoc.jar", f"{d}.pom.asc", f"{d}.jar.asc",
-                f"{d}.jar.md5", f"{d}.jar.sha1", f"{d}-sources.jar.asc", f"{d}-javadoc.jar.asc", f"{d}.module"]
-
-    def check(self, *extra):
-        return self.both(S, ["--target-dir", self.target, "--gpg", self.gpg, *extra])
 
 
 class Complete(Fixture):
@@ -274,16 +216,6 @@ class Bundle(Fixture):
         super().setUp()
         self.coordinate()
 
-    def test_a_clean_bundle(self):
-        self.bundle(self.good_bundle())
-        res = self.check("--expect-bundle", "true")
-        self.accepted(res)
-        self.assertIn("central bundle: 11 file(s), 0 outside a coordinate", res.out)
-
-    def test_directory_entries_are_allowed(self):
-        self.bundle(["eu/", "eu/exeris/", "eu/exeris/caps/a/1.0.0/"] + self.good_bundle())
-        self.accepted(self.check("--expect-bundle", "true"))
-
     def test_bundle_expected_but_missing_or_not_a_zip(self):
         self.refused(self.check("--expect-bundle", "true"), "central-bundle.zip is missing")
         os.makedirs(os.path.join(self.target, "central-publishing"))
@@ -332,19 +264,6 @@ class Bundle(Fixture):
         self.bundle([f"{d}/a-1.0.0.jar", "eu/exeris/caps/a/0.9.0/a-0.9.0.pom"])
         self.refused(self.check("--expect-bundle", "true"), f"{d}/a-1.0.0.jar")
 
-    def test_a_zip_bomb_is_listed_not_expanded(self):
-        names = self.good_bundle()
-        os.makedirs(os.path.join(self.target, "central-publishing"), exist_ok=True)
-        path = os.path.join(self.target, "central-publishing", "central-bundle.zip")
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-            for n in names:
-                z.writestr(n, b"x")
-            z.writestr("eu/exeris/caps/a/1.0.0/a-1.0.0.bomb", b"\0" * (100 * 1024 * 1024))
-        start = time.monotonic()
-        res = self.check("--expect-bundle", "true")
-        self.accepted(res)
-        self.assertLess(time.monotonic() - start, 20)
-
     def test_bundle_refusal_with_uploaded(self):
         self.bundle(self.good_bundle() + ["x.txt"])
         self.assertIn("DROP it", self.check("--expect-bundle", "true", "--uploaded").errors()[-1])
@@ -368,6 +287,52 @@ class Bundle(Fixture):
             warnings.simplefilter("ignore")
             self.bundle(names + [names[1]])
         self.refused(self.check("--expect-bundle", "true"))
+
+
+class RealBundle(Fixture):
+    """A bundle that is what the build produced: the target/ bytes, verified signatures, correct checksums."""
+
+    def setUp(self):
+        super().setUp()
+        self.real_coordinate()
+
+    def test_a_clean_bundle(self):
+        entries = self.bundle_entries()
+        res = self.check_bundle(entries)
+        self.accepted(res)
+        self.assertIn(f"central bundle: {len(entries)} file(s), 0 outside a coordinate", res.out)
+        self.assertIn("coordinate: a-1.0.0", res.out)
+
+    def test_a_clean_bundle_without_checksum_files(self):
+        self.accepted(self.check_bundle(checksums=False))
+
+    def test_directory_entries_are_allowed(self):
+        entries = {"eu/": b"", "eu/exeris/": b"", "eu/exeris/caps/a/1.0.0/": b""}
+        entries.update(self.bundle_entries())
+        self.accepted(self.check_bundle(entries))
+
+    def test_a_clean_bundle_of_two_coordinates(self):
+        self.real_coordinate(artifact="b", version="2.0.0")
+        self.accepted(self.check_bundle(coords=(("a", "1.0.0"), ("b", "2.0.0"))))
+
+    def test_the_group_path_comes_from_the_parent_when_the_pom_names_none(self):
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.coordinate("a-1.0.0", pom_text=pom_xml(group=None, parent_group="org.parent"))
+        self.accepted(self.check_bundle(group="org.parent"))
+        self.refused(self.check_bundle(group="org.other"), "is not under the group org.parent")
+
+    def test_a_zip_bomb_is_refused_by_its_ratio_quickly_and_nothing_is_extracted(self):
+        entries = self.bundle_entries()
+        entries["eu/exeris/caps/a/1.0.0/a-1.0.0.bomb"] = b"\0" * (100 * 1024 * 1024)
+        self.write_bundle(entries)
+        before, tmp_before = self.tree(), set(os.listdir(tempfile.gettempdir()))
+        start = time.monotonic()
+        res = self.check("--expect-bundle", "true")
+        self.assertLess(time.monotonic() - start, 10)
+        self.refused(res, "expands by more than 200 times")
+        self.assertEqual(self.tree(), before, "nothing is written under the tree")
+        self.assertEqual(set(os.listdir(tempfile.gettempdir())) - tmp_before, set(), "nothing is left in the temp directory")
 
 
 @unittest.skipUnless(h.have_gpg(), "gpg is not installed")
