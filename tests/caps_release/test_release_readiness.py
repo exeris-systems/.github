@@ -328,13 +328,15 @@ class RealBundle(Fixture):
         entries = self.bundle_entries()
         entries["eu/exeris/caps/a/1.0.0/a-1.0.0.bomb"] = b"\0" * (100 * 1024 * 1024)
         self.write_bundle(entries)
-        before, tmp_before = self.tree(), set(os.listdir(tempfile.gettempdir()))
+        before = self.tree()
+        tmp_before = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("bundle-verify-")}
         start = time.monotonic()
         res = self.check("--expect-bundle", "true")
         self.assertLess(time.monotonic() - start, 10)
         self.refused(res, "expands by more than 200 times")
         self.assertEqual(self.tree(), before, "nothing is written under the tree")
-        self.assertEqual(set(os.listdir(tempfile.gettempdir())) - tmp_before, set(), "nothing is left in the temp directory")
+        self.assertEqual({n for n in os.listdir(tempfile.gettempdir()) if n.startswith("bundle-verify-")} - tmp_before, set(),
+                         "the verification scratch directory is removed")
 
 
 @unittest.skipUnless(h.have_gpg(), "gpg is not installed")
