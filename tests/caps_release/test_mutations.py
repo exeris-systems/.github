@@ -21,7 +21,7 @@ import unittest
 from collections import Counter
 
 import caps_release_helpers as h
-from mutation_table import M, SECRETS
+from mutation_table import EQUIVALENT, M, SECRETS
 
 
 KILLERS_FILE = os.path.join(h.HERE, "mutation_killers.json")
@@ -89,7 +89,7 @@ def judge(entry, private):
         tempfile.tempdir = None
 
 
-TIMEOUT = 25
+TIMEOUT = int(os.environ.get("CAPS_MUTANT_TIMEOUT", "25"))      # a recording pass, which has no recorded killer to run first, needs more
 KILLERS = load_killers()
 
 
@@ -169,6 +169,17 @@ class Mutants(unittest.TestCase):
         for script in on_disk:
             self.assertGreaterEqual(scripts[script], 6, script)
         self.assertGreaterEqual(len(M), 400)
+
+    def test_every_equivalent_mutant_is_justified_and_still_applies_once(self):
+        self.assertGreaterEqual(len(EQUIVALENT), 10)
+        seen = set()
+        for script, old, new, why in EQUIVALENT:
+            with open(source_of(script), encoding="utf-8") as fh:
+                self.assertEqual(fh.read().count(old), 1, f"{script}: {old[:70]!r} no longer applies; review the mutant")
+            self.assertGreater(len(why.split()), 5, f"{script}: {old[:70]!r} needs a reason it cannot be told from the script")
+            self.assertNotIn((script, old, new), seen)
+            self.assertNotIn((script, old, new), {(a, b, c) for a, b, c, _ in M}, "a mutant is either judged or equivalent")
+            seen.add((script, old, new))
 
     def test_every_pattern_is_unique_in_its_script(self):
         texts, seen = {}, set()
