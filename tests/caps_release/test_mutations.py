@@ -71,9 +71,8 @@ def killed(script, old, new, selectors):
         shutil.rmtree(work, ignore_errors=True)
 
 
-def judge(entry):
+def judge(entry, private):
     """Runs in a worker: a private temporary directory, so concurrent mutants never see each other's scratch files."""
-    private = tempfile.mkdtemp(prefix="caps-worker-")
     tempfile.tempdir = private
     cwd = os.getcwd()
     os.chdir(private)               # a mutant that writes to a relative path writes here, not into the repository
@@ -88,7 +87,6 @@ def judge(entry):
     finally:
         os.chdir(cwd)
         tempfile.tempdir = None
-        shutil.rmtree(private, ignore_errors=True)
 
 
 TIMEOUT = 25
@@ -100,8 +98,8 @@ def loadable(name):
     return suite.countTestCases() == 1 and "_FailedTest" not in repr(suite)
 
 
-def _child(entry, conn):
-    conn.send(judge(entry))
+def _child(entry, private, conn):
+    conn.send(judge(entry, private))
     conn.close()
 
 
@@ -118,11 +116,12 @@ def judge_all(entries, workers=None):
         while pending and len(running) < workers:
             i = pending.pop(0)
             recv, send = ctx.Pipe(duplex=False)
-            proc = ctx.Process(target=_child, args=(entries[i], send))
+            private = tempfile.mkdtemp(prefix="caps-worker-")       # removed here, so a killed worker leaves nothing
+            proc = ctx.Process(target=_child, args=(entries[i], private, send))
             proc.start()
             send.close()
-            running[i] = (proc, recv, time.monotonic())
-        for i, (proc, recv, started) in list(running.items()):
+            running[i] = (proc, recv, time.monotonic(), private)
+        for i, (proc, recv, started, private) in list(running.items()):
             if recv.poll(0.02):
                 try:
                     results[i] = recv.recv()
@@ -137,6 +136,7 @@ def judge_all(entries, workers=None):
                 continue
             proc.join()
             recv.close()
+            shutil.rmtree(private, ignore_errors=True)
             del running[i]
     return results
 
