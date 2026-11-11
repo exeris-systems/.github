@@ -6,10 +6,13 @@ produces unsigned artifacts that fail much later with a message naming neither t
 cause. This reads the POM as XML (element values only, so a comment that mentions a profile is not
 one) and refuses up front.
 
-Refused: no profile whose <id> is `release`; a root <modules> (a capability release is one module:
-the readiness gate, the run artifact and the attestation all read the root `target/`); and, for
-target `central`, no `central-publishing-maven-plugin` <artifactId> or no <publishingServerId> of
-`central`.
+Refused: no profile whose <id> is `release`; a <modules> in the project or in ANY profile (a
+capability release is one module: `-P release` must not build several, and the readiness gate, the
+run artifact and the attestation all read the root `target/`); and, for target `central`, no
+`org.sonatype.central:central-publishing-maven-plugin` <plugin> under the release profile's
+<build><plugins> whose <configuration> sets <publishingServerId> to `central`. A plugin elsewhere
+(the project's own <build>, <pluginManagement>, a dependency, a property) does not count. A document
+that declares a DOCTYPE is refused before any entity is read.
 
 Usage: check_release_profile.py --pom pom.xml --target {none,central,github-packages} [--output FILE]
 
@@ -22,36 +25,77 @@ from __future__ import annotations
 import argparse
 import sys
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
+
+def read_xml(path: str) -> ET.Element:
+    """Parse a POM. A DOCTYPE is refused before any entity is read; a POM never needs one."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+
+    def refuse(*_args):
+        raise ET.ParseError("the document declares a DOCTYPE; a POM never needs one")
+
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = refuse
+    try:
+        parser.Parse(data, True)
+    except expat.ExpatError as exc:
+        raise ET.ParseError(str(exc)) from exc
+    return ET.fromstring(data)
+
+
+CENTRAL_GROUP = "org.sonatype.central"
+CENTRAL_PLUGIN = "central-publishing-maven-plugin"
 
 
 def local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def children(el: ET.Element, name: str) -> list[ET.Element]:
+    return [c for c in el if local(c.tag) == name]
+
+
+def text(el: ET.Element, name: str) -> str:
+    return " ".join(c.text.strip() for c in children(el, name) if c.text)
+
+
 def check(pom: str, target: str) -> tuple[list[str], bool]:
-    root = ET.parse(pom).getroot()
+    root = read_xml(pom)
     missing: list[str] = []
-    ids = [(c.text or "").strip()
-           for profiles in root if local(profiles.tag) == "profiles"
-           for profile in profiles if local(profile.tag) == "profile"
-           for c in profile if local(c.tag) == "id"]
-    if "release" not in ids:
+    profiles = [profile for container in children(root, "profiles") for profile in children(container, "profile")]
+    release = [profile for profile in profiles if (text(profile, "id")) == "release"]
+    if not release:
         missing.append("the 'release' profile in pom.xml")
-    if any(local(c.tag) == "modules" for c in root):
-        missing.append("a single-module project (pom.xml declares <modules>; a capability release is one module)")
-    values = {}
-    for el in root.iter():
-        values.setdefault(local(el.tag), []).append((el.text or "").strip())
-    central = "central-publishing-maven-plugin" in values.get("artifactId", [])
+    if children(root, "modules") or any(children(profile, "modules") for profile in profiles):
+        missing.append("a single-module project (pom.xml declares <modules>, in the project or in a profile; "
+                       "a capability release is one module)")
+    # the plugin is the <plugin> of the release profile's <build><plugins> with this groupId and artifactId
+    plugins = [plugin for profile in release for build in children(profile, "build")
+               for container in children(build, "plugins") for plugin in children(container, "plugin")
+               if text(plugin, "groupId") == CENTRAL_GROUP and text(plugin, "artifactId") == CENTRAL_PLUGIN]
+    central = bool(plugins)
     if target == "central":
         if not central:
-            missing.append("central-publishing-maven-plugin in the release profile")
-        if "central" not in values.get("publishingServerId", []):
-            missing.append("<publishingServerId>central</publishingServerId>")
+            missing.append(f"{CENTRAL_GROUP}:{CENTRAL_PLUGIN} in the release profile's <build><plugins>")
+        if not any(text(configuration, "publishingServerId") == "central"
+                   for plugin in plugins for configuration in children(plugin, "configuration")):
+            missing.append("<publishingServerId>central</publishingServerId> in that plugin's <configuration>")
     return missing, central
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return run(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"::error::the release-profile check failed unexpectedly ({type(exc).__name__}: {' '.join(str(exc).split())}).",
+              file=sys.stderr)
+        return 1
+
+
+def run(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--pom", required=True)
     p.add_argument("--target", required=True, choices=["none", "central", "github-packages"])
@@ -60,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         missing, central = check(a.pom, a.target)
     except (OSError, ET.ParseError) as exc:
-        print(f"::error::{a.pom} cannot be read as a POM ({exc}).", file=sys.stderr)
+        print(f"::error::{a.pom} cannot be read as a POM ({' '.join(str(exc).split())}).", file=sys.stderr)
         return 1
     if missing:
         print(f"::error::This ref cannot build a release - missing: {'; '.join(missing)}. "

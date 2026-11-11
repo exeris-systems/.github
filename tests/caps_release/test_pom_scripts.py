@@ -182,23 +182,14 @@ class ReleaseProfile(h.Case):
 
     # --- gaps: states the behaviour the contract and the error text promise ---------------------
 
-    @h.known_defect("D-PROFILE-MODULES",
-                    "a <modules> inside the release profile makes `-P release` a multi-module build, which the root-only "
-                    "check_release_profile.py:45 (`for c in root`) does not see")
     def test_modules_inside_the_release_profile_is_refused(self):
         body = "<profiles><profile><id>release</id><modules><module>a</module></modules></profile></profiles>"
         self.refused(self.run_check(body))
 
-    @h.known_defect("D-PROFILE-PLUGIN-SCOPE",
-                    "central-publishing-maven-plugin is searched in the whole document (check_release_profile.py:49-53), "
-                    "though the refusal says 'in the release profile'; a plugin outside the profile satisfies it")
     def test_central_plugin_outside_the_release_profile_is_refused(self):
         body = PROFILE + f"<build><plugins>{CENTRAL_PLUGIN}</plugins></build>"
         self.refused(self.run_check(body, "central"))
 
-    @h.known_defect("D-PROFILE-ARTIFACTID",
-                    "any <artifactId> equal to the plugin's, including a dependency's, counts as the plugin "
-                    "(check_release_profile.py:49-53)")
     def test_a_dependency_named_like_the_plugin_is_not_the_plugin(self):
         body = PROFILE + ("<dependencies><dependency><artifactId>central-publishing-maven-plugin</artifactId></dependency>"
                           "</dependencies><properties><publishingServerId>central</publishingServerId></properties>")
@@ -387,14 +378,9 @@ class ScanSnapshots(h.Case):
 
     # --- gaps ---------------------------------------------------------------------------------
 
-    @h.known_defect("D-SCAN-TIMESTAMPED",
-                    "a timestamped snapshot (1.0-20260101.120000-1) is a snapshot to Maven, but scan_snapshots.py:46 "
-                    "and :51 look for the literal `-SNAPSHOT` only")
     def test_a_timestamped_snapshot_dependency_is_refused_when_uploading(self):
         self.refused(self.scan(eff(dep("1.0-20260101.120000-1")), upload="true"))
 
-    @h.known_defect("D-SCAN-TIMESTAMPED-HARD",
-                    "a timestamped snapshot as a plugin or parent version passes (scan_snapshots.py:46)")
     def test_a_timestamped_snapshot_plugin_is_refused(self):
         self.refused(self.scan(eff(plugins="<plugin><artifactId>p</artifactId><version>1.0-20260101.120000-1</version></plugin>"),
                                upload="false"))
