@@ -15,7 +15,7 @@ import zipfile
 import caps_release_helpers as h
 
 FAKE_GPG = """#!/bin/sh
-if [ -n "$FAKE_GPG_LOG" ]; then printf '%s\\t%s\\t%s\\n' "$1" "$2" "$3" >> "$FAKE_GPG_LOG"; fi
+if [ -n "$FAKE_GPG_LOG" ]; then printf '%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$(sha256sum "$3" | cut -d' ' -f1)" >> "$FAKE_GPG_LOG"; fi
 [ $# -eq 3 ] && [ "$1" = "--verify" ] || exit 2
 want="SIG:$(sha256sum "$3" | cut -d' ' -f1)"
 [ "$(cat "$2")" = "$want" ]
@@ -63,6 +63,15 @@ def pom_xml(group=GROUP, artifact="a", version="1.0.0", parent_group=None, extra
     return f"<project>{parent}{g}<artifactId>{artifact}</artifactId><version>{version}</version>{extra}</project>"
 
 
+def default_pom(base):
+    """A POM that names the coordinate a file base name `<artifactId>-<version>` stands for, so the gate can bind
+    it; a base that is not of that shape gets a POM that yields no coordinate."""
+    artifact, sep, version = base.rpartition("-")
+    if base.count("-") >= 1 and version[:1].isdigit() and artifact:
+        return pom_xml(GROUP, artifact, version)
+    return f"<project>{base}</project>"
+
+
 class Fixture(h.Case):
     """A target/ directory and a gpg double that accepts a signature only of the file it is handed."""
 
@@ -80,7 +89,7 @@ class Fixture(h.Case):
         make_zip(os.path.join(t, f"{base}-sources.jar"), ["a/B.java"])
         make_zip(os.path.join(t, f"{base}-javadoc.jar"), list(javadoc_names))
         with open(os.path.join(t, f"{base}.pom"), "w") as fh:
-            fh.write(pom_text if pom_text is not None else f"<project>{base}</project>")
+            fh.write(pom_text if pom_text is not None else default_pom(base))
         for suffix in SUFFIXES:
             f = os.path.join(t, base + suffix)
             if suffix in skip:

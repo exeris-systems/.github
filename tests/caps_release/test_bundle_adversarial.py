@@ -203,11 +203,13 @@ class Binding(Bundle):
         res = self.judge(entries, None, proc=False)
         self.assertNotEqual(res.rc, 0, res)
 
-    def test_an_extra_file_with_a_good_signature_in_the_bundle_passes(self):
+    def test_an_extra_file_with_a_good_signature_in_the_bundle_is_refused_as_not_gated(self):
         entries = self.entries()
         entries[self.named(".module")] = b"{}"
         entries[self.named(".module.asc")] = sig_bytes(b"{}")
-        self.accepted(self.judge(entries, None, proc=False))
+        res = self.judge(entries, f"{self.named('.module')} is not one of the gated files", proc=False)
+        self.assertIn(f"{self.named('.module.asc')} is not one of the gated files", "\n".join(res.errors()))
+        self.assertNotIn("not a good signature", "\n".join(res.errors()))
 
     def test_an_extra_signed_file_with_a_signature_that_does_not_verify_is_refused(self):
         entries = self.entries()
@@ -230,10 +232,10 @@ class Names(Bundle):
                 res = self.judge(base + [(jar, data)], f"{jar} occurs 2 times")
                 self.assertEqual(len(res.errors()) >= 2, True)
 
-    def test_names_that_differ_only_by_case(self):
-        """Characterised, not endorsed: the extra file is accepted, so an extractor that folds case would merge it with the jar."""
+    def test_names_that_differ_only_by_case_collide(self):
+        """An extractor that folds case would merge the two files, so the pair is refused by name."""
         res = self.judge(self.with_extra(self.named(".JAR"), b"upper"), None, proc=False)
-        self.assertEqual(res.rc, 0, res)
+        self.refused(res, f"{self.named('.JAR')}, {self.named('.jar')} collide under case folding or Unicode normalisation")
 
     def test_names_that_differ_only_by_case_must_not_pass(self):
         res = self.judge(self.with_extra(self.named(".JAR"), b"upper"), None, proc=False)
@@ -315,8 +317,13 @@ class Names(Bundle):
                 self.judge(entries, None, proc=False)
                 self.refused(h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"]))
 
-    def test_a_trailing_slash_on_a_name_makes_it_a_directory_that_is_not_counted_as_a_file(self):
+    def test_a_trailing_slash_on_a_name_makes_it_a_directory_and_a_payload_in_it_is_refused(self):
         res = self.judge(self.with_extra(self.named(".module") + "/", b"payload"), None, proc=False)
+        self.refused(res, f"{self.named('.module')}/ is a directory entry that carries a payload")
+        self.assertNotIn("is not one of the gated files", "\n".join(res.errors()))
+
+    def test_a_directory_entry_without_a_payload_is_neither_a_file_nor_a_finding(self):
+        res = self.judge(self.with_extra(self.named(".module") + "/", b""), None, proc=False)
         self.accepted(res)
         self.assertIn("central bundle: 12 file(s), 0 outside a coordinate", res.out)
 
@@ -361,14 +368,32 @@ class Gaps(Bundle):
         self.accepted(self.check_bundle(group="own.group"))
         self.refused(self.check_bundle(group="parent.group"), "is not under the group own.group")
 
-    def test_a_pom_naming_only_one_of_artifact_and_version_binds_nothing_it_does_not_name(self):
+    def test_a_pom_lacking_a_part_of_the_coordinate_is_refused(self):
         for text in ("<project><groupId>eu.exeris.caps</groupId><version>1.0.0</version></project>",
-                     "<project><groupId>eu.exeris.caps</groupId><artifactId>a</artifactId></project>"):
+                     "<project><groupId>eu.exeris.caps</groupId><artifactId>a</artifactId></project>",
+                     "<project><artifactId>a</artifactId><version>1.0.0</version></project>",
+                     "<project>a-1.0.0</project>", "<project/>",
+                     "<project><groupId> </groupId><artifactId>a</artifactId><version>1.0.0</version></project>"):
             with self.subTest(text):
                 shutil.rmtree(self.target)
                 os.makedirs(self.target)
                 self.coordinate("a-1.0.0", pom_text=text)
-                self.accepted(self.check())
+                res = self.check()
+                self.refused(res, "does not yield a groupId, an artifactId and a version")
+                self.assertEqual(len(res.errors()), 2, res)
+                self.assertNotIn("coordinate: a-1.0.0", res.out)
+
+    def test_a_parent_supplies_the_group_and_the_version_but_never_the_artifact(self):
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.coordinate("a-1.0.0", pom_text="<project><parent><groupId>g</groupId><artifactId>p</artifactId>"
+                                            "<version>1.0.0</version></parent><artifactId>a</artifactId></project>")
+        self.accepted(self.check())
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.coordinate("a-1.0.0", pom_text="<project><parent><groupId>g</groupId><artifactId>a</artifactId>"
+                                            "<version>1.0.0</version></parent></project>")
+        self.refused(self.check(), "does not yield a groupId")
 
     def test_a_name_that_is_not_a_jar_pom_or_signature_is_not_judged_by_its_characters(self):
         with open(os.path.join(self.target, "notes\x01.txt"), "w") as fh:
@@ -519,8 +544,10 @@ class Headers(Bundle):
                     items.append(e)
                 raw_zip(self.bundle_path, items)
                 res = self.check("--expect-bundle", "true")
-                self.refused(res, "failed unexpectedly (BadZipFile")
-                self.assertEqual(len(res.errors()), 1)
+                self.refused(res, f"central bundle: the local header name ../../evil.sh differs from the central-directory name {self.named(victim)}")
+                self.assertEqual([e for e in res.errors() if "central bundle:" in e].__len__(), 1)
+                self.assertEqual(len(res.errors()), 2, "the finding and the closing refusal, no traceback")
+                self.assertNotIn("unexpectedly", "\n".join(res.errors()))
 
     def test_a_local_header_name_that_differs_on_an_unread_entry_must_not_pass(self):
         items = [dict(name=n, data=d) for n, d in self.entries().items()]

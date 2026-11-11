@@ -222,14 +222,17 @@ class ReleasedSet(Gate):
 
 
 class UnboundGroup(Gate):
-    """A POM that names no groupId leaves the bundle's group path unchecked."""
+    """A POM that names no groupId cannot bind the bundle to a group path, and is refused."""
 
     def setUp(self):
         super().setUp()
         self.coordinate("a-1.0.0", pom_text=pom_xml(group=None))
 
-    def test_what_a_group_less_pom_does_with_a_matching_bundle(self):
-        self.accepted(self.check_bundle(group="eu.exeris.caps"))
+    def test_a_group_less_pom_is_refused_whatever_the_bundle_holds(self):
+        res = self.check_bundle(group="eu.exeris.caps")
+        self.refused(res, "a-1.0.0.pom does not yield a groupId, an artifactId and a version")
+        res = self.gate()
+        self.refused(res, "a-1.0.0.pom does not yield a groupId")
 
     def test_a_bundle_for_a_foreign_group_must_not_pass(self):
         res = self.check_bundle(group="org.attacker.shadow")

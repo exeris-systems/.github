@@ -412,9 +412,11 @@ class MavenRule(h.Case):
             for version in versions:
                 self.assertTrue(module.is_snapshot(version), f"{name}: {version!r}")
 
-    def test_a_long_s_version_is_a_snapshot_to_maven_and_the_effect_on_the_scan(self):
+    def test_a_long_s_version_is_a_snapshot_to_maven_and_is_refused_by_the_scan_as_non_ascii(self):
         res = h.run_main(SCAN, scan_args(self, eff(version="1.0-\u017fNAPSHOT"), upload="true"))
-        self.accepted(res)       # characterised: the scan lets it through (see the known defect above)
+        self.refused(res, "SNAPSHOT pins")
+        self.assertIn("is not ASCII", res.out)
+        self.assertIn("1.0-\\u017fNAPSHOT", res.out, "the character is shown as an escape")
 
 
 class ProfileMisplacedPlugin(h.Case):

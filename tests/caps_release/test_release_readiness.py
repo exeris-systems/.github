@@ -152,10 +152,16 @@ class Complete(Fixture):
         for base in ("a-1.0.0", "b-2.0.0"):
             for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom"):
                 f = os.path.join(t, base + suffix)
-                expected.append(["--verify", f + ".asc", f])
-        self.assertEqual(sorted(calls), sorted(expected))
+                expected.append((base + suffix + ".asc", base + suffix, hashlib.sha256(self.read_target(base + suffix)).hexdigest()))
+        # gpg is handed the gate's private copies (same base names, same bytes), never the live files
+        got = sorted((os.path.basename(c[1]), os.path.basename(c[2]), c[3]) for c in calls)
+        self.assertEqual(got, sorted(expected))
         for call in calls:
-            self.assertEqual(call[1], call[2] + ".asc")
+            self.assertEqual(call[0], "--verify")
+            self.assertEqual(os.path.basename(call[1]), os.path.basename(call[2]) + ".asc")
+            self.assertTrue(os.path.isabs(call[1]) and os.path.isabs(call[2]))
+            self.assertNotEqual(os.path.dirname(call[2]), t, "gpg is not handed the live file")
+            self.assertNotEqual(os.path.dirname(call[1]), t)
 
     def test_gpg_is_not_asked_about_a_file_that_has_no_signature_or_does_not_exist(self):
         self.coordinate(skip=(".pom",))
@@ -378,7 +384,7 @@ class RealGpg(h.Case):
         make_zip(os.path.join(t, f"{base}-sources.jar"), ["a/B.java"])
         make_zip(os.path.join(t, f"{base}-javadoc.jar"), ["index.html"])
         with open(os.path.join(t, f"{base}.pom"), "w") as fh:
-            fh.write("<project/>")
+            fh.write(pom_xml(GROUP, "a", "1.0.0"))
         for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom"):
             self.sign(os.path.join(t, base + suffix))
 
