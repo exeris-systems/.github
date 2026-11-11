@@ -170,9 +170,6 @@ class Drift(h.Case):
         os.makedirs(plain)
         self.refused(self.both(self.S, ["--repo", plain, "--generated", "gen"]), "git could not report")
 
-    @h.known_defect("D-DRIFT-SYMLINK",
-                    "a generated path that reaches outside the repository through a symlink reports `ok` (git answers "
-                    "empty), so the files it names are never compared (check_drift.py:44-52)")
     def test_a_path_behind_a_symlink_out_of_the_repository_is_refused(self):
         outside = self.path("outside")
         os.makedirs(os.path.join(outside, "sub"))
@@ -219,16 +216,10 @@ class Drift(h.Case):
 
     # --- gaps ---------------------------------------------------------------------------------
 
-    @h.known_defect("D-DRIFT-MISSING-PATH",
-                    "a generated path that exists neither in the tree nor in HEAD reports `ok` (check_drift.py:44-52); "
-                    "a mistyped path therefore checks nothing")
     def test_a_path_that_names_nothing_is_refused(self):
         self.put("gen/a.txt", "changed\n")
         self.refused(self.check("gne"))
 
-    @h.known_defect("D-DRIFT-PATHSPEC",
-                    "the value is a git pathspec, so `:(exclude)gen` or a glob that matches nothing makes a drifted tree "
-                    "report clean (check_drift.py:44, no --literal-pathspecs)")
     def test_pathspec_magic_cannot_hide_the_tree(self):
         self.put("gen/a.txt", "changed\n")
         self.refused(self.check(":(exclude)gen"))

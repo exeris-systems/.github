@@ -6,10 +6,12 @@ version is released, whether an upload is allowed from this ref, and (on a tag) 
 commit is on the default branch. It reads no environment variable of GitHub's and writes only the
 file named by --output.
 
-Every value is validated as a whole string. Any C0 control character (U+0000-U+001F), DEL (U+007F),
-any C1 control character (U+0080-U+009F) and any byte that is not valid UTF-8 refuses the value
-before a pattern is tried, so a value cannot pass on one valid line and carry a second `key=value`
-into the output file. NUL cannot reach this script through its arguments: argv is a C string and
+Every value is validated as a whole string. Any code point of Unicode category Cc (the C0 controls
+U+0000-U+001F, DEL and the C1 controls U+0080-U+009F), Cf (format, which includes the bidirectional
+controls and the zero-width characters), Zl and Zp (the line and paragraph separators, U+2028 and
+U+2029) or Cn (unassigned), and any byte that is not valid UTF-8, refuses the value before a pattern
+is tried, in EVERY input, so a value cannot pass on one valid line and carry a second `key=value`
+into the output file or hide behind a character that renders as nothing. NUL cannot reach this script through its arguments: argv is a C string and
 ends at the first NUL, so the operating system hands over the part before it, and that part is
 what is validated. A value that holds NUL inside this process (a test calling `main` with a Python
 string) is refused like any other control character. Bash cannot hold NUL in a variable either, so
@@ -22,8 +24,13 @@ Usage:
 
   --target          none | central | github-packages
   --upload          true | false
-  --version         MAJOR.MINOR.PATCH; required off a tag, ignored on a tag unless it differs
-  --generated-path  repository-relative path; non-empty, not absolute, no `..`
+  --version         MAJOR.MINOR.PATCH, each number written as 0 or without a leading zero and of at
+                    most 9 digits (semantic versioning forbids a leading zero; 9 digits fit every
+                    version type Maven and Java use); required off a tag, ignored on a tag unless it
+                    differs
+  --generated-path  repository-relative path; non-empty, not absolute, no `..` segment (`..` between
+                    `/` or a backslash; `a..b` is a file name), no glob character (`*`, `?`, `[`,
+                    `]`) and no leading `:` (pathspec magic)
   --ref-type        `tag` for a tag ref; anything else is a branch ref
   --ref-name        the tag name when --ref-type is tag
   --ref             the full ref, `refs/heads/<default-branch>` allows an upload off a tag
@@ -42,9 +49,12 @@ import argparse
 import re
 import subprocess
 import sys
+import unicodedata
 
-SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
+NUMBER = r"(?:0|[1-9][0-9]{0,8})"
+SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}")
+TAG = re.compile(rf"v{NUMBER}\.{NUMBER}\.{NUMBER}")
+PATH_SEPARATORS = re.compile(r"[/\\]")
 ON_DEFAULT = ("identical", "behind")
 
 
@@ -53,20 +63,23 @@ class Refused(Exception):
 
 
 def control_character(value: str) -> str | None:
-    """Name the first character that may not appear in any input, or None."""
+    """Describe the first character that may not appear in any input, or None."""
     for ch in value:
         o = ord(ch)
-        if o < 0x20 or 0x7F <= o <= 0x9F:
-            return f"U+{o:04X}"
         if 0xD800 <= o <= 0xDFFF:           # an argument byte that is not UTF-8 decodes to one of these
             return "an undecodable byte"
+        category = unicodedata.category(ch)
+        if category == "Cc":
+            return f"a control character (U+{o:04X})"
+        if category in ("Cf", "Zl", "Zp", "Cn"):
+            return f"a non-printing or unassigned character (U+{o:04X})"
     return None
 
 
 def whole(label: str, value: str) -> str:
     found = control_character(value)
     if found:
-        raise Refused(f"{label} holds a control character ({found}). It is one line of printable text.")
+        raise Refused(f"{label} holds {found}. It is one line of printable text.")
     return value
 
 
@@ -80,7 +93,7 @@ def compare_status(repository: str, sha: str, default_branch: str) -> str:
 
 def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
     for label in ("target", "upload", "version", "generated_path", "ref_type", "ref_name", "ref",
-                  "default_branch", "repository", "sha", "compare_status"):
+                  "default_branch", "repository", "sha", "compare_status", "output"):
         whole(label.replace("_", "-"), getattr(a, label) or "")
 
     if a.target not in ("none", "central", "github-packages"):
@@ -88,8 +101,10 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
     if a.upload not in ("true", "false"):
         raise Refused(f"upload must be 'true' or 'false', got '{a.upload}'.")
     g = a.generated_path
-    if not g or g.startswith("/") or ".." in g:
-        raise Refused(f"generated-path must be a non-empty path inside the repository, got '{g}'.")
+    if (not g or g.startswith("/") or g.startswith(":") or any(c in g for c in "*?[]")
+            or ".." in PATH_SEPARATORS.split(g)):
+        raise Refused(f"generated-path must be a non-empty path inside the repository, without a `..` segment, "
+                      f"a glob character or a leading `:`, got '{g}'.")
 
     on_tag = a.ref_type == "tag"
     if on_tag:
@@ -107,8 +122,9 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
                 raise Refused("containment of the tagged commit cannot be checked without --repository and --sha.")
             try:
                 status = compare(a.repository, a.sha, a.default_branch)
-            except (subprocess.CalledProcessError, OSError) as exc:
-                raise Refused(f"the comparison with {a.default_branch} failed ({exc}); nothing released.")
+            except Exception as exc:
+                raise Refused(f"the comparison with {a.default_branch} failed ({' '.join(str(exc).split())}); "
+                              "nothing released.")
         whole("compare status", status)
         if status not in ON_DEFAULT:
             raise Refused(f"tag {tag} points at a commit that is NOT on {a.default_branch} (compare: {status}). "
@@ -131,6 +147,17 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
 
 
 def main(argv: list[str] | None = None, compare=compare_status) -> int:
+    try:
+        return run(argv, compare)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"::error::the release resolution failed unexpectedly ({type(exc).__name__}: "
+              f"{' '.join(str(exc).split())}).", file=sys.stderr)
+        return 1
+
+
+def run(argv: list[str] | None, compare) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     for flag in ("target", "upload", "version", "generated-path", "ref-type", "ref-name", "ref",
                  "default-branch", "repository", "sha", "compare-status", "output"):
