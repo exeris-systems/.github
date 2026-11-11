@@ -41,11 +41,14 @@ test, so an empty suite cannot pass.
 - Every script is run twice, in this process through `main(argv)` and as the workflow runs it
   (`python3 -I -B <script>`); `caps_release_helpers.Case.both` asserts that the two agree on the exit
   status, the `::error::` lines and what is written to `--output`.
-- `test_mutations.py` copies each script, applies one `(old -> new)` source change that must match
-  exactly once, and runs the tests of that script against the copy. A mutant no test notices fails
-  the suite and is listed.
+- `mutation_table.py` lists the mutants: one `(old -> new)` source change each, which must match
+  exactly once. `test_mutations.py` copies the script, applies the change and runs the selected tests
+  against the copy, in forked workers with a time limit (a mutant that hangs counts as noticed). A mutant
+  no test notices fails the suite and is listed. `mutation_killers.json` records which test killed each
+  mutant, so that test runs first; regenerate it after editing the table with
+  `python3 -B tests/caps_release/test_mutations.py --record`.
 - `workflow_invariants.py` reads `caps-release.yml` as data (secrets only in `publish`, the id token
-  only in `attest`, key removal directly after the deploy, the scripts' digest re-verified after
+  only in `attest`, the gate staging what both uploads and the attestation take, key removal directly after the deploy, the scripts' digest re-verified after
   project code, pinned actions, safe defaults). `test_workflow.py` mutates the workflow text once per
   invariant to prove each can fail.
 - A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
