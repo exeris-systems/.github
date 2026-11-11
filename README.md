@@ -56,6 +56,10 @@ does not run is a gate nobody has tested.
     judge-review.yml     reusable — the other half of that row: on `pull_request: closed` it reads
                          what the human did with each finding and appends a judgement record beside
                          the run, never into it. ADR-087 §C.16
+    caps-release.yml     reusable — release of a capability (`eu.exeris.caps:*`): a `build` job with no
+                         secret that signs with a throwaway key and runs every gate, a `publish` job that
+                         alone holds the secrets and runs only for `upload: true` with a `target` other
+                         than `none`, and an `attest` job for provenance. The default uploads nothing
     guardrails.yml       this repository's OWN caller — it runs its gates, and the review in parts, on itself
     labels-sync.yml      applies labels.yml across the organisation
     issue-hygiene.yml    ages `needs-reproducer` / `needs-evidence`

@@ -1,0 +1,613 @@
+# Reusable: release of an Exeris capability (`eu.exeris.caps:exeris-caps-*`) — build, sign, gate, upload.
+#
+# A capability needs two things the library repositories do not: a TWO-PASS build (the annotation
+# processor writes the capability metadata that `exeris:generate` reads only during compile, so a
+# seed pass with codegen skipped comes first) and a check that the committed generated tree is what
+# that build produces. Everything else — tag shape, version agreement, readiness gate, Central
+# bundle layout, provenance — is the release path of the SDK, the kernel and the tooling.
+#
+# THREE JOBS, AND THE SPLIT IS THE SECURITY MODEL
+#
+#   build    No secret, read-only token. Always runs. Builds with `-P release`, signs with a key
+#            generated in the job, runs every gate, uploads what it built as a run artifact. A dry
+#            run is this job and nothing else.
+#   publish  The only job that holds secrets. Runs only when `upload` is true AND `target` is not
+#            `none`. Rebuilds from the same commit, signs with the real key, uploads.
+#   attest   Provenance for what `publish` uploaded. Holds `id-token: write` and runs no project code.
+#
+# WHAT A DRY RUN CAN NEVER DO. It holds no secret: the `secrets:` below are read by `publish` alone.
+# It cannot upload: nothing in `build` talks to Central or GitHub Packages, and its token is
+# `contents: read`. It cannot attest: attestations are written to the repository and to a public
+# transparency log that has no delete, and only `attest` may write them. It signs with a throwaway
+# key that exists for the length of the job, so the path through the signing plugin is exercised
+# and the signatures it produces mean nothing outside the run.
+#
+# WHERE THE SECRETS ARE
+#
+#   GPG_PRIVATE_KEY          the "Import the signing key" step, which runs `gpg` and nothing else.
+#   GPG_PASSPHRASE           the deploy step only.
+#   CENTRAL_TOKEN_USERNAME   the deploy step only, and only for `target: central`.
+#   CENTRAL_TOKEN_PASSWORD   the deploy step only, and only for `target: central`.
+#   GITHUB_TOKEN (packages)  the deploy step only, and only for `target: github-packages`.
+#
+# No step that runs the repository's build logic holds a secret except the deploy itself. The seed
+# pass, the version edit, the tests and the drift check all run before the key is imported, and the
+# deploy skips the tests.
+#
+# WHAT CANNOT BE AVOIDED. `deploy` is the project's own POM: Maven loads every plugin, extension and
+# annotation processor the effective build names — the repository's POM, its parents, the codegen
+# plugin and the processor, and whatever those resolve — into one JVM with the step's environment
+# and with the imported key in the runner's keyring. Any of them can read the passphrase, the
+# Central token or the GitHub token, and use the key. Signing outside Maven would not change that
+# for the token, because `central-publishing-maven-plugin` is what uploads. What bounds it: the
+# secrets live in `publish` alone; `publish` restores no build cache, so nothing a pull request
+# could have written is on its classpath; the Central deployment is created with `autoPublish`
+# false in the POM, so a person still presses Publish and an unpublished deployment can be dropped;
+# the GitHub token is repository-scoped and expires with the job. The release POM is therefore code
+# that runs with the secrets and has to be reviewed as such.
+#
+# Actions are pinned by commit, the way the release workflows of the SDK, the kernel and the
+# tooling are, because this workflow handles signing keys; the gates in this directory pin by tag.
+# A caller names this workflow `@main` like the gates, or by commit.
+name: caps-release
+on:
+  workflow_call:
+    inputs:
+      version:        { type: string,  default: "",          description: "Release version for a dry run by dispatch, MAJOR.MINOR.PATCH. Ignored on a tag, where the version is the tag and a differing value is refused" }
+      upload:         { type: boolean, default: false,       description: "Upload what was built. Takes effect only with a target other than 'none'" }
+      target:         { type: string,  default: "none",      description: "Where an upload goes: 'none' (nothing is uploaded), 'central' (Maven Central, a deployment a person still publishes) or 'github-packages'" }
+      java-version:   { type: string,  default: "25" }
+      java-distribution: { type: string, default: "temurin" }
+      generated-path: { type: string,  default: "src/main/generated/", description: "The committed generated tree the build must reproduce" }
+    secrets:
+      GPG_PRIVATE_KEY:        { required: false, description: "Armored private signing key. Read by `publish`, for any target" }
+      GPG_PASSPHRASE:         { required: false, description: "Passphrase of that key. Read by `publish`" }
+      CENTRAL_TOKEN_USERNAME: { required: false, description: "Central Portal user token, name part. Read by `publish` for target 'central'" }
+      CENTRAL_TOKEN_PASSWORD: { required: false, description: "Central Portal user token, password part. Read by `publish` for target 'central'" }
+permissions:
+  contents: read
+jobs:
+  build:
+    name: build, sign with a throwaway key, gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.rel.outputs.version }}
+      publish: ${{ steps.rel.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Ordered by cost. Everything up to the JDK needs no download, so a ref that cannot release
+      # fails in seconds and says why. Every `${{ }}` is bound to a variable and read as one:
+      # `inputs.version` is text a dispatcher types, and textual substitution would put it inside
+      # the script instead of handing it to the script.
+      - name: Resolve the version and refuse an unreleasable ref
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_UPLOAD: ${{ inputs.upload }}
+          IN_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+
+          case "$IN_TARGET" in
+            none|central|github-packages) ;;
+            *) echo "::error::target must be 'none', 'central' or 'github-packages', got '$IN_TARGET'." >&2; exit 1 ;;
+          esac
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+            # A release tag is exactly vMAJOR.MINOR.PATCH. `v0.1.0-rc1` is not a release and must
+            # not become one by matching a glob in the caller's trigger.
+            if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::$tag is not a release tag (expected vMAJOR.MINOR.PATCH). Nothing released." >&2
+              exit 1
+            fi
+            version="${tag#v}"
+            if [ -n "$IN_VERSION" ] && [ "$IN_VERSION" != "$version" ]; then
+              echo "::error::tag $tag and version input '$IN_VERSION' disagree. On a tag the version is the tag." >&2
+              exit 1
+            fi
+            # A tag ref says nothing about which branch its commit is on. Comparing against the
+            # default branch answers it: `identical` and `behind` are the two answers that mean
+            # the commit is on it.
+            contained="$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$GITHUB_SHA" --jq .status)"
+            case "$contained" in
+              identical|behind) echo "tag $tag points at a commit on $DEFAULT_BRANCH ($contained)" ;;
+              *) echo "::error::tag $tag points at a commit that is NOT on $DEFAULT_BRANCH (compare: $contained)." >&2
+                 echo "::error::Delete the tag, cut it from $DEFAULT_BRANCH, tag again. Nothing was uploaded." >&2
+                 exit 1 ;;
+            esac
+          else
+            version="$IN_VERSION"
+            if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::version '$version' is not MAJOR.MINOR.PATCH. A dry run needs one, and never a -SNAPSHOT." >&2
+              exit 1
+            fi
+          fi
+
+          publish=false
+          if [ "$IN_UPLOAD" = "true" ] && [ "$IN_TARGET" = "none" ]; then
+            echo "::warning::upload was requested with target 'none': nothing is uploaded. Name a target to upload."
+          elif [ "$IN_UPLOAD" = "true" ]; then
+            publish=true
+            # An upload leaves the dispatch path only from the default branch; on a tag the
+            # containment check above is the same rule.
+            if [ "$GITHUB_REF_TYPE" != "tag" ] && [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              echo "::error::An upload from a dispatch is allowed on $DEFAULT_BRANCH only; this ref is $GITHUB_REF." >&2
+              echo "::error::Re-run without upload to exercise the release path from here." >&2
+              exit 1
+            fi
+          fi
+
+          { echo "version=$version"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+          echo "resolved: version=$version target=$IN_TARGET publish=$publish"
+
+      # Maven treats `-P release` for a profile that does not exist as a warning and builds on,
+      # which produces unsigned artifacts that fail much later with a message naming neither the
+      # profile nor the cause. This refuses it up front, and decides whether a Central bundle is
+      # built and gated.
+      - name: Refuse a ref without the release profile
+        id: profile
+        env:
+          IN_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          missing=""
+          add() { missing="${missing:+$missing; }$1"; }
+          grep -q '<id>release</id>' pom.xml || add "the 'release' profile in pom.xml"
+          central=false
+          if grep -q 'central-publishing-maven-plugin' pom.xml; then central=true; fi
+          if [ "$IN_TARGET" = "central" ]; then
+            [ "$central" = "true" ] || add "central-publishing-maven-plugin in the release profile"
+            grep -q '<publishingServerId>central</publishingServerId>' pom.xml || add "<publishingServerId>central</publishingServerId>"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Ref $GITHUB_REF cannot build a release — missing: $missing" >&2
+            echo "::error::Release from a ref that carries the release machinery." >&2
+            exit 1
+          fi
+          echo "has_central_plugin=$central" >> "$GITHUB_OUTPUT"
+          echo "ok — this ref carries the release profile (Central plugin: $central)"
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+
+      # On a tag the release ritual has already put the version in the POM, and a tag whose version
+      # disagrees with the POM it points at is a tag on the wrong commit; `versions:set` would
+      # overwrite the evidence. On a dry run the tree is a development line and setting the version
+      # is the point; nothing is committed.
+      - name: Set the release version — or, on a tag, check it
+        env:
+          WANT: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            have="$(python3 -c "import xml.etree.ElementTree as E; print(E.parse('pom.xml').getroot().find('{http://maven.apache.org/POM/4.0.0}version').text.strip())")"
+            if [ "$have" != "$WANT" ]; then
+              echo "::error::tag says $WANT, the pom at this commit says $have — the tag is on the wrong commit." >&2
+              exit 1
+            fi
+            echo "pom version $have matches the tag"
+          else
+            mvn -B -ntp org.codehaus.mojo:versions-maven-plugin:2.18.0:set -DnewVersion="$WANT" -DgenerateBackupPoms=false
+          fi
+
+      # After the version is final, so a -SNAPSHOT left is a pin on something not released: in the
+      # effective POM (a property, a plugin, a processor path) or in the resolved dependency tree.
+      # Element values only, read by a parser: a comment that mentions a SNAPSHOT is not a pin.
+      - name: Refuse a SNAPSHOT in the release build
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -q -P release org.apache.maven.plugins:maven-help-plugin:3.5.1:effective-pom -Doutput="$RUNNER_TEMP/effective-pom.xml"
+          mvn -B -ntp -q -P release org.apache.maven.plugins:maven-dependency-plugin:3.8.1:list -DoutputFile="$RUNNER_TEMP/dependencies.txt"
+          hits="$(python3 - "$RUNNER_TEMP/effective-pom.xml" <<'PY'
+          import sys, xml.etree.ElementTree as E
+          for el in E.parse(sys.argv[1]).getroot().iter():
+              if el.text and '-SNAPSHOT' in el.text:
+                  print('effective pom: <' + el.tag.split('}')[-1] + '> ' + el.text.strip())
+          PY
+          grep -- '-SNAPSHOT' "$RUNNER_TEMP/dependencies.txt" | sed 's/^ *//; s/^/dependency: /' || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::SNAPSHOT pins in the release build. Release the upstream first and pin its final version." >&2
+            exit 1
+          fi
+          echo "ok — no SNAPSHOT in the effective POM or the resolved dependencies"
+
+      # The signing plugin is exercised on every run, and no secret is needed to do it: a key made
+      # here, with a random passphrase, kept in a private keyring that dies with the runner. The
+      # alternative, skipping the plugin, would leave the signature half of the readiness gate
+      # untested until a real release. The signatures this run produces verify against nothing a
+      # consumer holds; the run artifact is named for what it is.
+      - name: Generate a throwaway signing key
+        run: |
+          set -euo pipefail
+          home="$RUNNER_TEMP/dry-run-gnupg"
+          mkdir -m 700 "$home"
+          pass="$(openssl rand -hex 24)"
+          echo "::add-mask::$pass"
+          GNUPGHOME="$home" gpg --batch --pinentry-mode loopback --passphrase "$pass" \
+            --quick-generate-key "Exeris caps release gate (throwaway) <gate@invalid>" ed25519 sign 1d
+          { echo "GNUPGHOME=$home"; echo "MAVEN_GPG_PASSPHRASE=$pass"; } >> "$GITHUB_ENV"
+          echo "signing: a throwaway key generated in this job; nothing it signs is publishable" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Seed capability metadata (first pass, codegen skipped)
+        run: mvn -B -ntp compile -Dexeris.codegen.skip=true
+
+      # With the Central plugin in the POM the build runs `deploy` with the upload skipped, which
+      # writes the bundle a release would upload; without it, `verify`. Either way the gate below
+      # inspects what a release would send.
+      - name: Build with the release profile (second pass)
+        env:
+          HAS_CENTRAL: ${{ steps.profile.outputs.has_central_plugin }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_CENTRAL" = "true" ]; then
+            mvn -B -ntp -P release deploy -DskipUpload=true
+          else
+            mvn -B -ntp -P release verify
+          fi
+
+      # `exeris:generate` writes into the source tree, and that tree is committed. A build whose
+      # output differs from the committed copy means the declaration and the manifest a SKU
+      # consumes disagree. `--untracked-files=all` also catches a file the build added.
+      - name: Assert the committed generated tree matches this build
+        env:
+          GENERATED: ${{ inputs.generated-path }}
+        run: |
+          set -euo pipefail
+          drift="$(git status --porcelain --untracked-files=all -- "$GENERATED")"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            git diff -- "$GENERATED" || true
+            echo "::error::$GENERATED does not match what this build produced; run the two-pass build and commit the result" >&2
+            exit 1
+          fi
+          echo "ok — $GENERATED is what this build produces"
+
+      # The same checks run in `publish` against the real signatures; keep the two in step.
+      - name: Release-readiness check
+        env:
+          EXPECT_BUNDLE: ${{ steps.profile.outputs.has_central_plugin }}
+        run: |
+          set -euo pipefail
+          fail=0
+          err() { echo "::error::$1" >&2; fail=1; }
+
+          mapfile -t mains < <(find . -maxdepth 3 -type f -path '*/target/*.jar' \
+            ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' | sort)
+          if [ "${#mains[@]}" -eq 0 ]; then
+            echo "::error::the build produced no main jar" >&2
+            exit 1
+          fi
+
+          # Every coordinate needs a main jar, a sources jar, a javadoc jar and a pom, and a good
+          # detached signature on each. Central refuses a coordinate without them and one stray
+          # coordinate fails the whole deployment.
+          for main in "${mains[@]}"; do
+            base="${main%.jar}"
+            case "$base" in *-SNAPSHOT) err "$(basename "$base") is a SNAPSHOT; a release is final" ;; esac
+            for want in "$base-sources.jar" "$base-javadoc.jar" "$base.pom"; do
+              [ -f "$want" ] || err "$(basename "$base") is missing $(basename "$want") — Central rejects a coordinate without it"
+            done
+            # Counted rather than `grep -q`: under pipefail a quiet grep closes the pipe early and
+            # the pipeline reports failure for a jar that does hold the page.
+            if [ -f "$base-javadoc.jar" ] && [ "$(unzip -Z1 "$base-javadoc.jar" | grep -c '^index\.html$' || true)" = "0" ]; then
+              err "$(basename "$base-javadoc.jar") holds no index.html"
+            fi
+            for f in "$main" "$base-sources.jar" "$base-javadoc.jar" "$base.pom"; do
+              [ -f "$f" ] || continue
+              if [ ! -f "$f.asc" ]; then
+                err "$f has no detached signature"
+              elif ! gpg --verify "$f.asc" "$f" 2>/dev/null; then
+                err "$f.asc is not a good signature"
+              fi
+            done
+            echo "coordinate: $(basename "$base") — main, sources, javadoc, pom, signatures"
+          done
+
+          # Central validates the bundle as a whole and refuses it when any directory in it lacks
+          # a pom, so one stray file fails every coordinate. Every file must sit in a
+          # <group>/<artifact>/<version>/ directory that holds <artifact>-<version>.pom and be
+          # named <artifact>-<version>.* or -*.
+          bundle=target/central-publishing/central-bundle.zip
+          if [ "$EXPECT_BUNDLE" = "true" ]; then
+            if [ -f "$bundle" ]; then
+              python3 - "$bundle" <<'PY' || fail=1
+          import sys, zipfile
+          entries = [n for n in zipfile.ZipFile(sys.argv[1]).namelist() if not n.endswith('/')]
+          stray = []
+          for name in entries:
+              directory, _, filename = name.rpartition('/')
+              parts = directory.split('/')
+              stem = f'{parts[-2]}-{parts[-1]}' if len(parts) >= 3 else None
+              if (stem is None or f'{directory}/{stem}.pom' not in entries
+                      or not filename.startswith((stem + '.', stem + '-'))):
+                  stray.append(name)
+          for name in sorted(stray):
+              print(f'::error::central bundle: {name} is not a file of a published coordinate', file=sys.stderr)
+          print(f'central bundle: {len(entries)} file(s), {len(stray)} outside a coordinate')
+          sys.exit(1 if stray else 0)
+          PY
+            else
+              err "$bundle is missing; the release profile builds it at deploy"
+            fi
+          fi
+
+          [ "$fail" = "0" ] || { echo "::error::release-readiness failed" >&2; exit 1; }
+          echo "release-readiness: ok"
+
+      - name: Keep what was built as a run artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-gate-${{ steps.rel.outputs.version }}
+          path: |
+            target/*.jar
+            target/*.asc
+            target/*.pom
+            target/central-publishing/*.zip
+          if-no-files-found: warn
+          retention-days: 90
+
+  publish:
+    name: sign and upload
+    needs: build
+    if: ${{ needs.build.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    # `packages: write` is the GitHub Packages target. The token is not put in the environment of
+    # any step unless that target is chosen.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Booleans only: the expressions below are evaluated here and no secret value reaches the
+      # step's environment.
+      - name: Refuse an upload that lacks what its target needs
+        env:
+          IN_TARGET: ${{ inputs.target }}
+          HAVE_GPG_KEY: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+          HAVE_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE != '' }}
+          HAVE_CENTRAL_USER: ${{ secrets.CENTRAL_TOKEN_USERNAME != '' }}
+          HAVE_CENTRAL_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD != '' }}
+        run: |
+          set -euo pipefail
+          missing=""
+          add() { missing="${missing:+$missing, }$1"; }
+          [ "$HAVE_GPG_KEY" = "true" ] || add GPG_PRIVATE_KEY
+          [ "$HAVE_GPG_PASSPHRASE" = "true" ] || add GPG_PASSPHRASE
+          if [ "$IN_TARGET" = "central" ]; then
+            [ "$HAVE_CENTRAL_USER" = "true" ] || add CENTRAL_TOKEN_USERNAME
+            [ "$HAVE_CENTRAL_PASSWORD" = "true" ] || add CENTRAL_TOKEN_PASSWORD
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::target '$IN_TARGET' needs secrets the caller did not pass: $missing" >&2
+            exit 1
+          fi
+          echo "ok — the secrets target '$IN_TARGET' needs were passed"
+
+      # No build cache here: whatever a pull request could have written to it would otherwise be on
+      # the classpath of a step that holds the signing key.
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+
+      - name: Set the release version — or, on a tag, check it
+        env:
+          WANT: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            have="$(python3 -c "import xml.etree.ElementTree as E; print(E.parse('pom.xml').getroot().find('{http://maven.apache.org/POM/4.0.0}version').text.strip())")"
+            if [ "$have" != "$WANT" ]; then
+              echo "::error::tag says $WANT, the pom at this commit says $have — the tag is on the wrong commit." >&2
+              exit 1
+            fi
+          else
+            mvn -B -ntp org.codehaus.mojo:versions-maven-plugin:2.18.0:set -DnewVersion="$WANT" -DgenerateBackupPoms=false
+          fi
+
+      # Before the key exists: the repository's build logic runs here with no secret in reach.
+      - name: Seed capability metadata (first pass, codegen skipped)
+        run: mvn -B -ntp compile -Dexeris.codegen.skip=true
+
+      # Written by the workflow, not read from the repository: a settings file the repository
+      # controls could name a mirror, and the credentials are then sent wherever it says. The ids
+      # are the ones the release profile and the deploy step name. Values are resolved by Maven
+      # from the environment of the deploy step alone.
+      - name: Write the Maven settings
+        run: |
+          cat > "$RUNNER_TEMP/release-settings.xml" <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
+            <servers>
+              <server>
+                <id>central</id>
+                <username>${env.CENTRAL_TOKEN_USERNAME}</username>
+                <password>${env.CENTRAL_TOKEN_PASSWORD}</password>
+              </server>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GITHUB_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          XML
+
+      # The step that runs `gpg` and nothing else. After it the key is in the runner's keyring for
+      # the rest of the job; the passphrase is not, and reaches the deploy step alone.
+      - name: Import the signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format long
+
+      # The deploy runs the project's POM with the secrets in its environment; see the header for
+      # what that exposes. `autoPublish` is false in the POM, so for Central this creates a
+      # deployment and stops, and `waitUntil=validated` makes it block until Central has validated.
+      # Review the result in the portal and press Publish there; until then it can be dropped,
+      # afterwards nothing about it can ever be changed.
+      #
+      # GitHub Packages: `central-publishing-maven-plugin` owns the `deploy` phase and sets
+      # `maven.deploy.skip`, so the deploy goal is invoked by name with the skip lifted.
+      - name: Build, sign and upload
+        env:
+          IN_TARGET: ${{ inputs.target }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          CENTRAL_TOKEN_USERNAME: ${{ inputs.target == 'central' && secrets.CENTRAL_TOKEN_USERNAME || '' }}
+          CENTRAL_TOKEN_PASSWORD: ${{ inputs.target == 'central' && secrets.CENTRAL_TOKEN_PASSWORD || '' }}
+          GITHUB_TOKEN: ${{ inputs.target == 'github-packages' && github.token || '' }}
+        run: |
+          set -euo pipefail
+          settings="$RUNNER_TEMP/release-settings.xml"
+          if [ "$IN_TARGET" = "central" ]; then
+            mvn -B -ntp -P release deploy -DskipTests --settings "$settings"
+          else
+            mvn -B -ntp -P release verify org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy \
+              -DskipTests -Dmaven.deploy.skip=false \
+              -DaltDeploymentRepository="github::https://maven.pkg.github.com/${GITHUB_REPOSITORY}" \
+              --settings "$settings"
+          fi
+
+      - name: Assert the committed generated tree matches this build
+        env:
+          GENERATED: ${{ inputs.generated-path }}
+        run: |
+          set -euo pipefail
+          drift="$(git status --porcelain --untracked-files=all -- "$GENERATED")"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::$GENERATED does not match what this build produced. If a deployment was uploaded, DROP it." >&2
+            exit 1
+          fi
+          echo "ok — $GENERATED is what this build produces"
+
+      # The same checks as in `build`, against the real signatures and the bundle that was sent.
+      - name: Release-readiness check
+        env:
+          EXPECT_BUNDLE: ${{ inputs.target == 'central' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          fail=0
+          err() { echo "::error::$1" >&2; fail=1; }
+
+          mapfile -t mains < <(find . -maxdepth 3 -type f -path '*/target/*.jar' \
+            ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' | sort)
+          if [ "${#mains[@]}" -eq 0 ]; then
+            echo "::error::the build produced no main jar" >&2
+            exit 1
+          fi
+
+          # Every coordinate needs a main jar, a sources jar, a javadoc jar and a pom, and a good
+          # detached signature on each. Central refuses a coordinate without them and one stray
+          # coordinate fails the whole deployment.
+          for main in "${mains[@]}"; do
+            base="${main%.jar}"
+            case "$base" in *-SNAPSHOT) err "$(basename "$base") is a SNAPSHOT; a release is final" ;; esac
+            for want in "$base-sources.jar" "$base-javadoc.jar" "$base.pom"; do
+              [ -f "$want" ] || err "$(basename "$base") is missing $(basename "$want") — Central rejects a coordinate without it"
+            done
+            # Counted rather than `grep -q`: under pipefail a quiet grep closes the pipe early and
+            # the pipeline reports failure for a jar that does hold the page.
+            if [ -f "$base-javadoc.jar" ] && [ "$(unzip -Z1 "$base-javadoc.jar" | grep -c '^index\.html$' || true)" = "0" ]; then
+              err "$(basename "$base-javadoc.jar") holds no index.html"
+            fi
+            for f in "$main" "$base-sources.jar" "$base-javadoc.jar" "$base.pom"; do
+              [ -f "$f" ] || continue
+              if [ ! -f "$f.asc" ]; then
+                err "$f has no detached signature"
+              elif ! gpg --verify "$f.asc" "$f" 2>/dev/null; then
+                err "$f.asc is not a good signature"
+              fi
+            done
+            echo "coordinate: $(basename "$base") — main, sources, javadoc, pom, signatures"
+          done
+
+          # Central validates the bundle as a whole and refuses it when any directory in it lacks
+          # a pom, so one stray file fails every coordinate. Every file must sit in a
+          # <group>/<artifact>/<version>/ directory that holds <artifact>-<version>.pom and be
+          # named <artifact>-<version>.* or -*.
+          bundle=target/central-publishing/central-bundle.zip
+          if [ "$EXPECT_BUNDLE" = "true" ]; then
+            if [ -f "$bundle" ]; then
+              python3 - "$bundle" <<'PY' || fail=1
+          import sys, zipfile
+          entries = [n for n in zipfile.ZipFile(sys.argv[1]).namelist() if not n.endswith('/')]
+          stray = []
+          for name in entries:
+              directory, _, filename = name.rpartition('/')
+              parts = directory.split('/')
+              stem = f'{parts[-2]}-{parts[-1]}' if len(parts) >= 3 else None
+              if (stem is None or f'{directory}/{stem}.pom' not in entries
+                      or not filename.startswith((stem + '.', stem + '-'))):
+                  stray.append(name)
+          for name in sorted(stray):
+              print(f'::error::central bundle: {name} is not a file of a published coordinate', file=sys.stderr)
+          print(f'central bundle: {len(entries)} file(s), {len(stray)} outside a coordinate')
+          sys.exit(1 if stray else 0)
+          PY
+            else
+              err "$bundle is missing; the release profile builds it at deploy"
+            fi
+          fi
+
+          [ "$fail" = "0" ] || { echo "::error::release-readiness failed; if a deployment was uploaded, DROP it in the portal." >&2; exit 1; }
+          echo "release-readiness: ok"
+
+      - name: Keep what was uploaded as a run artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ needs.build.outputs.version }}
+          path: |
+            target/*.jar
+            target/*.asc
+            target/*.pom
+            target/central-publishing/*.zip
+          if-no-files-found: warn
+          retention-days: 90
+
+  # Provenance says which workflow, at which commit, on which runner produced a file; a signature
+  # says only who held the key. It is written to the repository and, through `id-token`, to a public
+  # transparency log with no delete path, so it exists only for what was uploaded. Its own job, and
+  # no project code runs in it: `id-token: write` puts the means to mint an OIDC token in the
+  # environment of every step of the job that has it, and a step that runs the repository's POM
+  # could use them to attest anything. It attests the files `publish` kept, which are the files it
+  # uploaded.
+  attest:
+    name: attest build provenance
+    needs: [build, publish]
+    if: ${{ needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # SLSA provenance signing (Sigstore, keyless)
+      attestations: write   # writing the attestation back to the repository
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ needs.build.outputs.version }}
+          path: uploaded
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            uploaded/**/*.jar
