@@ -190,9 +190,16 @@ class Disagreements(Layout):
 
 class Surroundings(Layout):
     def test_trailing_bytes_after_the_end_record_are_refused(self):
-        for tail in (b"\0", b"PK\x05\x06" + b"\0" * 18, b"x" * 100):
+        for tail, reason in ((b"\0", "end record is not the last 22 bytes"), (b"x" * 100, "end record is not the last 22 bytes"),
+                             (b"PK\x05\x06" + b"\0" * 18, "data before the entries or between them and the central directory")):
             with self.subTest(tail[:4]):
-                self.refuse(self.entries(), suffix=tail)
+                self.assert_layout_refusal(self.entries(), reason, suffix=tail)
+
+    def test_an_end_record_that_claims_a_comment_it_does_not_have_is_refused(self):
+        data, _ = build(self.entries())
+        self.put(data[:-2] + struct.pack("<H", 5))
+        res = self.check("--expect-bundle", "true")
+        self.refused(res, "end record is not the last 22 bytes")
 
     def test_an_archive_comment_is_refused(self):
         self.assert_layout_refusal(self.entries(), "end record is not the last 22 bytes", comment=b"hello")
@@ -217,9 +224,10 @@ class Surroundings(Layout):
         data, _ = build(entries)
         cd = struct.unpack_from("<I", data, len(data) - 6)[0]
         padded = data[:cd] + b"\0\0\0\0" + data[cd:]
+        padded = padded[:-6] + struct.pack("<I", cd + 4) + padded[-2:]
         self.put(padded)
         res = self.check("--expect-bundle", "true")
-        self.refused(res)
+        self.refused(res, "there is data between the last entry and the central directory")
 
     def test_a_zero_entry_archive_is_not_a_bundle(self):
         data, _ = build([])
@@ -250,6 +258,9 @@ class Surroundings(Layout):
         for field, value in (("here", 1), ("total", 1), ("here", 99), ("total", 99), ("cd_size", 1), ("cd_off", 1)):
             with self.subTest(f"{field}={value}"):
                 self.refuse(self.entries(), end={field: value})
+        for value in (1, 11, 13, 99):
+            with self.subTest(f"both counts={value}"):
+                self.assert_layout_refusal(self.entries(), "does not describe one archive", end={"here": value, "total": value})
 
     def test_every_zip64_marker_in_the_entry_records_is_refused(self):
         for where, field in (("central", "csize"), ("central", "usize"), ("central", "offset"), ("local", "csize"), ("local", "usize")):

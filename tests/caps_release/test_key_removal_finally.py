@@ -105,6 +105,32 @@ class PathCharacters(Root):
                     text = fh.read()
                 self.assertEqual(text.count("\n"), 1 if res.rc else 2, "no second NAME=value line can be appended")
 
+    def test_a_nul_in_a_path_is_a_refusal_and_never_a_crash_or_a_skipped_removal(self):
+        """The operating system rejects a NUL in a path with ValueError; the removal must treat that as nothing to remove."""
+        for flag in ("secret", "key", "verify", "env"):
+            with self.subTest(flag):
+                with open(self.envfile, "w") as fh:
+                    fh.write("KEEP=1\n")
+                self.make(self.secret, self.key)
+                paths = {"secret": self.secret, "key": self.key, "verify": self.verify}
+                if flag == "env":
+                    envfile = self.envfile + "\0x"
+                else:
+                    envfile = self.envfile
+                    paths[flag] = paths[flag] + "\0x"
+                argv = [f"--secret-home={paths['secret']}", f"--verify-home={paths['verify']}", f"--public-key={paths['key']}",
+                        f"--env-file={envfile}", f"--gpg={self.gpg}", f"--gpgconf={self.gpgconf}"]
+                res = h.run_main(S, argv, env=h.clean_env(FAKE_LOG=self.log))
+                self.refused(res, "holds a control or unassigned character (U+0000)")
+                self.assertNotIn("Traceback", res.err)
+                if flag != "secret":
+                    self.assertFalse(os.path.lexists(self.secret), "the secret home is removed although another path is bad")
+                if flag != "key":
+                    self.assertFalse(os.path.lexists(self.key))
+                with open(self.envfile) as fh:
+                    self.assertEqual(fh.read(), "KEEP=1\n")
+                shutil.rmtree(self.verify, ignore_errors=True)
+
     def test_a_path_that_starts_with_a_dash_is_a_path_and_not_an_option(self):
         with contextlib.chdir(self.work):
             self.make("-secret", "-key")
@@ -214,6 +240,24 @@ class Links(Root):
         self.assertEqual(res.rc, 1)
         self.assertFalse(os.path.lexists(link), "the link itself is removed")
         self.assert_sentinels()
+
+    def test_a_verify_home_link_that_cannot_be_removed_is_not_a_crash(self):
+        locked = os.path.join(self.work, "locked")
+        os.makedirs(locked)
+        link = os.path.join(locked, "verify-link")
+        os.symlink(self.victim, link)
+        os.chmod(locked, 0o500)
+        self.addCleanup(os.chmod, locked, 0o700)
+        if os.access(locked, os.W_OK):
+            self.skipTest("permissions are not enforced for this user")
+        self.make(self.secret, self.key)
+        res = self.go(verify=link, env={"FAKE_IMPORT_RC": "2"})
+        self.assertEqual(res.rc, 1, res)
+        self.assertNotIn("Traceback", res.err)
+        self.assertTrue(os.path.islink(link), "the link could not be removed and is still only a link")
+        self.assert_sentinels()
+        self.assertFalse(os.path.lexists(self.secret))
+        self.assertFalse(os.path.lexists(self.key))
 
     def test_a_secret_home_replaced_by_a_link_during_the_removal_is_not_followed(self):
         def boom(*_a, **_k):

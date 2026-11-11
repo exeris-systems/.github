@@ -158,7 +158,9 @@ class Gate(Fixture):
 
     def test_a_long_s_snapshot_pom_is_refused_either_way(self):
         self.coordinate("a-1.0.0", pom_text=pom_xml(GROUP, "a", "1.0-ſNAPSHOT"))
-        self.refused(self.check())
+        res = self.check()
+        self.refused(res, "names a coordinate that is not ASCII")
+        self.assertNotIn("declares the SNAPSHOT version", "\n".join(res.errors()), "the question is not asked of a version that is refused")
 
     def test_ascii_snapshots_are_still_snapshots(self):
         for version in ("1.0.0-SNAPSHOT", "1.0.0-snapshot", "1.0.0-20260101.120000-3"):

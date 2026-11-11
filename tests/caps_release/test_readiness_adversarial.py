@@ -231,6 +231,8 @@ class UnboundGroup(Gate):
     def test_a_group_less_pom_is_refused_whatever_the_bundle_holds(self):
         res = self.check_bundle(group="eu.exeris.caps")
         self.refused(res, "a-1.0.0.pom does not yield a groupId, an artifactId and a version")
+        self.assertIn("cannot be bound to a group: the built pom yields no coordinate", "\n".join(res.errors()))
+        self.assertNotIn("unexpectedly", res.err)
         res = self.gate()
         self.refused(res, "a-1.0.0.pom does not yield a groupId")
 

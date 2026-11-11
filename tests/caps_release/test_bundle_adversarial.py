@@ -381,6 +381,8 @@ class Gaps(Bundle):
                 res = self.check()
                 self.refused(res, "does not yield a groupId, an artifactId and a version")
                 self.assertEqual(len(res.errors()), 2, res)
+                self.assertTrue(res.errors()[-1].startswith("::error::release-readiness failed"), res)
+                self.assertNotIn("unexpectedly", res.err)
                 self.assertNotIn("coordinate: a-1.0.0", res.out)
 
     def test_a_parent_supplies_the_group_and_the_version_but_never_the_artifact(self):

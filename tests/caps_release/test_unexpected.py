@@ -183,7 +183,10 @@ class Readiness(Fixture):
 
     def test_an_unreadable_pom_is_reported_as_a_pom_that_cannot_be_read(self):
         self.lock("a-1.0.0.pom")
-        self.refused(self.check(), "cannot be read as a POM")
+        res = self.check()
+        self.refused(res, "cannot be read as a POM")
+        self.assertEqual(len(res.errors()), 2, "the finding and the closing line, nothing about a missing coordinate or a crash")
+        self.assertNotIn("unexpectedly", res.err)
 
     def test_an_unreadable_bundle_is_one_error_line(self):
         self.write_bundle(self.bundle_entries())
