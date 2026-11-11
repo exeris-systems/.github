@@ -35,3 +35,21 @@ What the suite covers, per script, on the accepting path and on every refusing p
 
 `python scripts/run_caps_release_tests.py` discovers `test*.py` here and fails when it collects no
 test, so an empty suite cannot pass.
+
+## How the suite is built
+
+- Every script is run twice, in this process through `main(argv)` and as the workflow runs it
+  (`python3 -I -B <script>`); `caps_release_helpers.Case.both` asserts that the two agree on the exit
+  status, the `::error::` lines and what is written to `--output`.
+- `test_mutations.py` copies each script, applies one `(old -> new)` source change that must match
+  exactly once, and runs the tests of that script against the copy. A mutant no test notices fails
+  the suite and is listed.
+- `workflow_invariants.py` reads `caps-release.yml` as data (secrets only in `publish`, the id token
+  only in `attest`, key removal directly after the deploy, the scripts' digest re-verified after
+  project code, pinned actions, safe defaults). `test_workflow.py` mutates the workflow text once per
+  invariant to prove each can fail.
+- A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
+  is reported as an expected failure and becomes an unexpected success, which fails the run, when the
+  script is fixed; the decorator is then removed.
+- Tests that need `gpg` generate a throwaway key in a temporary keyring and skip when `gpg` is absent.
+
