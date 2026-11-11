@@ -12,6 +12,11 @@ without being imported. The environment file is written only after the post-cond
 failure leaves `GNUPGHOME` pointing at a keyring. On ANY failure the verify home is deleted, the
 exported file is deleted, and the secret home is deleted again if it came back.
 
+The secret home and the file named as the public key are removed in a `finally`, on every path out of
+the script, WITHOUT regard to whether their paths passed the check below: removal uses literal path
+operations (no shell, no pattern), never follows a symbolic link, and deletes a directory tree through
+descriptor-relative calls. Every subprocess is bounded by a timeout; an expiry is a failure.
+
 Every path argument is refused when it holds a control, format, separator or unassigned character
 (a newline in a path would append a second `NAME=value` line to the environment file). A secret
 home that is a symbolic link is reported and never followed or deleted through; the run still fails.
@@ -38,10 +43,14 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unicodedata
+
+
+SUBPROCESS_TIMEOUT = 120
 
 
 def unusual(ch: str) -> bool:
@@ -54,6 +63,19 @@ def remove_tree(path: str) -> None:
         os.unlink(path)
     elif os.path.lexists(path):
         shutil.rmtree(path, ignore_errors=True)
+
+
+def remove_literally(path: str, tree: bool) -> None:
+    """Delete PATH with literal path operations only (no shell, no pattern, no validation of its
+    characters); a symbolic link is never followed and never deleted through. Best effort."""
+    try:
+        if stat.S_ISDIR(os.lstat(path).st_mode):
+            if tree:
+                shutil.rmtree(path, ignore_errors=True)         # descriptor-relative, does not follow links
+        elif not tree:
+            os.unlink(path)
+    except (OSError, ValueError):
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,30 +94,27 @@ def main(argv: list[str] | None = None) -> int:
         problems.append(msg)
         print(f"::error::{msg}", file=sys.stderr)
 
+    finished = False
     try:
-        removal(a, fail, problems)
-    except Exception as exc:
-        fail(f"the key removal failed unexpectedly ({type(exc).__name__}: {' '.join(str(exc).split())}).")
+        try:
+            removal(a, fail, problems)
+        except Exception as exc:
+            fail(f"the key removal failed unexpectedly ({type(exc).__name__}: {' '.join(str(exc).split())}).")
+        finished = True
+    finally:
+        # Whatever happened, and whether or not a path passed validation: nothing that holds, or may
+        # hold, a secret key stays behind.
+        remove_literally(a.secret_home, tree=True)
+        remove_literally(a.public_key, tree=False)
+        if problems or not finished:
+            try:
+                remove_tree(a.verify_home)
+            except (OSError, ValueError):
+                pass
     if problems:
-        cleanup(a)
         return 1
     print("ok - the private key is gone; the keyring holds the public key only")
     return 0
-
-
-def cleanup(a: argparse.Namespace) -> None:
-    """Failure: nothing that holds, or may hold, a secret key stays behind."""
-    for path in (a.verify_home, a.public_key):
-        if not any(unusual(c) for c in path):
-            try:
-                if path == a.public_key:
-                    os.remove(path)
-                else:
-                    remove_tree(path)
-            except OSError:
-                pass
-    if not any(unusual(c) for c in a.secret_home) and not os.path.islink(a.secret_home):
-        shutil.rmtree(a.secret_home, ignore_errors=True)
 
 
 def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
@@ -113,8 +132,8 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
     elif os.path.isdir(a.secret_home):
         try:
             subprocess.run([a.gpgconf, "--kill", "gpg-agent"], env={**os.environ, "GNUPGHOME": a.secret_home},
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError:
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=SUBPROCESS_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
             pass
         shutil.rmtree(a.secret_home, ignore_errors=True)
     if problems:
@@ -125,7 +144,7 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
         inspect = tempfile.mkdtemp(prefix="gnupg-inspect-")
         try:
             shown = subprocess.run([a.gpg, "--batch", "--show-keys", "--with-colons", a.public_key],
-                                   env={**os.environ, "GNUPGHOME": inspect}, capture_output=True, text=True)
+                                   env={**os.environ, "GNUPGHOME": inspect}, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
         finally:
             shutil.rmtree(inspect, ignore_errors=True)
         if shown.returncode != 0:
@@ -137,7 +156,8 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
             os.makedirs(a.verify_home, mode=0o700, exist_ok=True)
             os.chmod(a.verify_home, 0o700)
             done = subprocess.run([a.gpg, "--batch", "--import", a.public_key], env=verify_env,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                  timeout=SUBPROCESS_TIMEOUT)
             if done.returncode != 0:
                 fail(f"the public key could not be imported: {done.stderr.strip()}")
     try:
@@ -152,7 +172,7 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
     if os.path.lexists(a.secret_home):
         fail("the private keyring still exists after removal.")
     listed = subprocess.run([a.gpg, "--list-secret-keys", "--with-colons"], env=verify_env,
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
     secret = [ln for ln in listed.stdout.splitlines() if ln.split(":", 1)[0] in ("sec", "ssb")]
     if listed.returncode not in (0, 2) or secret:
         fail("a secret key is still in the keyring after removal.")

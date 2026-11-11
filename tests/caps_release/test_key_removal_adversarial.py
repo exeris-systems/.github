@@ -266,8 +266,6 @@ class HostilePaths(Scripted):
         self.refused(self.run_removal(self.argv(public_key=self.key + " ")))
         self.assertFalse(os.path.exists(self.secret))
 
-    @known_defect("key-removal-hostile-secret-home", "a secret home whose own path holds an unusual character is not removed when the "
-                                                     "run fails, although the contract is that no failure leaves the private key behind")
     def test_a_hostile_secret_home_path_must_still_remove_the_private_keyring(self):
         evil = self.secret + "​"
         os.makedirs(evil)
@@ -280,8 +278,6 @@ class HostilePaths(Scripted):
         finally:
             shutil.rmtree(evil, ignore_errors=True)
 
-    @known_defect("key-removal-hostile-key-file", "a public-key path with an unusual character is not deleted on failure, so a secret "
-                                                  "export handed in under such a name stays on the runner")
     def test_a_hostile_key_file_path_must_still_be_deleted(self):
         evil = self.key + "​"
         with open(evil, "w") as fh:
