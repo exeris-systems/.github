@@ -97,7 +97,9 @@ class Complete(Fixture):
             fh.write("not a zip")
         with open(javadoc + ".asc", "w") as fh:
             fh.write(sig_of(javadoc))
-        self.refused(self.check(), "is not a zip file")
+        res = self.check()
+        self.refused(res, "a-1.0.0-javadoc.jar is not a zip file")
+        self.assertNotIn("unexpectedly", res.err)
 
     def test_a_missing_signature_for_each_file(self):
         for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom"):

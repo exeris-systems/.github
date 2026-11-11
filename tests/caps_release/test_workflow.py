@@ -69,6 +69,31 @@ MUTATIONS = {
     "scripts-checkout-missing:build": [("          repository: exeris-systems/.github\n", "", 0)],
     "upload-default": [("upload:         { type: boolean, default: false,", "upload:         { type: boolean, default: true, ", 0)],
     "target-default": [('default: "none"', 'default: "central"', 0)],
+    "gate-not-staging:build": [('--stage "$RUNNER_TEMP/gated-files"', '--stage "$RUNNER_TEMP/elsewhere"', 0),
+                               (' --stage "$RUNNER_TEMP/gated-files"', "", 0)],
+    "gate-not-staging:publish": [('--stage "$RUNNER_TEMP/gated-files"', '--stage "$RUNNER_TEMP/elsewhere"', 1),
+                                 (' --stage "$RUNNER_TEMP/gated-files"', "", 1)],
+    "gate-step-not-unique:build": [("check_release_readiness.py", "check_release_readiness_.py", 0)],
+    "upload-from-target:build": [("          path: ${{ runner.temp }}/gated-files\n", "          path: target\n", 0),
+                                 ("          path: ${{ runner.temp }}/gated-files\n",
+                                  "          path: |\n            ${{ runner.temp }}/gated-files\n            target/*.jar\n", 0)],
+    "upload-from-target:publish": [("          path: ${{ runner.temp }}/gated-files\n", "          path: target/\n", 1),
+                                   ("          path: ${{ runner.temp }}/gated-files\n",
+                                    "          path: |\n            ${{ runner.temp }}/gated-files\n            target/central-publishing/*.zip\n", 1)],
+    "upload-path-not-gated:build": [("          path: ${{ runner.temp }}/gated-files\n", "          path: ${{ runner.temp }}/other\n", 0)],
+    "upload-path-not-gated:publish": [("          path: ${{ runner.temp }}/gated-files\n", "          path: ${{ runner.temp }}/other\n", 1)],
+    "upload-missing:build": [("        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+                              "        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1", 0)],
+    "upload-missing:publish": [("        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+                                "        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1", 1)],
+    "attest-subject-outside-download": [("            uploaded/**/*.jar\n", "            target/**/*.jar\n", 0),
+                                        ("            uploaded/**/*.zip\n", "            uploaded/**/*.zip\n            ../target/*.jar\n", 0),
+                                        ("          path: uploaded\n", "          path: elsewhere\n", 0)],
+    "attest-before-download": [('      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: release-${{ needs.build.outputs.version }}\n          path: uploaded\n      - name: Attest build provenance (SLSA)\n        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: |\n            uploaded/**/*.jar\n            uploaded/**/*.pom\n            uploaded/**/*.zip\n', '      - name: Attest build provenance (SLSA)\n        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2\n        with:\n          subject-path: |\n            uploaded/**/*.jar\n            uploaded/**/*.pom\n            uploaded/**/*.zip\n      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n        with:\n          name: release-${{ needs.build.outputs.version }}\n          path: uploaded\n', 0)],
+    "attest-wrong-artifact": [("          name: release-${{ needs.build.outputs.version }}\n          path: uploaded",
+                               "          name: release-gate-${{ needs.build.outputs.version }}\n          path: uploaded", 0)],
+    "attest-steps-unexpected": [("      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+                                 "      - uses: actions/checkout@" + SHA, 0)],
     "uses-not-pinned": [(f"actions/checkout@{SHA}", "actions/checkout@v7", 0),
                         (f"actions/checkout@{SHA}", "actions/checkout@" + SHA[:39], 3),
                         ("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", "actions/upload-artifact@main", 1),
@@ -115,6 +140,35 @@ class Real(h.Case):
         self.assertGreaterEqual(len(uses), 8)
         for u in uses:
             self.assertRegex(u, r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+
+    def test_both_gate_steps_stage_and_both_uploads_take_the_staged_set(self):
+        wf = w.parse(read())["jobs"]
+        for job in ("build", "publish"):
+            gates = [s for s in wf[job]["steps"] if "check_release_readiness.py" in s["run"]]
+            self.assertEqual(len(gates), 1, job)
+            self.assertRegex(gates[0]["run"], r'--stage "\$RUNNER_TEMP/gated-files"')
+            uploads = [s for s in wf[job]["steps"] if s["uses"].startswith("actions/upload-artifact@")]
+            self.assertEqual(len(uploads), 1, job)
+            self.assertEqual(w.block_lines(uploads[0], "path"), [w.GATED])
+            self.assertNotIn("target", uploads[0]["raw"].replace("target:", ""))
+
+    def test_the_attestation_takes_its_subjects_only_from_the_downloaded_artifact(self):
+        steps = w.parse(read())["jobs"]["attest"]["steps"]
+        download = [s for s in steps if s["uses"].startswith("actions/download-artifact@")]
+        attest = [s for s in steps if s["uses"].startswith("actions/attest-build-provenance@")]
+        self.assertEqual((len(download), len(attest)), (1, 1))
+        root = download[0]["with"]["path"]
+        subjects = w.block_lines(attest[0], "subject-path")
+        self.assertTrue(subjects)
+        for subject in subjects:
+            self.assertTrue(subject.startswith(root + "/"), subject)
+        self.assertEqual(download[0]["with"]["name"], "release-${{ needs.build.outputs.version }}")
+
+    def test_the_block_reader_reads_blocks_and_one_line_values(self):
+        step = w.step(["      - uses: x/y@" + "0" * 40, "        with:", "          path: |", "            a/b", "            c", "          name: n"])
+        self.assertEqual(w.block_lines(step, "path"), ["a/b", "c"])
+        self.assertEqual(w.block_lines(step, "name"), ["n"])
+        self.assertEqual(w.block_lines(step, "absent"), [])
 
     def test_the_inputs_default_to_no_upload(self):
         text = "\n".join(w.strip_comments(read()))

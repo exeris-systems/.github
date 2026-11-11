@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import resource
 import struct
 import subprocess
@@ -267,16 +268,17 @@ class Names(Bundle):
         unsafe = {
             "backslash separators": "eu\\exeris\\caps\\a\\1.0.0\\a-1.0.0.module",
             "backslash in the file": f"{D}/a-1.0.0\\x.module",
-            "newline": f"{D}/a-1.0.0\n::error::forged.module",
-            "carriage return": f"{D}/a-1.0.0\r.module",
-            "escape": f"{D}/a-1.0.0\x1b[31m.module",
-            "nul": f"{D}/a-1.0.0\x00.module",
-            "del": f"{D}/a-1.0.0\x7f.module",
-            "c1 control": f"{D}/a-1.0.0\x85.module",
-            "bidi override": f"{D}/a-1.0.0\u202e.module",
-            "zero width space": f"{D}/a-1.0.0\u200b.module",
-            "line separator": f"{D}/a-1.0.0\u2028.module",
-            "unassigned": f"{D}/a-1.0.0\u0378.module",
+            "newline": f"{D}/a-1.0.0-x\n::error::forged.module",
+            "carriage return": f"{D}/a-1.0.0-x\r.module",
+            "escape": f"{D}/a-1.0.0-x\x1b[31m.module",
+            "nul": f"{D}/a-1.0.0-x\x00.module",
+            "del": f"{D}/a-1.0.0-x\x7f.module",
+            "c1 control": f"{D}/a-1.0.0-x\x85.module",
+            "bidi override": f"{D}/a-1.0.0-x\u202e.module",
+            "zero width space": f"{D}/a-1.0.0-x\u200b.module",
+            "line separator": f"{D}/a-1.0.0-x\u2028.module",
+            "unassigned": f"{D}/a-1.0.0-x\u0378.module",
+            "paragraph separator": f"{D}/a-1.0.0-x\u2029.module",
             "dot segment": f"{D}/./a-1.0.0.module",
             "dot dot segment": f"eu/exeris/caps/a/../a/1.0.0/a-1.0.0.module",
             "dot dot at the end": f"{D}/a-1.0.0.module/..",
@@ -323,46 +325,139 @@ class Names(Bundle):
         self.assertIn("central bundle: 12 file(s), 0 outside a coordinate", res.out)
 
 
+class Gaps(Bundle):
+    """Each of these is a place where a weaker gate would still have refused for some other reason."""
+
+    def err(self, res):
+        return "\n".join(res.errors())
+
+    def test_an_unusual_character_is_the_only_fault_of_these_names(self):
+        for ch in ("\u2029", "\u0378", "\u2028", "\u200b", "\x01"):
+            with self.subTest(hex(ord(ch))):
+                self.write_bundle(self.entries())
+                self.accepted(self.check("--expect-bundle", "true"))
+                entries = list(self.entries().items()) + [(self.named(f"-x{ch}.module"), b"{}")]
+                write_zip(self.bundle_path, entries)
+                res = self.check("--expect-bundle", "true")
+                self.refused(res, "is not a file of a published coordinate")
+
+    def test_a_group_of_one_segment_is_a_coordinate(self):
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.real_coordinate(group="acme")
+        self.accepted(self.check_bundle(group="acme"))
+
+    def test_a_namespaced_pom_binds_the_name_and_the_group(self):
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        ns = pom_xml(artifact="b").replace("<project>", '<project xmlns="http://maven.apache.org/POM/4.0.0">')
+        self.coordinate("a-1.0.0", pom_text=ns)
+        self.refused(self.check(), "which the files are not named after")
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.coordinate("a-1.0.0", pom_text=pom_xml().replace("<project>", '<project xmlns="http://maven.apache.org/POM/4.0.0">'))
+        self.refused(self.check_bundle(group="org.other"), "is not under the group eu.exeris.caps")
+
+    def test_the_pom_s_own_group_wins_over_its_parent_s(self):
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.coordinate("a-1.0.0", pom_text=pom_xml(group="own.group", parent_group="parent.group"))
+        self.accepted(self.check_bundle(group="own.group"))
+        self.refused(self.check_bundle(group="parent.group"), "is not under the group own.group")
+
+    def test_a_pom_naming_only_one_of_artifact_and_version_binds_nothing_it_does_not_name(self):
+        for text in ("<project><groupId>eu.exeris.caps</groupId><version>1.0.0</version></project>",
+                     "<project><groupId>eu.exeris.caps</groupId><artifactId>a</artifactId></project>"):
+            with self.subTest(text):
+                shutil.rmtree(self.target)
+                os.makedirs(self.target)
+                self.coordinate("a-1.0.0", pom_text=text)
+                self.accepted(self.check())
+
+    def test_a_name_that_is_not_a_jar_pom_or_signature_is_not_judged_by_its_characters(self):
+        with open(os.path.join(self.target, "notes\x01.txt"), "w") as fh:
+            fh.write("x")
+        self.accepted(self.check())
+
+    def test_a_stray_entry_is_not_compared_or_verified_as_if_it_belonged_to_a_coordinate(self):
+        entries = list(self.entries().items()) + [("o/p/q/a-1.0.0.jar", b"different bytes"),
+                                                  ("zzz/yyy/xxx/orphan.asc", b"x"), ("zzz/yyy/xxx/orphan.sha1", b"x")]
+        res = self.judge(entries, "o/p/q/a-1.0.0.jar is not a file of a published coordinate", proc=False)
+        text = self.err(res)
+        self.assertNotIn("differs from target", text)
+        self.assertNotIn("which the bundle does not hold", text)
+
+    def test_an_entry_with_other_type_bits_in_the_mode_is_not_taken_for_a_symlink(self):
+        items = [(n, d, 0o160000 << 16) for n, d in self.entries().items()]
+        self.accepted(self.judge(items, None, proc=False))
+
+    def test_a_bundle_that_is_not_a_zip_is_named_as_such(self):
+        os.makedirs(os.path.dirname(self.bundle_path))
+        with open(self.bundle_path, "w") as fh:
+            fh.write("nope")
+        res = self.check("--expect-bundle", "true")
+        self.refused(res, "central-bundle.zip is not a zip file")
+        self.assertNotIn("unexpectedly", res.err)
+
+
 class Bounds(Bundle):
     def test_exactly_the_entry_limit_is_accepted_and_one_more_is_refused(self):
         entries = list(self.entries().items())
         fill = [(f"d{i}/", b"") for i in range(2000 - len(entries))]
         self.accepted(self.judge(entries + fill, None, proc=False))
-        res = self.judge(entries + fill + [("one-more/", b"")], "2001 entries exceed the limit of 2000")
-        self.assertEqual(len(res.errors()), 2)
+        res = self.judge(entries + fill + [("one-more/", b""), ("stray.txt", b"x")], "2002 entries exceed the limit of 2000")
+        self.assertEqual(len(res.errors()), 2, "nothing else is judged once a bound is exceeded")
 
     def test_more_than_the_total_size_is_refused_before_anything_is_read(self):
         items = list(self.entries().items())
         write_zip(self.bundle_path, items)
         raw_zip(self.bundle_path, [dict(name=n, data=d) for n, d in items] +
-                [dict(name="big.bin", data=b"x", usize=(256 << 20) + 1, csize=1, method=8)])
+                [dict(name="stray.txt", data=b"x"), dict(name="big.bin", data=b"x", usize=(256 << 20) + 1, csize=1, method=8)])
         before = self.tree()
         res = self.check("--expect-bundle", "true")
         self.refused(res, "bytes uncompressed exceed the limit of 268435456")
+        self.assertEqual(len(res.errors()), 2)
         self.assertEqual(self.tree(), before)
 
-    def test_exactly_the_total_size_limit_is_not_a_total_size_refusal(self):
+    def test_exactly_the_total_size_limit_is_not_a_total_size_refusal_and_the_sum_is_what_counts(self):
         items = [dict(name=n, data=d) for n, d in self.entries().items()]
         used = sum(len(i["data"]) for i in items)
-        # the declared size is what the limit counts; a stored-size entry keeps the ratio at 1
-        items.append(dict(name="d/", data=b""))
-        raw_zip(self.bundle_path, items)
+        limit = 256 * 1024 * 1024
+        big = limit - used
+        raw_zip(self.bundle_path, items + [dict(name="big.bin", data=b"x", usize=big, csize=big // 100, method=8)])
         res = self.check("--expect-bundle", "true")
-        self.assertNotIn("exceed the limit", res.err)
-        self.assertGreater(used, 0)
+        self.assertNotIn("exceed the limit", res.err, "a total equal to the limit is within it")
+        half = limit // 2 + 1
+        raw_zip(self.bundle_path, items + [dict(name="a.bin", data=b"x", usize=half, csize=half // 100, method=8),
+                                           dict(name="b.bin", data=b"x", usize=half, csize=half // 100, method=8)])
+        self.refused(self.check("--expect-bundle", "true"), "bytes uncompressed exceed the limit")
+
+    def test_the_ratio_limit_is_exactly_two_hundred(self):
+        items = [dict(name=n, data=d) for n, d in self.entries().items()]
+        usize = 2097200
+        for csize, refused in ((usize // 200, False), (usize // 200 - 1, True), (usize // 200 + 1, False)):
+            with self.subTest(csize=csize):
+                raw_zip(self.bundle_path, items + [dict(name="stray.txt", data=b"x"),
+                                                   dict(name="big.bin", data=b"x", usize=usize, csize=csize, method=8)])
+                res = self.check("--expect-bundle", "true")
+                self.assertEqual("expands by more than" in res.err, refused, res)
+                if refused:
+                    self.assertEqual(len(res.errors()), 2, "nothing else is judged once a bound is exceeded")
 
     def test_a_ratio_above_the_limit_on_a_large_entry_is_refused_quickly(self):
         entries = self.entries()
-        for size in (1 << 20, 5 << 20, 100 << 20):
+        for size in (1 << 20, 5 << 20, 20 << 20):
             with self.subTest(size):
                 items = [dict(name=n, data=d) for n, d in entries.items()]
                 z = deflate_zeros(size)
+                items.append(dict(name="stray.txt", data=b"x"))
                 items.append(dict(name=self.named(".bomb"), data=z, method=8, crc=zlib.crc32(b"\0" * size), usize=size, csize=len(z)))
                 raw_zip(self.bundle_path, items)
                 before, start = self.tree(), time.monotonic()
                 res = self.check("--expect-bundle", "true")
                 self.assertLess(time.monotonic() - start, 10)
                 self.refused(res, f"{self.named('.bomb')} expands by more than 200 times")
+                self.assertEqual(len(res.errors()), 2)
                 self.assertEqual(self.tree(), before)
 
     def test_the_ratio_limit_does_not_apply_below_one_mebibyte_and_not_to_incompressible_entries(self):

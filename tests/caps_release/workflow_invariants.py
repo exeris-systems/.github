@@ -109,6 +109,31 @@ def step(lines: list[str]) -> dict:
     return d
 
 
+def block_lines(s: dict, key: str) -> list[str]:
+    """The value of `key` in a step: the lines of a block scalar (`key: |`), or the one-line value."""
+    raw = s["raw"].split("\n")
+    for i, line in enumerate(raw):
+        m = re.match(rf"^(\s+)(?:- )?{re.escape(key)}:\s*(.*)$", line)
+        if not m:
+            continue
+        value = m.group(2).strip()
+        if value in ("|", "|-", "|+", ">", ">-"):
+            base, out = len(m.group(1)), []
+            for nxt in raw[i + 1:]:
+                if not nxt.strip():
+                    continue
+                if len(nxt) - len(nxt.lstrip()) <= base:
+                    break
+                out.append(nxt.strip())
+            return out
+        return [value.strip("'\"")] if value else []
+    return []
+
+
+GATED = "${{ runner.temp }}/gated-files"
+STAGE_FLAG = re.compile(r'--stage "\$RUNNER_TEMP/gated-files"')
+
+
 def secret_refs(s: dict) -> list[tuple[str, str, bool]]:
     """(where, name, boolean-only) for every secrets.X in the step."""
     found = []
@@ -227,6 +252,41 @@ def violations(text: str) -> set[str]:
             if s["uses"].startswith("actions/checkout") and s["with"].get("repository") and \
                     s["with"].get("ref") != "${{ github.job_workflow_sha }}":
                 out.add("scripts-checkout-ref")
+
+    # what is kept, uploaded and attested is the set the readiness gate staged, and nothing under target/
+    for jname in ("build", "publish"):
+        steps_ = jobs[jname]["steps"]
+        gates = [s for s in steps_ if "check_release_readiness.py" in s["run"]]
+        if len(gates) != 1:
+            out.add(f"gate-step-not-unique:{jname}")
+        for g in gates:
+            if not STAGE_FLAG.search(g["run"]):
+                out.add(f"gate-not-staging:{jname}")
+        uploads = [s for s in steps_ if s["uses"].startswith("actions/upload-artifact@")]
+        if len(uploads) != 1:
+            out.add(f"upload-missing:{jname}")
+        for u in uploads:
+            paths = block_lines(u, "path")
+            if any("target" in p for p in paths):
+                out.add(f"upload-from-target:{jname}")
+            if paths != [GATED]:
+                out.add(f"upload-path-not-gated:{jname}")
+    att = jobs["attest"]["steps"]
+    downloads = [i for i, s in enumerate(att) if s["uses"].startswith("actions/download-artifact@")]
+    attests = [i for i, s in enumerate(att) if s["uses"].startswith("actions/attest-build-provenance@")]
+    if len(downloads) != 1 or len(attests) != 1:
+        out.add("attest-steps-unexpected")
+    else:
+        dl, at = att[downloads[0]], att[attests[0]]
+        root = dl["with"].get("path", "").strip()
+        if downloads[0] > attests[0]:
+            out.add("attest-before-download")
+        if not re.fullmatch(r"release-\$\{\{ needs\.build\.outputs\.version \}\}", dl["with"].get("name", "")):
+            out.add("attest-wrong-artifact")
+        subjects = block_lines(at, "subject-path")
+        if not root or root.startswith("/") or ".." in root.split("/") or not subjects or any(
+                not x.startswith(root + "/") or ".." in x.split("/") or "${{" in x for x in subjects):
+            out.add("attest-subject-outside-download")
 
     # defaults
     up = [l for l in wf["lines"] if re.match(r"^      upload:", l)]

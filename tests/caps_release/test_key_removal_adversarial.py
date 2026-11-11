@@ -17,6 +17,7 @@ S = "remove_signing_key"
 DOUBLE = """#!/bin/sh
 tool="$(basename "$0")"
 printf '%s\\t%s\\t%s\\t%s\\n' "$tool" "$*" "$GNUPGHOME" "$([ -d "${GNUPGHOME:-/nonexistent}" ] && echo yes || echo no)" >> "$FAKE_LOG"
+printf '%s\\t%s\\n' "$*" "$(stat -c %a "${GNUPGHOME:-/nonexistent}" 2>/dev/null)" >> "$FAKE_LOG.modes"
 case " $* " in
   *" --show-keys "*) printf '%s' "$FAKE_SHOW_OUT"; printf '%s' "$FAKE_SHOW_ERR" >&2; exit "${FAKE_SHOW_RC:-0}" ;;
   *" --import "*) printf '%s' "$FAKE_IMPORT_ERR" >&2; exit "${FAKE_IMPORT_RC:-0}" ;;
@@ -75,6 +76,38 @@ class Inspection(Scripted):
         self.assertTrue(show[0]["home_exists"])
         self.assertLess(calls.index(show[0]), calls.index(imp[0]))
         self.assertFalse(os.path.exists(show[0]["home"]), "and that home is removed")
+
+    def modes(self):
+        with open(self.log + ".modes") as fh:
+            return [ln.rstrip("\n").split("\t") for ln in fh]
+
+    def test_a_loose_verify_home_is_tightened_before_the_import_and_before_the_listing(self):
+        self.prepare()
+        os.makedirs(self.verify, mode=0o755)
+        os.chmod(self.verify, 0o755)
+        self.accepted(self.run_removal())
+        for args, mode in self.modes():
+            if "--import" in args or "--list-secret-keys" in args:
+                self.assertEqual(mode, "700", args)
+
+    def test_a_loose_verify_home_is_tightened_when_there_is_no_key_to_import(self):
+        self.prepare(key=None)
+        os.makedirs(self.verify, mode=0o755)
+        os.chmod(self.verify, 0o755)
+        self.accepted(self.run_removal())
+        listing = [mode for args, mode in self.modes() if "--list-secret-keys" in args]
+        self.assertEqual(listing, ["700"])
+
+    def test_a_secret_subkey_listed_after_the_import_is_a_refusal(self):
+        self.prepare()
+        self.refused(self.run_removal(FAKE_LIST_OUT="pub:u\nssb:u:255\n"), "secret key is still")
+
+    def test_a_verify_home_inside_the_secret_home_leaves_neither_behind(self):
+        self.prepare()
+        inside = os.path.join(self.secret, "v")
+        self.refused(self.run_removal(self.argv(verify_home=inside)), "private keyring still exists")
+        self.assertFalse(os.path.exists(self.secret))
+        self.assertFalse(os.path.exists(inside))
 
     def test_a_secret_key_record_in_the_inspected_file_is_refused_unimported(self):
         for label, out in (("sec", "sec:u:255:22:ABC:1:::::\n"), ("ssb alone", "pub:u:255:22:ABC\nssb:u:255:18:DEF\n"),
@@ -187,7 +220,7 @@ class Inspection(Scripted):
 class HostilePaths(Scripted):
     BAD = {"newline": "\n", "carriage return": "\r", "escape": "\x1b", "line separator": " ", "paragraph separator": " ",
            "zero width space": "​", "bidi override": "‮", "byte order mark": "﻿", "unassigned": "͸",
-           "delete": "\x7f", "c1 control": "\x85"}
+           "delete": "\x7f", "c1 control": "\x85", "lone surrogate": "\udc80"}
 
     def test_every_unusual_character_in_each_of_the_four_paths_is_refused_and_writes_nothing(self):
         for flag in ("secret_home", "verify_home", "public_key", "env_file"):
@@ -212,6 +245,16 @@ class HostilePaths(Scripted):
         evil = self.verify + "\nGITHUB_OUTPUT=/x"
         self.refused(self.run_removal(self.argv(verify_home=evil)))
         self.assertEqual(self.read_env(), self.env_bytes)
+
+    def test_no_tool_is_run_under_a_hostile_secret_home_path(self):
+        evil = self.secret + "\u200b"
+        os.makedirs(evil)
+        self.prepare(secret=False)
+        try:
+            self.refused(self.run_removal(self.argv(secret_home=evil)))
+            self.assertEqual([c for c in self.calls() if c["home"] == evil or c["tool"] == "gpgconf"], [])
+        finally:
+            shutil.rmtree(evil, ignore_errors=True)
 
     def test_a_hostile_verify_home_does_not_stop_the_private_keyring_from_being_removed(self):
         self.prepare()

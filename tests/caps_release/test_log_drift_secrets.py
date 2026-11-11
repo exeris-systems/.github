@@ -342,6 +342,20 @@ class Drift(h.Case):
         self.refused(self.both(self.S, ["--repo", bare, "--generated", "refs"]))   # a directory, but no work tree
         self.refused(self.both(self.S, ["--repo", os.path.join(self.repo, ".git"), "--generated", "gen"]))
 
+    def shim(self, failing):
+        """A `git` that runs the real one except for the named subcommand, which fails."""
+        real = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+        self.write("shim/git", f'#!/bin/sh\nfor a in "$@"; do [ "$a" = "{failing}" ] && {{ echo "fatal: broken" >&2; exit 128; }}; done\nexec {real} "$@"\n')
+        os.chmod(self.path("shim", "git"), 0o755)
+        return h.clean_env(PATH=self.path("shim") + os.pathsep + os.environ["PATH"])
+
+    def test_a_git_that_fails_to_list_or_to_report_is_a_refusal_naming_git(self):
+        for sub in ("ls-files", "status"):
+            with self.subTest(sub):
+                res = self.both(self.S, ["--repo", self.repo, "--generated", "gen"], env=self.shim(sub))
+                self.refused(res, "git could not report on gen: fatal: broken")
+                self.assertEqual(res.out, "")
+
     def test_git_unable_to_run_ends_in_one_error_line(self):
         res = h.run_proc(self.S, ["--repo", self.repo, "--generated", "gen"], env={"PATH": self.tmp, "LC_ALL": "C.UTF-8"})
         self.refused(res)

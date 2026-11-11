@@ -48,6 +48,7 @@ class Accepts(h.Case):
     def test_branch_dry_run(self):
         res = self.both(SCRIPT, argv(BRANCH))
         self.accepted(res)
+        self.assertNotIn("::warning::", res.out, "a dry run with target none asks for nothing to warn about")
         self.assertEqual(res.out.strip().splitlines()[-1], "resolved: version=1.2.3 target=none publish=false")
 
     def test_tag_on_default_branch_identical_and_behind(self):
@@ -219,6 +220,11 @@ class Refuses(h.Case):
     def test_upload_off_a_tag_without_a_known_default_branch(self):
         self.check(BRANCH, "unknown default branch", target="central", upload="true", ref="refs/heads/", default_branch="")
 
+    def test_a_ref_type_that_only_looks_like_tag_is_a_branch_that_needs_its_version(self):
+        for rt in ("Tag", "TAG", "tAg"):
+            with self.subTest(rt):
+                self.check(TAG, "A dry run needs one", ref_type=rt, version="")
+
     def test_ref_type_other_than_tag_is_a_branch(self):
         for rt in ("Tag", "TAG", "tag ", "", "release"):
             with self.subTest(repr(rt)):
@@ -385,11 +391,11 @@ class NonPrinting(h.Case):
 
     def test_a_lone_surrogate_in_every_input(self):
         for field in self.ALL:
-            with self.subTest(field):
-                value = "x\udc80x"
-                res = h.run_main(SCRIPT, argv(self.base_for(field), **{field: value}))
-                self.refused(res, field.replace("_", "-") + " holds an undecodable byte")
-                self.assertEqual(len(res.errors()), 1)
+            for value in ("x\udc80x", "x\ud800x", "x\udbffx", "x\udfffx", "\ud800"):
+                with self.subTest(field=field, value=value):
+                    res = h.run_main(SCRIPT, argv(self.base_for(field), **{field: value}))
+                    self.refused(res, field.replace("_", "-") + " holds an undecodable byte")
+                    self.assertEqual(len(res.errors()), 1)
 
     def test_the_subprocess_refuses_the_same_characters_in_every_input(self):
         for field in self.ALL:
@@ -446,6 +452,46 @@ class Output(h.Case):
         self.accepted(self.both(SCRIPT, argv(TAG, ref_name="v10.0.7", output=out)))
         with open(out) as fh:
             self.assertEqual(fh.read(), "version=10.0.7\npublish=false\n")
+
+
+class RealComparison(h.Case):
+    """The default comparison asks `gh api`; a stand-in `gh` on PATH shows what is asked and what is made of the answer."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = self.path("bin")
+        self.args_log = self.path("gh-args")
+
+    def gh(self, stdout="", rc=0):
+        self.write("bin/gh", f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{self.args_log}'\nprintf '%s' '{stdout}'\nexit {rc}\n")
+        os.chmod(os.path.join(self.bin, "gh"), 0o755)
+        return h.clean_env(PATH=self.bin + os.pathsep + os.environ.get("PATH", "/usr/bin"))
+
+    def run_tag(self, env, **over):
+        return h.run_proc(SCRIPT, argv(TAG, compare_status="", sha="a" * 40, **over), env=env)
+
+    def test_the_question_asked_is_the_commit_against_the_default_branch(self):
+        res = self.run_tag(self.gh("behind"))
+        self.accepted(res)
+        with open(self.args_log) as fh:
+            self.assertEqual(fh.read().strip(), f"api repos/o/r/compare/main...{'a' * 40} --jq .status")
+
+    def test_the_answer_is_trimmed_and_judged(self):
+        self.accepted(self.run_tag(self.gh("identical")))
+        for answer in ("ahead", "diverged", "", "IDENTICAL"):
+            with self.subTest(answer):
+                self.refused(self.run_tag(self.gh(answer)), "NOT on")
+
+    def test_a_gh_that_fails_is_a_refused_comparison_whatever_it_printed(self):
+        for out in ("", "behind", "identical"):
+            with self.subTest(out):
+                self.refused(self.run_tag(self.gh(out, rc=1)), "comparison")
+
+    def test_gh_is_not_run_off_a_tag_or_when_the_status_is_given(self):
+        env = self.gh("behind")
+        self.accepted(h.run_proc(SCRIPT, argv(BRANCH), env=env))
+        self.accepted(h.run_proc(SCRIPT, argv(TAG), env=env))
+        self.assertFalse(os.path.exists(self.args_log))
 
 
 class Usage(h.Case):

@@ -110,7 +110,7 @@ class SnapshotVersions(h.Case):
                        f"<version>1.0</version></dependency><dependency><groupId>g</groupId><artifactId>Snapshot</artifactId>"
                        f"<version>2.0</version></dependency>")
         for upload in ("true", "false"):
-            res = self.scan(xml, "g:snapshot-lib:jar:1.0:compile\n", upload)
+            res = self.scan(xml, "g:lib-snapshot:jar:1.0:compile\n", upload)
             self.accepted(res)
             self.assertIn("ok - no SNAPSHOT", res.out)
 
@@ -128,7 +128,7 @@ class SnapshotVersions(h.Case):
             self.assertNotIn("floating", res.out)
 
 
-FLOATING = ["LATEST", "RELEASE", "[1.0,2.0)", "(,1.0]", "[1.0,)", "(1.0,2.0)", "[1.0,2.0]", "1.0,2.0", " LATEST ", "[1.0]", "[ 1.0 , 2.0 )"]
+FLOATING = ["LATEST", "RELEASE", "(1.0)", "[1.0,2.0)", "(,1.0]", "[1.0,)", "(1.0,2.0)", "[1.0,2.0]", "1.0,2.0", " LATEST ", "[1.0]", "[ 1.0 , 2.0 )"]
 
 
 class FloatingVersions(h.Case):
@@ -257,7 +257,7 @@ MAVEN_TABLE = [
     ("1.0-2026010a.120000-1", False), ("1.0-20260101,120000-1", False),
     ("1.0-\uff12\uff10\uff12\uff16\uff10\uff11\uff10\uff11.\uff11\uff12\uff10\uff10\uff10\uff10-1", False),
     ("1.0-20260101.120000-\u0661", False), ("1.0-SNAPSHOT\n", False),
-    ("a\nb-20260101.120000-1", False),
+    ("a\nb-20260101.120000-1", False), ("1.0-202601011.120000-1", False), ("1.0-20260101.1200001-1", False),
 ]
 # Java's `.` does not match these line terminators, Python's does: the scripts call these snapshots, Maven does not.
 STRICTER = ["a\u2028b-20260101.120000-1", "a\u2029b-20260101.120000-1", "a\u0085b-20260101.120000-1", "a\rb-20260101.120000-1"]
@@ -276,6 +276,77 @@ def java_truth(versions):
     if _TRUTH["all"] is None:
         return None
     return [_TRUTH["all"][v] for v in versions]
+
+
+class ScanGaps(h.Case):
+    """Places a weaker scan would miss: ranges that carry a timestamped bound, odd dependency lines, error counts."""
+
+    def scan(self, effective, deps="g:d:jar:1.0:compile\n", upload="true", summary=None):
+        return self.both(SCAN, scan_args(self, effective, deps, upload, summary))
+
+    def test_a_timestamped_snapshot_inside_a_range_is_a_snapshot_dependency(self):
+        for v in (f"[1.0-20260101.120000-1,2.0)", f"(1.0,2.0-20260101.120000-1]", f"[ 1.0 , 2.0-20260101.120000-1 ]",
+                  f"[1.0,2.0-20260101.120000-1)", f"(1.0-20260101.120000-1,)", f"[1.0-20260101.120000-1]"):
+            with self.subTest(v):
+                res = self.scan(eff(dep(v)), upload="true")
+                self.refused(res, "SNAPSHOT dependencies")
+                self.assertEqual(len(res.errors()), 2, "the snapshot and the range are both reported")
+
+    def test_one_error_for_each_class_that_is_present(self):
+        res = self.scan(eff(dep("1.0-SNAPSHOT")), upload="true")
+        self.assertEqual(len(res.errors()), 1)
+        self.assertIn("SNAPSHOT dependencies", res.errors()[0])
+        summary = self.path("s.md")
+        self.accepted(self.scan(eff(dep("1.0-SNAPSHOT")), upload="false", summary=summary))
+        with open(summary) as fh:
+            text = fh.read()
+        self.assertIn("SNAPSHOT dependencies", text)
+        self.assertNotIn("floating", text)
+
+    def test_dependency_list_lines_of_every_shape(self):
+        ts = "1.0-20260101.120000-1"
+        for line in (f"g:d:jar:{ts}\n", f"g:d:jar::{ts}:compile\n", f"g:d:jar:{ts}::compile\n", f"g:d:jar:{ts} :compile\n"):
+            with self.subTest(line):
+                self.refused(self.scan(eff(dep("1.0")), deps=line), "SNAPSHOT dependencies")
+        for line in ("g:d:jar::compile\n", "g:lib-snapshot:jar:1.0:compile\n", "group-snapshot:d:jar:1.0:compile\n",
+                     "g:d:jar-snapshot:1.0:compile\n"):
+            with self.subTest(line):
+                self.accepted(self.scan(eff(dep("1.0")), deps=line))
+
+    def test_a_dependency_list_with_undecodable_bytes_is_scanned_not_rejected_for_its_encoding(self):
+        deps = self.write("deps.bin", b"\xff\xfe g:e:jar:1.0-SNAPSHOT:compile\n", mode="wb")
+        res = self.both(SCAN, ["--effective-pom", self.write("e.xml", eff(dep("1.0"))), "--dependencies", deps, "--upload", "true"])
+        self.refused(res, "SNAPSHOT dependencies")
+
+    def test_a_version_with_the_literal_in_a_later_segment_is_a_hit_on_a_resolved_line_too(self):
+        self.refused(self.scan(eff(dep("1.0")), deps="g:d:jar:1.0-SNAPSHOT-1:compile\n"), "SNAPSHOT dependencies")
+
+
+class MalformedPoms(h.Case):
+    """A POM that is not well-formed is reported as unreadable, by name, and not as an unexpected failure."""
+
+    def test_the_message_names_the_problem(self):
+        bad = self.write("bad.xml", "<project><a></project>")
+        deps = self.write("deps", "")
+        for name, argv, fragment in (("check_release_profile", ["--pom", bad, "--target", "none"], "cannot be read as a POM"),
+                                     ("check_pom_version", ["--pom", bad, "--want", "1.0.0"], "cannot be read as a POM"),
+                                     ("check_auto_publish", ["--effective-pom", bad], "cannot be read"),
+                                     ("scan_snapshots", ["--effective-pom", bad, "--dependencies", deps, "--upload", "true"], "cannot read its inputs")):
+            with self.subTest(name):
+                res = self.both(name, argv)
+                self.refused(res, fragment)
+                self.assertNotIn("unexpectedly", res.err)
+
+    def test_a_property_set_to_false_in_the_wrong_case_is_refused(self):
+        xml = pom("<properties><autoPublish>False</autoPublish></properties>")
+        self.refused(self.both(AUTO, ["--effective-pom", self.write("e.xml", xml)]), "<properties><autoPublish>False</autoPublish>")
+
+    def test_only_the_artifact_id_names_the_plugin(self):
+        xml = pom("<build><plugins><plugin><groupId>central-publishing-maven-plugin</groupId><artifactId>other</artifactId>"
+                  "<configuration><autoPublish>true</autoPublish></configuration></plugin></plugins></build>")
+        res = self.both(AUTO, ["--effective-pom", self.write("e.xml", xml)])
+        self.accepted(res)
+        self.assertIn("0 central-publishing-maven-plugin", res.out)
 
 
 class MavenRule(h.Case):

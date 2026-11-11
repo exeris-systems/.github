@@ -99,6 +99,11 @@ class ReleasedSet(Gate):
         os.remove(os.path.join(self.target, "a-1.0.0.pom"))
         self.refuse("a-1.0.0 is missing a-1.0.0.pom")
 
+    def test_a_pom_without_a_main_jar_is_not_part_of_a_release(self):
+        with open(os.path.join(self.target, "zzz-1.0.pom"), "w") as fh:
+            fh.write("<project/>")
+        self.refuse("zzz-1.0.pom is not part of a release")
+
     def test_files_that_are_not_jars_poms_or_signatures_are_not_gated(self):
         for name in ("a-1.0.0.module", "notes.txt", "a-1.0.0.jar.md5", "a-1.0.0-cyclonedx.json", "x.zip"):
             with open(os.path.join(self.target, name), "w") as fh:
@@ -365,6 +370,33 @@ class Staging(Gate):
         got = set(self.staged()) if os.path.exists(self.stage) else set()
         self.assertEqual(got - self.gated_names(), set(), "only released regular files can be staged")
 
+    def test_a_failing_run_attempts_to_stage_only_what_exists(self):
+        os.remove(os.path.join(self.target, "a-1.0.0-sources.jar"))
+        res = self.stage_run()
+        self.refused(res, "a-1.0.0 is missing a-1.0.0-sources.jar")
+        self.assertNotIn("cannot be staged", "\n".join(res.errors()))
+
+    def test_a_bundle_that_exceeds_a_bound_is_refused_and_not_staged(self):
+        import zlib
+        from readiness_support import deflate_zeros, raw_zip
+        base = [dict(name=n, data=d) for n, d in self.bundle_entries().items()]
+        z = deflate_zeros(5 << 20)
+        cases = {"entries": base + [dict(name=f"d{i}/", data=b"") for i in range(2001)],
+                 "ratio": base + [dict(name="big.bin", data=z, method=8, crc=zlib.crc32(b"\0" * (5 << 20)), usize=5 << 20, csize=len(z))],
+                 "total": base + [dict(name="big.bin", data=b"x", usize=(256 << 20) + 1, csize=1, method=8)]}
+        for label, items in cases.items():
+            with self.subTest(label):
+                raw_zip(self.bundle_path, items)
+                res = self.stage_run("--expect-bundle", "true")
+                self.refused(res)
+                self.assertFalse(os.path.exists(os.path.join(self.stage, "central-publishing")))
+                self.assertNotIn("cannot be staged", "\n".join(res.errors()))
+
+    def test_the_central_publishing_directory_of_the_stage_is_private(self):
+        self.write_bundle(self.bundle_entries())
+        self.accepted(self.stage_run("--expect-bundle", "true"))
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.stage, "central-publishing")).st_mode), 0o700)
+
     def test_a_failing_run_stages_no_symlinked_file(self):
         outside = self.path("outside")
         with open(outside, "w") as fh:
@@ -437,10 +469,18 @@ exit $rc
         os.symlink(outside, os.path.join(self.target, "link.jar"))
         os.mkdir(os.path.join(self.target, "dir.jar"))
         found = []
-        module.stage(self.stage, self.target, ["a-1.0.0.pom", "link.jar", "dir.jar"], None, found.append)
+        module.stage(self.stage, self.target, ["a-1.0.0.pom", "link.jar", "dir.jar", "/dev/null"], None, found.append)
         self.assertEqual(sorted(os.listdir(self.stage)), ["a-1.0.0.pom"])
-        self.assertEqual(len(found), 2)
+        self.assertEqual(len(found), 3)
         self.assertTrue(all("cannot be staged" in f for f in found), found)
+        self.assertTrue(any("not a regular file" in f for f in found if "/dev/null" in f), found)
+
+    def test_staging_never_overwrites_a_file_it_already_wrote(self):
+        module = h.load(S)
+        found = []
+        module.stage(self.stage, self.target, ["a-1.0.0.pom", "a-1.0.0.pom"], None, found.append)
+        self.assertEqual(len(found), 1)
+        self.assertIn("cannot be staged", found[0])
 
     def test_staging_refuses_a_stage_that_is_not_empty_when_called_directly(self):
         module = h.load(S)
