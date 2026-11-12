@@ -58,10 +58,11 @@ test, so an empty suite cannot pass.
   `CAPS_MUTANT_TIMEOUT=240 python3 -B tests/caps_release/test_mutations.py --record` (a pass with no recorded killer runs every
   selected test against a surviving mutant, which takes longer than the 25 seconds a normal run allows). A mutant that no input can
   tell from the script is listed with its reason in `EQUIVALENT` instead of in the table.
-- `workflow_invariants.py` reads `caps-release.yml` as data (the two targets and no other repository or bundle, secrets only in
-  `publish`, the upload token in the upload step alone and the passphrase in the signing step alone, the id token only in `attest`,
-  the order sign, remove the key, gate, upload, the upload run from the staging directory to one URL without a profile, the gate staging
-  what both uploads and the attestation take, the scripts' digest re-verified after project code, pinned actions, safe defaults).
+- `workflow_invariants.py` reads `caps-release.yml` as data (the two targets and no other repository or bundle, the signing secrets only in
+  `publish`, `packages: write` only in `upload`, the upload token in the upload step alone and the passphrase in the signing step alone,
+  the id token only in `attest`, the order sign, remove the key, gate, manifest, artifact in `publish` and download, compare with the
+  manifest, settings, upload in `upload`, the upload run from the download directory to one URL without a profile, the gate staging
+  what the upload and the attestation take, the scripts' digest re-verified after project code, pinned actions, safe defaults).
   `test_workflow.py` mutates the workflow text once per invariant to prove each can fail.
 - A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
   is reported as an expected failure and becomes an unexpected success, which fails the run, when the

@@ -58,8 +58,12 @@ does not run is a gate nobody has tested.
                          the run, never into it. ADR-087 §C.16
     caps-release.yml     reusable — release of a capability (`eu.exeris.caps:*`) to GitHub Packages: a
                          `build` job with no secret that signs with a throwaway key and runs every gate, a
-                         `publish` job that alone holds the secrets and `packages: write` and runs only for
-                         `upload: true` with `target: github-packages`, and an `attest` job for provenance.
+                         `publish` job that alone holds the signing secrets, runs the capability's code,
+                         gates and stages the files and has no write permission on packages, an `upload`
+                         job that alone holds `packages: write` and runs on a fresh runner that never runs
+                         the capability's code (it compares the downloaded files with the gate's manifest
+                         and uploads them), and an `attest` job for provenance. The last three run only
+                         for `upload: true` with `target: github-packages`.
                          The `target` is `none` (the default, uploads nothing) or `github-packages`; a
                          version that already exists is refused by the registry and fails the job.
                          Every decision it makes is a script of `scripts/caps_release/`, fetched at the
@@ -68,7 +72,7 @@ does not run is a gate nobody has tested.
                          before any project code ran. The readiness gate closes the set of releasable
                          files, binds the release to the coordinate of the built POM, and, only when every
                          check passed, stages exactly the bytes it verified: the files uploaded, the run
-                         artifact and the attestation are that set and nothing else, and a refused run
+                         artifact and the attestation (signatures included) are that set and nothing else, and a refused run
                          uploads nothing and leaves no artifact
     caps-release-tests.yml  the tests of those scripts, on every pull request and every push; fails
                          when it collects none
