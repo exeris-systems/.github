@@ -22,7 +22,7 @@ Usage:
       --ref-type {tag,branch} --ref-name N --ref R --default-branch B
       [--repository OWNER/NAME --sha SHA] [--compare-status S] [--output FILE]
 
-  --target          none | central | github-packages
+  --target          none | github-packages (any other value is refused)
   --upload          true | false
   --version         MAJOR.MINOR.PATCH, each number written as 0 or without a leading zero and of at
                     most 9 digits (semantic versioning forbids a leading zero; 9 digits fit every
@@ -101,8 +101,8 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
                   "default_branch", "repository", "sha", "compare_status", "output"):
         whole(label.replace("_", "-"), getattr(a, label) or "")
 
-    if a.target not in ("none", "central", "github-packages"):
-        raise Refused(f"target must be 'none', 'central' or 'github-packages', got '{a.target}'.")
+    if a.target not in ("none", "github-packages"):
+        raise Refused(f"target must be 'none' or 'github-packages', got '{a.target}'.")
     if a.upload not in ("true", "false"):
         raise Refused(f"upload must be 'true' or 'false', got '{a.upload}'.")
     g = a.generated_path
