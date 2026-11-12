@@ -1,9 +1,9 @@
 """Shared plumbing of the capability release suite.
 
 Every script is exercised twice: in this process through its `main(argv)`, loaded by path, and in a
-child process exactly as the workflow runs it (`python3 -I -B <script>`). `both` runs the two and
+child process exactly as a calling workflow runs it (`python3 -I -B <script>`). `both` runs the two and
 asserts they agree on exit status and on the `::error::` lines, so a script cannot behave one way
-under test and another way under the workflow.
+under test and another way under a calling workflow.
 
 The directory the scripts are read from can be redirected (`SCRIPT_DIR_OVERRIDE`); the mutation
 tests use that to run this suite against a deliberately broken copy of a script.
@@ -129,7 +129,7 @@ class Case(unittest.TestCase):
         return path
 
     def both(self, name: str, argv: list[str], env: dict | None = None, **kwargs) -> Result:
-        """Run in-process and as the workflow does; they must agree. Returns the in-process result."""
+        """Run in-process and as a calling workflow does; they must agree. Returns the in-process result."""
         sink = argv[argv.index("--output") + 1] if "--output" in argv else None
         before = _read(sink)
         a = run_main(name, argv, env=env, **kwargs)

@@ -9,9 +9,10 @@ last-verified: 2026-11-12
 
 # Tests of the capability release scripts
 
-This directory holds the tests of `scripts/caps_release/`, the scripts that
-`.github/workflows/caps-release.yml` runs to decide what is signed and uploaded. A test here runs a
-script on plain files in a temporary directory, with no GitHub environment and no network, and
+This directory holds the tests of `scripts/caps_release/`, the scripts that decide what is signed and
+uploaded. They are written to be called by a reusable capability release workflow, `caps-release.yml`,
+which this repository does not hold yet; elsewhere on this page "the calling workflow" is that
+workflow. A test here runs a script on plain files in a temporary directory, with no GitHub environment and no network, and
 asserts on its exit status and output.
 
 What the suite covers, per script, on the accepting path and on every refusing path:
@@ -42,7 +43,7 @@ test, so an empty suite cannot pass.
 
 ## How the suite is built
 
-- Every script is run twice, in this process through `main(argv)` and as the workflow runs it
+- Every script is run twice, in this process through `main(argv)` and as the calling workflow runs it
   (`python3 -I -B <script>`); `caps_release_helpers.Case.both` asserts that the two agree on the exit
   status, the `::error::` lines and what is written to `--output`.
 - `mutation_table.py` lists the mutants: one `(old -> new)` source change each, which must match
@@ -63,7 +64,7 @@ test, so an empty suite cannot pass.
 
 ## What the suite does not cover, and what it costs
 
-- It runs the scripts, not the workflow that calls them: nothing here executes on GitHub, so the passing of inputs, secrets and
-  permissions to a called workflow is not exercised.
+- It runs the scripts, not the calling workflow: nothing here executes on GitHub, so the passing of inputs, secrets and
+  permissions from the calling workflow to the scripts is not exercised.
 - `gpg` is a double in all but the tests that name the real one; a signature is judged by the double's rule there.
 - The mutation run is most of the suite's time: one fork per mutant, each bounded by 25 seconds (240 when recording the killers).

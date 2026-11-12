@@ -56,7 +56,7 @@ does not run is a gate nobody has tested.
     judge-review.yml     reusable — the other half of that row: on `pull_request: closed` it reads
                          what the human did with each finding and appends a judgement record beside
                          the run, never into it. ADR-087 §C.16
-    caps-release-tests.yml  the tests of those scripts, on every pull request and every push; fails
+    caps-release-tests.yml  the tests of the scripts in `scripts/caps_release/`, on every pull request and every push; fails
                          when it collects none
     guardrails.yml       this repository's OWN caller — it runs its gates, and the review in parts, on itself
     labels-sync.yml      applies labels.yml across the organisation
@@ -91,7 +91,9 @@ scripts/
                          is run rather than wired in
   label_map_check.py     labels-from-verdict.json names only tags in the schema and labels in labels.yml
   caller_bundle_check.py the reviewed repository's bundle pin against this one's (§B.6a)
-  caps_release/          one script per decision of `caps-release.yml`, standard library only, no
+  caps_release/          one script per decision of a capability release, written to be called by a
+                         reusable workflow, `caps-release.yml`, that this repository does not hold yet;
+                         standard library only, no
                          dependency on GitHub's environment beyond its arguments: resolve_release,
                          check_release_profile, check_pom_version, scan_snapshots, check_drift,
                          check_release_readiness, check_secrets, remove_signing_key. Each reports through its exit status (0 ok, 1 refused,
