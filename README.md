@@ -56,7 +56,25 @@ does not run is a gate nobody has tested.
     judge-review.yml     reusable — the other half of that row: on `pull_request: closed` it reads
                          what the human did with each finding and appends a judgement record beside
                          the run, never into it. ADR-087 §C.16
-    caps-release-tests.yml  the tests of the scripts in `scripts/caps_release/`, on every pull request and every push; fails
+    caps-release.yml     reusable — release of a capability (`eu.exeris.caps:*`) to GitHub Packages: a
+                         `build` job with no secret that signs with a throwaway key and runs every gate, a
+                         `publish` job that alone holds the signing secrets, runs the capability's code,
+                         gates and stages the files and has no write permission on packages, an `upload`
+                         job that alone holds `packages: write` and runs on a fresh runner that never runs
+                         the capability's code (it compares the downloaded files with the gate's manifest
+                         and uploads them), and an `attest` job for provenance. The last three run only
+                         for `upload: true` with `target: github-packages`.
+                         The `target` is `none` (the default, uploads nothing) or `github-packages`; a
+                         version that already exists is refused by the registry and fails the job.
+                         Every decision it makes is a script of `scripts/caps_release/`, fetched at the
+                         commit the running workflow came from (`github.job_workflow_sha`), copied out
+                         of the workspace into `$RUNNER_TEMP` and verified against a digest taken
+                         before any project code ran. The readiness gate closes the set of releasable
+                         files, binds the release to the coordinate of the built POM, and, only when every
+                         check passed, stages exactly the bytes it verified: the files uploaded, the run
+                         artifact and the attestation (signatures included) are that set and nothing else, and a refused run
+                         uploads nothing and leaves no artifact
+    caps-release-tests.yml  the tests of those scripts, on every pull request and every push; fails
                          when it collects none
     guardrails.yml       this repository's OWN caller — it runs its gates, and the review in parts, on itself
     labels-sync.yml      applies labels.yml across the organisation
@@ -91,12 +109,12 @@ scripts/
                          is run rather than wired in
   label_map_check.py     labels-from-verdict.json names only tags in the schema and labels in labels.yml
   caller_bundle_check.py the reviewed repository's bundle pin against this one's (§B.6a)
-  caps_release/          one script per decision of a capability release, written to be called by a
-                         reusable workflow, `caps-release.yml`, that this repository does not hold yet;
+  caps_release/          one script per decision of a capability release, called by the reusable
+                         workflow `caps-release.yml`;
                          standard library only, no
                          dependency on GitHub's environment beyond its arguments: resolve_release,
                          check_release_profile, check_pom_version, scan_snapshots, check_drift,
-                         check_release_readiness, check_secrets, remove_signing_key. Each reports through its exit status (0 ok, 1 refused,
+                         check_release_readiness, check_secrets, remove_signing_key, staged_manifest. Each reports through its exit status (0 ok, 1 refused,
                          2 usage) and ends every failure, an unexpected exception included, with a
                          `::error::` line on stderr. The scripts that read a POM refuse a DOCTYPE
                          before any entity is read

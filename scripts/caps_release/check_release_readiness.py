@@ -25,6 +25,22 @@ A main jar is a `*.jar` that is not `-sources`, `-javadoc` or `-tests`. Every co
   * a version that is ASCII: any other character refuses the coordinate, because Maven's case-insensitive
     SNAPSHOT test folds characters that `str.lower()` does not.
 
+WHAT A RELEASABLE BASE NAME IS. The files of a coordinate are named `<base>` plus a suffix, and the upload
+step splices `<base>` into a comma separated argument list that runs in the job holding the package
+credential, so a base is closed: `<artifactId>-<version>` where
+  * the artifactId is made of `[A-Za-z0-9_.-]`, the character set Maven's model validation accepts for an
+    artifactId, and starts with a letter, a digit or `_` (never `-` or `.`);
+  * the version is ASCII MAJOR.MINOR.PATCH, each number `0` or without a leading zero and of at most 9
+    digits, the form `resolve_release.py` accepts (so never a SNAPSHOT of either shape);
+  * the whole base is at most 200 characters.
+A comma, a quote, a space, `$`, a backtick, `;` or a non-ASCII character is therefore never in a base. A build
+whose main jar has any other name is refused here, at its source. `staged_manifest.py` states the same rule
+and enforces it on `create` and `verify`; the two scripts cannot share a module (each runs under `python3 -I`,
+which puts no directory on the import path, and the suite requires every module of this directory to carry its
+own mutants), so the rule is written in both and `tests/caps_release/test_manifest_gate_agreement.py` proves
+that they agree. Two released names that are equal after Unicode normalisation (NFKC) and case folding are
+refused, because a case-insensitive extraction would let one overwrite the other.
+
 All findings are reported before the gate fails; no main jar is fatal at once.
 
 WHAT IS STAGED IS WHAT WAS VERIFIED. Each gated file is opened once (`O_NOFOLLOW|O_NONBLOCK`, `fstat`
@@ -73,6 +89,16 @@ CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar", "-tests.jar")
 # "SNAPSHOT" in any case, or it has the timestamped-snapshot form of Artifact.VERSION_FILE_PATTERN,
 # `<anything>-<8 digits>.<6 digits>-<digits>`.
 TIMESTAMPED = re.compile(r"(.*)-([0-9]{8}\.[0-9]{6})-([0-9]+)")
+
+NUMBER = r"(?:0|[1-9][0-9]{0,8})"
+MAX_BASE = 200
+BASE = re.compile(rf"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\.{NUMBER}\.{NUMBER}")
+
+
+def releasable_base(base: str) -> bool:
+    """`<artifactId>-<version>`: artifactId in `[A-Za-z0-9_.-]` not starting with `-` or `.`, version
+    ASCII MAJOR.MINOR.PATCH, at most MAX_BASE characters. The rule is stated in the module docstring."""
+    return len(base) <= MAX_BASE and BASE.fullmatch(base) is not None
 
 
 def is_snapshot(version: str) -> bool:
@@ -257,6 +283,9 @@ def gate(a: argparse.Namespace, scratch: str) -> int:
             err(f"{shown_base} is not ASCII; a release version is ASCII only")
         elif is_snapshot(base):
             err(f"{shown_base} is a SNAPSHOT; a release is final")
+        elif not releasable_base(base):
+            err(f"{shown_base} is not a releasable coordinate name: it is <artifactId>-<MAJOR.MINOR.PATCH>, the "
+                f"artifactId of [A-Za-z0-9_.-] not starting with '-' or '.', at most {MAX_BASE} characters")
         files = [main_jar, f"{base}-sources.jar", f"{base}-javadoc.jar", f"{base}.pom"]
         intact = []
         for want in files:
@@ -318,6 +347,12 @@ def gate(a: argparse.Namespace, scratch: str) -> int:
         if n not in allowed:
             err(f"{shown(n)} is not part of a release: only a main jar, its -sources and -javadoc jars, the pom "
                 "and their .asc signatures are released, and any other classifier is refused")
+    folded: dict[str, str] = {}
+    for n in selected:
+        key = unicodedata.normalize("NFKC", n).casefold()
+        if key in folded and folded[key] != n:
+            err(f"{shown(n)} and {shown(folded[key])} are the same name under case folding or Unicode normalisation")
+        folded.setdefault(key, n)
     for n in names:
         if n.endswith((".jar", ".pom", ".asc")) and any(unusual(c) for c in n):
             err(f"{shown(n)} has a control or unassigned character in its name")

@@ -21,6 +21,7 @@ Usage:
   resolve_release.py --target T --upload U --version V --generated-path P
       --ref-type {tag,branch} --ref-name N --ref R --default-branch B
       [--repository OWNER/NAME --sha SHA] [--compare-status S] [--output FILE]
+      [--java-distribution D] [--java-version J]
 
   --target          none | github-packages (any other value is refused)
   --upload          true | false
@@ -31,6 +32,15 @@ Usage:
   --generated-path  repository-relative path; non-empty, not absolute, no `..` segment (`..` between
                     `/` or a backslash; `a..b` is a file name), no glob character (`*`, `?`, `[`,
                     `]`) and no leading `:` (pathspec magic)
+  --java-distribution  temurin | graalvm: what the organisation's workflows install (any other value is
+                    refused). Given, it is validated and written to --output as `java-distribution=<D>`;
+                    a later job reads it from there and never from the caller's input, so the JDK
+                    that runs on a runner holding a credential is the validated one. Not given, it is
+                    neither validated nor written.
+  --java-version    NN, NN.x, NN.N or NN.N.N: a major version of one or two digits without a leading zero,
+                    optionally `.x`, or followed by one or two numbers of at most three digits
+                    (`25`, `21.x`, `25.0.2`). Handled like --java-distribution, written as
+                    `java-version=<J>`.
   --ref-type        `tag` for a tag ref; anything else is a branch ref
   --ref-name        the tag name when --ref-type is tag
   --ref             the full ref, `refs/heads/<default-branch>` allows an upload off a tag
@@ -45,7 +55,8 @@ refuses.
 
 Exit status: 0 resolved; 1 refused (reason on stderr as `::error::`); 2 usage error.
 Output: stdout carries one human line `resolved: ...`. With --output, `version=<v>` and
-`publish=<true|false>` are appended to that file, one per line, and only on success.
+`publish=<true|false>` (and `java-distribution` and `java-version` when given) are appended to that
+file, one per line, and only on success.
 """
 from __future__ import annotations
 
@@ -61,6 +72,8 @@ SEMVER = re.compile(rf"{NUMBER}\.{NUMBER}\.{NUMBER}")
 TAG = re.compile(rf"v{NUMBER}\.{NUMBER}\.{NUMBER}")
 PATH_SEPARATORS = re.compile(r"[/\\]")
 ON_DEFAULT = ("identical", "behind")
+JAVA_DISTRIBUTIONS = ("temurin", "graalvm")
+JAVA_VERSION = re.compile(r"[1-9][0-9]?(?:\.x|(?:\.(?:0|[1-9][0-9]{0,2})){1,2})?")
 
 
 class Refused(Exception):
@@ -100,11 +113,17 @@ def resolve(a: argparse.Namespace, compare=compare_status) -> tuple[str, bool]:
     for label in ("target", "upload", "version", "generated_path", "ref_type", "ref_name", "ref",
                   "default_branch", "repository", "sha", "compare_status", "output"):
         whole(label.replace("_", "-"), getattr(a, label) or "")
+    for label in ("java_distribution", "java_version"):
+        whole(label.replace("_", "-"), getattr(a, label) or "")
 
     if a.target not in ("none", "github-packages"):
         raise Refused(f"target must be 'none' or 'github-packages', got '{a.target}'.")
     if a.upload not in ("true", "false"):
         raise Refused(f"upload must be 'true' or 'false', got '{a.upload}'.")
+    if a.java_distribution is not None and a.java_distribution not in JAVA_DISTRIBUTIONS:
+        raise Refused(f"java-distribution must be one of {', '.join(JAVA_DISTRIBUTIONS)}, got '{a.java_distribution}'.")
+    if a.java_version is not None and not JAVA_VERSION.fullmatch(a.java_version):
+        raise Refused(f"java-version must be NN, NN.x or NN.N.N (for example 25, 21.x or 25.0.2), got '{a.java_version}'.")
     g = a.generated_path
     if (not g or g.startswith("/") or g.startswith(":") or any(c in g for c in "*?[]")
             or ".." in PATH_SEPARATORS.split(g)):
@@ -171,6 +190,8 @@ def run(argv: list[str] | None, compare) -> int:
     for flag in ("target", "upload", "version", "generated-path", "ref-type", "ref-name", "ref",
                  "default-branch", "repository", "sha", "compare-status", "output"):
         p.add_argument(f"--{flag}", default="")
+    for flag in ("java-distribution", "java-version"):
+        p.add_argument(f"--{flag}", default=None)
     a = p.parse_args(argv)
     try:
         version, publish = resolve(a, compare)
@@ -180,6 +201,9 @@ def run(argv: list[str] | None, compare) -> int:
     if a.output:
         with open(a.output, "a", encoding="utf-8") as fh:
             fh.write(f"version={version}\npublish={'true' if publish else 'false'}\n")
+            for key, value in (("java-distribution", a.java_distribution), ("java-version", a.java_version)):
+                if value is not None:
+                    fh.write(f"{key}={value}\n")
     print(f"resolved: version={version} target={a.target} publish={'true' if publish else 'false'}")
     return 0
 

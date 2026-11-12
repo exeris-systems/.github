@@ -488,32 +488,41 @@ class PrivateCopies(Staged):
         want = os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
         self.assertTrue(seen and all(f & want == want for f in seen), seen)
 
-    def test_a_file_name_cannot_become_a_gpg_option_or_break_the_argument_list(self):
+    def gpg_arguments_of(self, artifact):
+        """Run the gate on a coordinate named `<artifact>-1.0.0` with a gpg that logs its argument vector; return the result."""
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        os.remove(self.log) if os.path.exists(self.log) else None
+        self.use_py_gpg()
+        self.coordinate(f"{artifact}-1.0.0", pom_text=pom_xml(GROUP, artifact, "1.0.0"))
+        with self.private_tmp():
+            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg], env=h.clean_env(PYGPG_LOG=self.log))
+        self.assertEqual(os.listdir(self.tmpdir), [])
+        calls = self.gpg_calls()
+        self.assertEqual(len(calls), 4, calls)
+        for call in calls:
+            self.assertEqual(len(call["argv"]), 3, "exactly --verify, the signature and the file")
+            self.assertEqual(call["argv"][0], "--verify")
+            for path in call["argv"][1:]:
+                self.assertTrue(path.startswith(self.tmpdir + os.sep), path)
+                self.assertFalse(os.path.basename(os.path.dirname(path)).startswith("-"))
+        return res
+
+    def test_a_file_name_the_rule_allows_cannot_become_a_gpg_option_or_break_the_argument_list(self):
+        names = {"dot inside": "a.b", "underscore": "_a", "dash inside": "a-b", "double dash inside": "a--keyring", "option text inside": "a--homedir.x",
+                 "dots and dashes": "a-.-b..c", "digit first": "0x"}
+        for label, artifact in names.items():
+            with self.subTest(label):
+                self.accepted(self.gpg_arguments_of(artifact))
+
+    def test_a_base_that_could_be_an_option_or_split_an_argument_list_is_refused_at_its_source(self):
+        """The gate states the refusal, and the signature check it still runs hands gpg only the three arguments."""
         names = {"leading dash": "-x", "leading double dash": "--version", "option with value": "--keyring=x", "homedir option": "--homedir=.",
                  "space": "a b", "quote": "a'b", "glob": "a*b", "newline": "a\nb", "semicolon": "a;b"}
         for label, artifact in names.items():
             with self.subTest(label):
-                shutil.rmtree(self.target)
-                os.makedirs(self.target)
-                os.remove(self.log) if os.path.exists(self.log) else None
-                self.use_py_gpg()
-                self.coordinate(f"{artifact}-1.0.0", pom_text=pom_xml(GROUP, artifact, "1.0.0"))
-                with self.private_tmp():
-                    res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg], env=h.clean_env(PYGPG_LOG=self.log))
-                self.assertEqual(os.listdir(self.tmpdir), [])
-                if label == "newline":
-                    self.assertEqual(res.rc, 1)
-                    self.assertIn("control or unassigned character", res.err)
-                else:
-                    self.accepted(res)
-                calls = self.gpg_calls()
-                self.assertEqual(len(calls), 4, calls)
-                for call in calls:
-                    self.assertEqual(len(call["argv"]), 3, "exactly --verify, the signature and the file")
-                    self.assertEqual(call["argv"][0], "--verify")
-                    for path in call["argv"][1:]:
-                        self.assertTrue(path.startswith(self.tmpdir + os.sep), path)
-                        self.assertFalse(os.path.basename(os.path.dirname(path)).startswith("-"))
+                res = self.gpg_arguments_of(artifact)
+                self.refused(res, "is not a releasable coordinate name")
 
 
 class _Fixed:

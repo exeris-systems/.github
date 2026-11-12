@@ -18,7 +18,8 @@ def m(script, old, new, selectors):
 
 # --- selectors ---------------------------------------------------------------------------------------------------------
 UNEXPECTED = ["test_unexpected.Injected.test_a_runtime_error_inside_the_script_is_one_error_line_and_exit_one"]
-RR = ["test_resolve_release.Refuses", "test_resolve_release.Accepts", "test_resolve_release.Output",
+RR = ["test_resolve_release.JavaInputs", "test_workflow.Adversarial.test_an_empty_jdk_value_cannot_reach_setup_java_because_the_job_fails_in_the_resolve_step",
+      "test_resolve_release.Refuses", "test_resolve_release.Accepts", "test_resolve_release.Output",
       "test_resolve_release.NonPrinting", "test_resolve_release.Usage", "test_resolve_release.RealComparison",
       "test_resolve_release.Targets",
       "test_resolve_release.ControlCharacters.test_every_control_character_in_every_field_in_process",
@@ -36,7 +37,7 @@ DRIFT = ["test_drift.Drift", "test_timeouts.Git", "test_timeouts.Bounds", "test_
 SECRETS = ["test_secrets", "test_unexpected.Usage"] + UNEXPECTED
 READY = ["test_release_readiness", "test_readiness_adversarial", "test_readiness_closed_set", "test_staging_binding",
          "test_gate_internals", "test_unexpected.Readiness", "test_unexpected.Usage", "test_xml_bounds.Gate", "test_xml_bounds.Readers",
-         "test_timeouts.Bounds", "test_timeouts.GateGpg", "test_ascii_versions.Gate", "test_pom_adversarial.MavenRule"] + UNEXPECTED
+         "test_timeouts.Bounds", "test_timeouts.GateGpg", "test_ascii_versions.Gate", "test_pom_adversarial.MavenRule", "test_base_rule"] + UNEXPECTED
 REMOVE = ["test_remove_signing_key.Removal", "test_key_removal_adversarial.Inspection", "test_key_removal_adversarial.HostilePaths",
           "test_key_removal_adversarial.Real", "test_unexpected.Injected.test_key_removal_ends_an_unexpected_exception_with_one_line_and_cleans_up",
           "test_key_removal_finally.PathCharacters", "test_key_removal_finally.Links", "test_key_removal_finally.Endings",
@@ -747,6 +748,485 @@ m(y, "        raise OSError(\"the verified copy changed\")", "        pass", R)
 m(y, "    if os.path.lexists(dest) and (os.path.islink(dest) or not os.path.isdir(dest) or os.listdir(dest)):", "    if os.path.exists(dest) and (os.path.islink(dest) or not os.path.isdir(dest) or os.listdir(dest)):", R)
 
 
+# --- staged_manifest.py ------------------------------------------------------------------------------------------------
+sm = "staged_manifest"
+SM = ["test_staged_manifest", "test_manifest_gate_agreement", "test_manifest_refusals", "test_base_rule"]
+LINE = 'LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")'
+for new in ('LINE = re.compile(r"^([0-9a-fA-F]{64})  (.+)$")', 'LINE = re.compile(r"^([0-9a-f]{63})  (.+)$")',
+            'LINE = re.compile(r"^([0-9a-f]{64,})  (.+)$")', 'LINE = re.compile(r"^([0-9a-f]{64}) (.+)$")',
+            'LINE = re.compile(r"^([0-9a-f]{64})\\s+(.+)$")', 'LINE = re.compile(r"^([0-9a-f]{64})  (.*)$")',
+            'LINE = re.compile(r"^([0-9a-f]{64})  (.+)$", re.I)', 'LINE = re.compile(r"([0-9a-f]{64})  (.+)$")',
+            'LINE = re.compile(r"^([0-9a-z]{64})  (.+)$")'):
+    m(sm, LINE, new, SM)
+m(sm, "CHUNK = 1 << 20", "CHUNK = 0", SM)
+m(sm, "CHUNK = 1 << 20", "CHUNK = 1 << 2", SM)
+# shown(): a name is printed without a control character, but with its spaces
+SH = 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] not in "CZ" or c == " " else'
+m(sm, SH, 'return "".join(c if True else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] not in "CZ" else', SM)
+m(sm, SH, 'return "".join(c if unicodedata.category(c)[0] not in "CZ" or c == " " else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() or c == " " else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] not in "C" or c == " " else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] in "CZ" or c == " " else', SM)
+# plain_name(): the names of the closed set are plain file names
+PN = r'if name in (".", "..") or name.startswith(".") or "/" in name or "\\" in name or "\x00" in name:'
+m(sm, PN, r'if name.startswith(".") or "/" in name or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith(".") or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith(".") or "/" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith(".") or "/" in name or "\\" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith("..") or "/" in name or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in ("..",) or name.startswith(".") or "/" in name or "\\" in name or "\x00" in name:', SM)
+PR = 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.strip()'
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "C" and c != " " for c in name) and name == name.strip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "Z" and c != " " for c in name) and name == name.strip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" for c in name) and name == name.strip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name)', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.lstrip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.rstrip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) or name == name.strip()', SM)
+m(sm, PR, 'return any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.strip()', SM)
+# digest(): one open, no link followed, never blocks, the descriptor says what the file is, all of it is read
+OP = "fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)"
+m(sm, OP, "fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)", SM)
+m(sm, OP, "fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)", SM)
+m(sm, OP, "fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)", SM)
+m(sm, OP, "fd = os.open(path, os.O_NOFOLLOW | os.O_NONBLOCK)", SM)
+m(sm, "        if not stat.S_ISREG(os.fstat(fd).st_mode):\n            raise OSError(\"not a regular file\")",
+  "        if False:\n            raise OSError(\"not a regular file\")", SM)
+m(sm, "        if not stat.S_ISREG(os.fstat(fd).st_mode):", "        if stat.S_ISREG(os.fstat(fd).st_mode):", SM)
+m(sm, "        if not stat.S_ISREG(os.fstat(fd).st_mode):", "        if not stat.S_ISDIR(os.fstat(fd).st_mode):", SM)
+m(sm, "            h.update(block)", "            pass", SM)
+m(sm, "            h.update(block)", "            h.update(block[:-1])", SM)
+m(sm, "            if not block:\n                return h.hexdigest()", "            if not block:\n                return \"\"", SM)
+m(sm, "        h = hashlib.sha256()", "        h = hashlib.sha1()", SM)
+m(sm, "    finally:\n        os.close(fd)", "    finally:\n        pass", SM)
+m(sm, "            block = os.read(fd, CHUNK)", "            block = os.read(fd, CHUNK)[:100]", SM)
+# scan(): the directory is a real directory, and every entry is a plain regular file with a plain name
+ISDIR = "        if os.path.islink(directory) or not os.path.isdir(directory):"
+m(sm, ISDIR, "        if not os.path.isdir(directory):", SM)
+m(sm, ISDIR, "        if os.path.islink(directory):", SM)
+m(sm, ISDIR, "        if os.path.islink(directory) and not os.path.isdir(directory):", SM)
+m(sm, "            err(f\"{shown(directory)} is not a directory\")\n            return None", "            err(f\"{shown(directory)} is not a directory\")\n            return {}", SM)
+m(sm, "            err(f\"{shown(directory)} is not a directory\")", "            pass", SM)
+m(sm, "        err(f\"{shown(directory)} cannot be read ({exc})\")\n        return None", "        err(f\"{shown(directory)} cannot be read ({exc})\")\n        return {}", SM)
+m(sm, "        info = os.lstat(path)", "        info = os.stat(path)", SM)
+NOTREG = "        if not stat.S_ISREG(info.st_mode):\n            err(f\"{shown(name)} is not a regular file; only regular files are released\")"
+m(sm, NOTREG + "\n            bad = True", NOTREG, SM)
+m(sm, NOTREG, NOTREG.replace("if not stat.S_ISREG(info.st_mode):", "if False:"), SM)
+m(sm, NOTREG, NOTREG.replace("if not stat.S_ISREG(info.st_mode):", "if stat.S_ISDIR(info.st_mode):"), SM)
+m(sm, "        elif info.st_nlink != 1:", "        elif info.st_nlink > 2:", SM)
+m(sm, "        elif info.st_nlink != 1:", "        elif False:", SM)
+m(sm, "        elif info.st_nlink != 1:", "        elif info.st_nlink < 1:", SM)
+HARD = "            err(f\"{shown(name)} is a hard link; only plain files are released\")"
+m(sm, HARD + "\n            bad = True", HARD, SM)
+m(sm, "        elif not plain_name(name):", "        elif plain_name(name):", SM)
+m(sm, "        elif not plain_name(name):", "        elif False:", SM)
+PLAIN = "            err(f\"{shown(name)} is not a plain file name\")"
+m(sm, PLAIN + "\n            bad = True", PLAIN, SM)
+m(sm, "                found[name] = digest(path)", "                found[name] = \"\"", SM)
+CANNOT = "                err(f\"{shown(name)} cannot be read ({exc})\")"
+m(sm, CANNOT + "\n                bad = True", CANNOT, SM)
+m(sm, "    return None if bad else found", "    return found", SM)
+m(sm, "    return None if bad else found", "    return None", SM)
+m(sm, "    return None if bad else found", "    return None if not bad else found", SM)
+# closed_set(): every name belongs to a coordinate, and every coordinate is whole
+BASES = '    return {n[:-len(".jar")] for n in names if n.endswith(".jar") and not n.endswith(CLASSIFIER_SUFFIXES)}'
+m(sm, BASES, BASES.replace('n.endswith(".jar") and not', 'n.endswith(".jar") or not'), SM)
+m(sm, BASES, BASES.replace("CLASSIFIER_SUFFIXES", '("-javadoc.jar", "-tests.jar")'), SM)
+m(sm, BASES, BASES.replace("CLASSIFIER_SUFFIXES", '("-sources.jar", "-tests.jar")'), SM)
+m(sm, BASES, BASES.replace("CLASSIFIER_SUFFIXES", '("-sources.jar", "-javadoc.jar")'), SM)
+m(sm, BASES, BASES.replace('n[:-len(".jar")]', 'n[:-3]'), SM)
+m(sm, BASES, BASES.replace('n.endswith(".jar") and not n.endswith(CLASSIFIER_SUFFIXES)', 'n.endswith(".pom")'), SM)
+m(sm, BASES, BASES.replace(' and not n.endswith(CLASSIFIER_SUFFIXES)', ''), SM)
+EXP = 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}-javadoc.jar", f"{base}.pom"):'
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}.pom"):', SM)
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-javadoc.jar", f"{base}.pom"):', SM)
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}-javadoc.jar"):', SM)
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}-javadoc.jar", f"{base}.pom", f"{base}-tests.jar"):', SM)
+m(sm, "            expected.update((f, f + \".asc\"))", "            expected.update((f,))", SM)
+m(sm, "            expected.update((f, f + \".asc\"))", "            expected.update((f, f + \".sig\"))", SM)
+m(sm, "            expected.update((f, f + \".asc\"))", "            expected.update((f, f + \".asc\", f + \".sha1\"))", SM)
+m(sm, "        if n == \"pom.xml\":", "        if n == \"pom.xml\" and False:", SM)
+POMX = "            err(\"pom.xml is not part of a release: nothing a project would build from is staged\")"
+m(sm, POMX + "\n            ok = False", POMX, SM)
+m(sm, "        elif n not in expected:", "        elif n in expected:", SM)
+m(sm, "        elif n not in expected:", "        elif False:", SM)
+NOTPART = "\"the pom and their .asc signatures are released\")"
+m(sm, NOTPART + "\n            ok = False", NOTPART, SM)
+m(sm, "    for want in sorted(expected - set(names)):", "    for want in sorted(expected & set(names)):", SM)
+MISSING = "        err(f\"{shown(want)} is missing - a release holds all eight files of a coordinate\")"
+m(sm, MISSING + "\n        ok = False", MISSING, SM)
+m(sm, "    if not bases:", "    if bases:", SM)
+m(sm, "    if not bases:", "    if False:", SM)
+m(sm, "        err(\"no main jar is staged\")\n        ok = False", "        err(\"no main jar is staged\")", SM)
+# parse(): the manifest text is the canonical lines and nothing else
+m(sm, "    if not text.strip():", "    if not text:", SM)
+m(sm, "    if not text.strip():", "    if False:", SM)
+m(sm, "        err(\"the manifest is empty\")\n        return None", "        err(\"the manifest is empty\")\n        return {}", SM)
+m(sm, "    for raw in text.split(\"\\n\"):", "    for raw in text.splitlines():", SM)
+m(sm, "    for raw in text.split(\"\\n\"):", "    for raw in text.strip().split(\"\\n\"):", SM)
+m(sm, "        if not m or not plain_name(m.group(2)):", "        if not m:", SM)
+m(sm, "        if not m or not plain_name(m.group(2)):", "        if not plain_name(m.group(2)):", SM)
+m(sm, "        if not m or not plain_name(m.group(2)):", "        if not m and not plain_name(m.group(2)):", SM)
+MAL = "            err(f\"manifest line is malformed: {shown(raw)[:120]}\")"
+m(sm, MAL + "\n            return None", MAL + "\n            continue", SM)
+m(sm, "{shown(raw)[:120]}", "{shown(raw)[:0]}", SM)
+m(sm, "{shown(raw)[:120]}", "{shown(raw)[:1200]}", SM)
+m(sm, "{shown(raw)[:120]}", "{raw[:120]}", SM)
+m(sm, "        if m.group(2) in out:", "        if False:", SM)
+m(sm, "        if m.group(2) in out:", "        if m.group(2) not in out:", SM)
+TWICE = "            err(f\"manifest lists {shown(m.group(2))} twice\")"
+m(sm, TWICE + "\n            return None", TWICE, SM)
+m(sm, "        out[m.group(2)] = m.group(1)", "        out[m.group(2)] = m.group(1).upper()", SM)
+m(sm, "        out[m.group(2)] = m.group(1)", "        out[m.group(1)] = m.group(2)", SM)
+# render() and main()
+REND = "    return \"\".join(f\"{h}  {n}\\n\" for n, h in sorted(found.items()))"
+m(sm, REND, REND.replace("{h}  {n}", "{h} {n}"), SM)
+m(sm, REND, REND.replace("{n}\\n", "{n}"), SM)
+m(sm, REND, REND.replace("{h}  {n}", "{n}  {h}"), SM)
+m(sm, REND, REND.replace("sorted(found.items())", "sorted(found.items(), reverse=True)"), SM)
+m(sm, REND, REND.replace("sorted(found.items())", "list(found.items())[::-1]"), SM)
+m(sm, "    sub = p.add_subparsers(dest=\"cmd\", required=True)", "    sub = p.add_subparsers(dest=\"cmd\")", SM)
+m(sm, "    c.add_argument(\"--dir\", required=True)", "    c.add_argument(\"--dir\", default=\".\")", SM)
+m(sm, "    c.add_argument(\"--output\", required=True)", "    c.add_argument(\"--output\", default=\"/dev/null\")", SM)
+NAME = '    c.add_argument("--name", default="manifest", type=key_name)'
+m(sm, NAME, NAME.replace('default="manifest"', 'default="m"'), SM)
+m(sm, NAME, NAME.replace(", type=key_name", ""), SM)
+m(sm, "    v.add_argument(\"--dir\", required=True)", "    v.add_argument(\"--dir\", default=\".\")", SM)
+m(sm, "    v.add_argument(\"--manifest-env\", required=True)", "    v.add_argument(\"--manifest-env\", default=\"MANIFEST\")", SM)
+m(sm, "        if found is None:\n            return 1", "        if found is None:\n            return 0", SM)
+m(sm, "        if found is None:\n            return 1", "        if False:\n            return 1", SM)
+m(sm, "    if found is None:\n        return refuse()", "    if found is None:\n        return 1", SM)
+m(sm, "    if found is None:\n        return refuse()", "    if found is None:\n        return 0", SM)
+m(sm, "    if found is None:\n        return refuse()", "    if False:\n        return refuse()", SM)
+m(sm, "        if not found:\n            err(\"nothing is staged\")\n            return 1", "        if found:\n            err(\"nothing is staged\")\n            return 1", SM)
+m(sm, "            err(\"nothing is staged\")\n            return 1", "            err(\"nothing is staged\")\n            return 0", SM)
+m(sm, "        if not found:\n            err(\"nothing is staged\")", "        if False:\n            err(\"nothing is staged\")", SM)
+DELIM = "        delimiter = \"MANIFEST_\" + hashlib.sha256(text.encode()).hexdigest()[:16]"
+m(sm, DELIM, "        delimiter = \"MANIFEST_\"", SM)
+m(sm, DELIM, DELIM.replace("[:16]", "[:4]"), SM)
+m(sm, DELIM, "        delimiter = \"EOF\"", SM)
+m(sm, DELIM, DELIM.replace("text.encode()", "b\"\""), SM)
+m(sm, "        with open(a.output, \"a\", encoding=\"utf-8\") as out:", "        with open(a.output, \"w\", encoding=\"utf-8\") as out:", SM)
+WRITE = "            out.write(f\"{a.name}<<{delimiter}\\n{text}{delimiter}\\n\")"
+m(sm, WRITE, WRITE.replace("{delimiter}\\n\")", "{delimiter}\")"), SM)
+m(sm, WRITE, "            out.write(f\"{a.name}={text}\")", SM)
+m(sm, WRITE, WRITE.replace("{text}{delimiter}", "{text}\\n{delimiter}"), SM)
+m(sm, WRITE, WRITE.replace("{a.name}<<", "{a.name}="), SM)
+DIG = "            out.write(f\"{a.name}-digest={whole}\\n{a.name}-id={whole[:12]}\\n\")"
+m(sm, DIG, DIG.replace("[:12]", "[:11]"), SM)
+m(sm, DIG, DIG.replace("[:12]", "[:13]"), SM)
+m(sm, DIG, DIG.replace("{whole}", "{whole[:63]}"), SM)
+m(sm, DIG, DIG.replace("[:12]", "[-12:]"), SM)
+m(sm, DIG, DIG.replace("-digest=", "_digest=").replace("-id=", "_id="), SM)
+m(sm, "        whole = hashlib.sha256(text.encode()).hexdigest()", "        whole = hashlib.sha256(text.encode()[:-1]).hexdigest()", SM)
+m(sm, "        sys.stdout.write(text)\n        return 0", "        return 0", SM)
+m(sm, "        sys.stdout.write(text)\n        return 0", "        sys.stdout.write(text)\n        return 1", SM)
+m(sm, "    want = parse(os.environ.get(a.manifest_env, \"\"), err)", "    want = parse(os.environ[a.manifest_env], err)", SM)
+m(sm, "    want = parse(os.environ.get(a.manifest_env, \"\"), err)", "    want = parse(os.environ.get(a.manifest_env, \"x\"), err)", SM)
+m(sm, "    want = parse(os.environ.get(a.manifest_env, \"\"), err)", "    want = parse(os.environ.get(\"MANIFEST\", \"\"), err)", SM)
+m(sm, "    if want is None:\n        return refuse()", "    if want is None:\n        return 1", SM)
+m(sm, "    if want is None:\n        return refuse()", "    if want is None:\n        return 0", SM)
+SETOP = "    for n in sorted(set(found) | set(want)):"
+m(sm, SETOP, "    for n in sorted(set(found) & set(want)):", SM)
+m(sm, SETOP, "    for n in sorted(set(found)):", SM)
+m(sm, SETOP, "    for n in sorted(set(want)):", SM)
+NOTIN = "            err(f\"{shown(n)} is not in the manifest\")"
+m(sm, NOTIN + "\n            problems += 1", NOTIN, SM)
+NOTDIR = "            err(f\"{shown(n)} is in the manifest and not in the directory\")"
+m(sm, NOTDIR + "\n            problems += 1", NOTDIR, SM)
+DIFFERS = "            err(f\"{shown(n)} differs from the manifest\")"
+m(sm, DIFFERS + "\n            problems += 1", DIFFERS, SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n] == want[n]:", SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n].lower() != want[n].lower():", SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n][:32] != want[n][:32]:", SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n][32:] != want[n][32:]:", SM)
+m(sm, "        if n not in want:\n            err(", "        if n in want:\n            err(", SM)
+m(sm, "    if not closed_set(sorted(found), err):\n        problems += 1", "    if not closed_set(sorted(found), err):\n        pass", SM)
+m(sm, "    if not closed_set(sorted(found), err):\n        problems += 1", "    if closed_set(sorted(found), err):\n        problems += 1", SM)
+m(sm, "    if not closed_set(sorted(found), err):", "    if not closed_set(sorted(want), err):", SM)
+m(sm, "    if problems:\n        return refuse()", "    if problems:\n        pass", SM)
+m(sm, "    if problems:\n        return refuse()", "    if not problems:\n        return refuse()", SM)
+m(sm, "    if problems:\n        return refuse()", "    if problems > 1:\n        return refuse()", SM)
+m(sm, "    if problems:\n        return refuse()", "    if problems:\n        return 1", SM)
+m(sm, "    if problems:\n        return refuse()", "    if problems:\n        return 0", SM)
+m(sm, "    print(f\"ok - {len(found)} files match the manifest\")", "    print(f\"ok - {len(want)} files match the manifest\")", SM)
+m(sm, "    print(f\"ok - {len(found)} files match the manifest\")", "    print(f\"ok - {len(found) + 1} files match the manifest\")", SM)
+m(sm, "    print(f\"ok - {len(found)} files match the manifest\")\n    return 0", "    print(f\"ok - {len(found)} files match the manifest\")\n    return 1", SM)
+m(sm, "        print(f\"::error::{msg}\", file=sys.stderr)", "        print(f\"::warning::{msg}\", file=sys.stderr)", SM)
+m(sm, "        print(f\"::error::{msg}\", file=sys.stderr)", "        print(f\"::error::{msg}\")", SM)
+
+
+# --- the rule for a releasable base name: the same guards in the gate and in the manifest script ---------------------------------
+NUMBER_RULE = 'NUMBER = r"(?:0|[1-9][0-9]{0,8})"'
+BASE_RULE = 'BASE = re.compile(rf"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}")'
+BASE_RETURN = "    return len(base) <= MAX_BASE and BASE.fullmatch(base) is not None"
+for script, selectors in (("check_release_readiness", READY), ("staged_manifest", SM)):
+    for new in ('NUMBER = r"[0-9]+"', 'NUMBER = r"(?:0|[1-9][0-9]*)"', 'NUMBER = r"(?:0|[1-9][0-9]{0,9})"', 'NUMBER = r"(?:0|[1-9][0-9]{0,7})"',
+                'NUMBER = r"[0-9]{1,9}"', 'NUMBER = r"(?:0|0?[1-9][0-9]{0,8})"', 'NUMBER = r"(?:[1-9][0-9]{0,8})"', 'NUMBER = r"(?:0|[1-9][0-9]{1,8})"',
+                'NUMBER = r"(?:0|[1-9][0-9]{0,8}|00)"'):
+        m(script, NUMBER_RULE, new, selectors)
+    for new in ("BASE = re.compile(rf\"[A-Za-z0-9_.-][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_-][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[a-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][a-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]+-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]?-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][^/]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][\\\\w.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*{NUMBER}\\.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}.{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}(?:\\.{NUMBER})?\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}(?:-[A-Za-z0-9]+)?\")",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\", re.I)",
+                "BASE = re.compile(rf\"[A-Za-z0-9_][A-Za-z0-9_.-]*-{NUMBER}\\.{NUMBER}\\.{NUMBER}\", re.A)"):
+        m(script, BASE_RULE, new, selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("len(base) <= MAX_BASE", "len(base) < MAX_BASE"), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("len(base) <= MAX_BASE", "len(base) <= MAX_BASE + 1"), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("len(base) <= MAX_BASE and ", ""), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("len(base) <= MAX_BASE and ", "len(base) >= MAX_BASE and "), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace(" and ", " or "), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("BASE.fullmatch(base)", "BASE.match(base)"), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("BASE.fullmatch(base)", "BASE.search(base)"), selectors)
+    m(script, BASE_RETURN, BASE_RETURN.replace("is not None", "is None"), selectors)
+    m(script, BASE_RETURN, "    return True", selectors)
+    m(script, BASE_RETURN, "    return len(base) <= MAX_BASE", selectors)
+    for new in ("MAX_BASE = 199", "MAX_BASE = 201", "MAX_BASE = 255", "MAX_BASE = 100", "MAX_BASE = 1000"):
+        m(script, "MAX_BASE = 200", new, selectors)
+
+# the gate states the refusal
+GATE = "check_release_readiness"
+RELEASABLE_ELIF = "        elif not releasable_base(base):"
+m(GATE, RELEASABLE_ELIF, "        elif releasable_base(base):", READY)
+m(GATE, RELEASABLE_ELIF, "        elif False:", READY)
+m(GATE, RELEASABLE_ELIF, "        elif True:", READY)
+m(GATE, "        elif is_snapshot(base):\n            err(f\"{shown_base} is a SNAPSHOT; a release is final\")\n        elif not releasable_base(base):",
+  "        elif not releasable_base(base):", READY)
+m(GATE, "at most {MAX_BASE} characters\")", "at most {MAX_BASE + 1} characters\")", READY)
+m(GATE, "is not a releasable coordinate name: it is <artifactId>", "is not a coordinate name: it is <artifactId>", READY)
+m(GATE, "        if not base.isascii():\n", "        if False:\n", READY)
+
+# two names that are one name to a case-insensitive or normalising extraction
+G_KEY = '        key = unicodedata.normalize("NFKC", n).casefold()\n        if key in folded and folded[key] != n:\n            err('
+for new in ('        key = unicodedata.normalize("NFC", n).casefold()', '        key = unicodedata.normalize("NFD", n).casefold()',
+            '        key = unicodedata.normalize("NFKC", n).lower()', '        key = unicodedata.normalize("NFKC", n)', '        key = n.casefold()',
+            '        key = unicodedata.normalize("NFKC", n).casefold()[:-1]', '        key = unicodedata.normalize("NFKD", n).upper()',
+            '        key = n'):
+    m(GATE, G_KEY, G_KEY.replace('        key = unicodedata.normalize("NFKC", n).casefold()', new), READY)
+m(GATE, G_KEY, G_KEY.replace("if key in folded and folded[key] != n:", "if key in folded and folded[key] == n:"), READY)
+m(GATE, G_KEY, G_KEY.replace("if key in folded and folded[key] != n:", "if key not in folded:"), READY)
+m(GATE, G_KEY, G_KEY.replace("if key in folded and folded[key] != n:", "if False:"), READY)
+m(GATE, "        folded.setdefault(key, n)", "        folded[key] = n", READY)
+m(GATE, "        folded.setdefault(key, n)", "        pass", READY)
+m(GATE, "    for n in selected:\n        key = unicodedata", "    for n in names:\n        key = unicodedata", READY)
+m(GATE, "    for n in selected:\n        key = unicodedata", "    for n in mains:\n        key = unicodedata", READY)
+m(GATE, "are the same name under case folding or Unicode normalisation\")\n        folded", "are the same name\")\n        folded", READY)
+
+# --- staged_manifest.py: the guards of the base rule, the directory, the key and the final line ---------------------------------
+CS = 'CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar", "-tests.jar")'
+for new in ('CLASSIFIER_SUFFIXES = ("-javadoc.jar", "-tests.jar")', 'CLASSIFIER_SUFFIXES = ("-sources.jar", "-tests.jar")',
+            'CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar")', 'CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar", "-tests.jar", ".pom")'):
+    m(sm, CS, new, SM)
+FINAL_LINE = 'FINAL = "the staged files are not what the gate staged"'
+for new in ('FINAL = "the staged files are not what the gate staged."', 'FINAL = "the staged files are not what the gate staged "', 'FINAL = ""',
+            'FINAL = "staged files are not what the gate staged"'):
+    m(sm, FINAL_LINE, new, SM)
+REFUSE = "    def refuse() -> int:\n        err(FINAL)\n        return 1"
+m(sm, REFUSE, REFUSE.replace("err(FINAL)", "pass"), SM)
+m(sm, REFUSE, REFUSE.replace("return 1", "return 0"), SM)
+m(sm, REFUSE, REFUSE.replace("return 1", "return 2"), SM)
+m(sm, REFUSE, REFUSE.replace("err(FINAL)", "err(FINAL)\n        err(FINAL)"), SM)
+KEY_RULE = 'KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")'
+for new in ('KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")', 'KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")', 'KEY = re.compile(r"[A-Za-z][A-Za-z0-9-]*")',
+            'KEY = re.compile(r"[A-Za-z][A-Za-z0-9_]*")', 'KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]+")', 'KEY = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*")',
+            'KEY = re.compile(r"[A-Za-z][\\\\w-]*")', 'KEY = re.compile(r"[a-z][A-Za-z0-9_-]*")', 'KEY = re.compile(r"[A-Za-z][a-z0-9_-]*")',
+            'KEY = re.compile(r".*")', 'KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]*", re.I)', 'KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,5}")',
+            'KEY = re.compile(r"[A-Za-z][^\\n]*")'):
+    m(sm, KEY_RULE, new, SM)
+KN = "    if not KEY.fullmatch(value):\n        raise argparse.ArgumentTypeError(\"must match [A-Za-z][A-Za-z0-9_-]*\")\n    return value"
+m(sm, KN, KN.replace("if not KEY.fullmatch(value):", "if KEY.fullmatch(value):"), SM)
+m(sm, KN, KN.replace("if not KEY.fullmatch(value):", "if False:"), SM)
+m(sm, KN, KN.replace("KEY.fullmatch(value)", "KEY.match(value)"), SM)
+m(sm, KN, KN.replace("KEY.fullmatch(value)", "KEY.search(value)"), SM)
+m(sm, KN, KN.replace("    return value", "    return value.strip()"), SM)
+m(sm, KN, KN.replace("    return value", "    return value[:3]"), SM)
+m(sm, KN, KN.replace("raise argparse.ArgumentTypeError(", "raise ValueError("), SM)
+# the top-level handler
+H = "    try:\n        return run(argv)\n    except SystemExit:\n        raise\n    except Exception as exc:"
+m(sm, H, H.replace("except SystemExit:\n        raise", "except SystemExit:\n        return 1"), SM)
+m(sm, H, H.replace("except SystemExit:\n        raise", "except SystemExit:\n        pass"), SM)
+m(sm, H, H.replace("except Exception as exc:", "except BaseException as exc:"), SM)
+m(sm, H, H.replace("except Exception as exc:", "except OSError as exc:"), SM)
+m(sm, H, H.replace("return run(argv)", "return run(argv or [])"), SM)
+HP = '        print(f"::error::the staged-files check failed unexpectedly ({type(exc).__name__}: "\n              f"{shown(\' \'.join(str(exc).split()))}).", file=sys.stderr)\n        return 1'
+m(sm, HP, HP.replace("::error::", "::warning::"), SM)
+m(sm, HP, HP.replace("file=sys.stderr", "file=sys.stdout"), SM)
+m(sm, HP, HP.replace("return 1", "return 0"), SM)
+m(sm, HP, HP.replace("return 1", "return 2"), SM)
+m(sm, HP, HP.replace("{type(exc).__name__}", "Exception"), SM)
+m(sm, HP, HP.replace("shown(\' \'.join(str(exc).split()))", "str(exc)"), SM)
+m(sm, HP, HP.replace("shown(\' \'.join(str(exc).split()))", "\' \'.join(str(exc).split())"), SM)
+m(sm, HP, HP.replace("shown(\' \'.join(str(exc).split()))", "shown(str(exc))"), SM)
+m(sm, HP, HP.replace("::error::the staged-files check failed unexpectedly", "::error::the staged-files check failed"), SM)
+# literal(): the directory is judged as written
+LIT = ("    while True:\n        if len(path) > 1 and path.endswith(\"/\"):\n            path = path.rstrip(\"/\") or \"/\"\n"
+       "        elif path.endswith(\"/.\"):\n            path = path[:-2] or \"/\"\n        else:\n            return path")
+m(sm, LIT, LIT.replace("len(path) > 1", "len(path) > 2"), SM)
+m(sm, LIT, LIT.replace('path.endswith("/"):', 'path.endswith("//"):'), SM)
+m(sm, LIT, LIT.replace('path.endswith("/"):', 'path.endswith("\\\\"):'), SM)
+m(sm, LIT, LIT.replace('path.rstrip("/") or "/"', 'path.rstrip("/")'), SM)
+m(sm, LIT, LIT.replace('path.rstrip("/") or "/"', 'path.rstrip("/.") or "/"'), SM)
+m(sm, LIT, LIT.replace('elif path.endswith("/."):', 'elif path.endswith("."):'), SM)
+m(sm, LIT, LIT.replace('elif path.endswith("/."):', 'elif False:'), SM)
+m(sm, LIT, LIT.replace('path[:-2] or "/"', 'path[:-2]'), SM)
+m(sm, LIT, LIT.replace('path[:-2] or "/"', 'path[:-1] or "/"'), SM)
+m(sm, LIT, LIT.replace('path[:-2] or "/"', 'path[:-3] or "/"'), SM)
+m(sm, LIT, LIT.replace("        else:\n            return path", "        else:\n            return path.rstrip()"), SM)
+m(sm, "    directory = literal(directory)\n", "", SM)
+m(sm, "    directory = literal(directory)\n", "    directory = os.path.realpath(directory)\n", SM)
+m(sm, "    directory = literal(directory)\n", "    directory = os.path.normpath(directory)\n", SM)
+# scan(): a file that cannot be looked at
+LSTAT = ("        try:\n            info = os.lstat(path)\n        except OSError as exc:\n"
+         "            err(f\"{shown(name)} cannot be read ({shown(' '.join(str(exc).split()))})\")\n            bad = True\n            continue")
+m(sm, LSTAT, LSTAT.replace("except OSError as exc:", "except FileNotFoundError as exc:"), SM)
+m(sm, LSTAT, LSTAT.replace("            bad = True\n", ""), SM)
+m(sm, LSTAT, LSTAT.replace("            continue", "            pass"), SM)
+m(sm, LSTAT, LSTAT.replace("            continue", "            break"), SM)
+m(sm, LSTAT, LSTAT.replace("shown(' '.join(str(exc).split()))", "str(exc)"), SM)
+m(sm, LSTAT, LSTAT.replace("shown(' '.join(str(exc).split()))", "shown(str(exc))"), SM)
+m(sm, LSTAT, LSTAT.replace("shown(' '.join(str(exc).split()))", "' '.join(str(exc).split())"), SM)
+m(sm, LSTAT, LSTAT.replace("{shown(name)} cannot be read", "{name} cannot be read"), SM)
+m(sm, LSTAT, LSTAT.replace('err(f"{shown(name)} cannot be read ({shown(\' \'.join(str(exc).split()))})")\n', "pass\n"), SM)
+# create: the base rule, and an output that cannot be written
+CB = "        if not bases_releasable(sorted(found), err):\n            return 1"
+m(sm, CB, CB.replace("return 1", "return 0"), SM)
+m(sm, CB, CB.replace("if not bases_releasable(sorted(found), err):", "if False:"), SM)
+m(sm, CB, CB.replace("if not bases_releasable(sorted(found), err):", "if bases_releasable(sorted(found), err):"), SM)
+m(sm, CB, CB.replace("sorted(found)", "[]"), SM)
+m(sm, CB, CB.replace("sorted(found)", "sorted(found)[:1]"), SM)
+OW = ("        except OSError as exc:\n            err(f\"{shown(a.output)} cannot be written ({shown(' '.join(str(exc).split()))})\")\n            return 1")
+m(sm, OW, OW.replace("except OSError as exc:", "except FileNotFoundError as exc:"), SM)
+m(sm, OW, OW.replace("return 1", "return 0"), SM)
+m(sm, OW, OW.replace("shown(a.output)", "a.output"), SM)
+m(sm, OW, OW.replace("shown(' '.join(str(exc).split()))", "str(exc)"), SM)
+m(sm, OW, OW.replace("shown(' '.join(str(exc).split()))", "shown(str(exc))"), SM)
+m(sm, OW, OW.replace("shown(' '.join(str(exc).split()))", "' '.join(str(exc).split())"), SM)
+m(sm, OW, OW.replace("cannot be written", "cannot be read"), SM)
+# bases_releasable(): every main jar is judged
+BR = ("    ok = True\n    for base in sorted(main_bases(names)):\n        if not releasable_base(base):\n"
+      "            err(f\"{shown(base)} is not a releasable coordinate name: it is <artifactId>-<MAJOR.MINOR.PATCH>, the \"\n"
+      "                f\"artifactId of [A-Za-z0-9_.-] not starting with '-' or '.', at most {MAX_BASE} characters\")\n            ok = False\n    return ok")
+m(sm, BR, BR.replace("if not releasable_base(base):", "if releasable_base(base):"), SM)
+m(sm, BR, BR.replace("if not releasable_base(base):", "if False:"), SM)
+m(sm, BR, BR.replace("            ok = False\n", ""), SM)
+m(sm, BR, BR.replace("    return ok", "    return True"), SM)
+m(sm, BR, BR.replace("    ok = True\n", "    ok = False\n"), SM)
+m(sm, BR, BR.replace("sorted(main_bases(names))", "sorted(main_bases(names))[:1]"), SM)
+m(sm, BR, BR.replace("sorted(main_bases(names))", "names"), SM)
+m(sm, BR, BR.replace("{shown(base)}", "{base}"), SM)
+m(sm, BR, BR.replace("at most {MAX_BASE} characters", "at most {MAX_BASE + 1} characters"), SM)
+m(sm, "    ok = bases_releasable(names, err)\n", "    ok = True\n", SM)
+m(sm, "    ok = bases_releasable(names, err)\n", "    ok = bases_releasable(names[:1], err)\n", SM)
+# closed_set(): names that collide are refused
+S_KEY = '        key = unicodedata.normalize("NFKC", n).casefold()\n        if key in folded and folded[key] != n:\n            err('
+for new in ('        key = unicodedata.normalize("NFC", n).casefold()', '        key = unicodedata.normalize("NFD", n).casefold()',
+            '        key = unicodedata.normalize("NFKC", n).lower()', '        key = unicodedata.normalize("NFKC", n)', '        key = n.casefold()',
+            '        key = unicodedata.normalize("NFKC", n).casefold()[:-1]', '        key = unicodedata.normalize("NFKD", n).upper()',
+            '        key = n'):
+    m(sm, S_KEY, S_KEY.replace('        key = unicodedata.normalize("NFKC", n).casefold()', new), SM)
+m(sm, S_KEY, S_KEY.replace("if key in folded and folded[key] != n:", "if key in folded and folded[key] == n:"), SM)
+m(sm, S_KEY, S_KEY.replace("if key in folded and folded[key] != n:", "if key not in folded:"), SM)
+m(sm, S_KEY, S_KEY.replace("if key in folded and folded[key] != n:", "if False:"), SM)
+m(sm, "            ok = False\n        folded.setdefault(key, n)", "        folded.setdefault(key, n)", SM)
+m(sm, "        folded.setdefault(key, n)\n    return ok", "        folded[key] = n\n    return ok", SM)
+m(sm, "        folded.setdefault(key, n)\n    return ok", "        pass\n    return ok", SM)
+m(sm, "    for n in names:\n        key = unicodedata", "    for n in names[:1]:\n        key = unicodedata", SM)
+m(sm, "are the same name under case folding or Unicode normalisation\")\n            ok", "are the same name\")\n            ok", SM)
+# parse(): a blank line is malformed, and one final newline is allowed
+PB = '    if text.endswith("\\n"):\n        text = text[:-1]\n    for raw in text.split("\\n"):\n        if raw == "":\n            err("manifest line is malformed: a blank line")\n            return None'
+m(sm, PB, PB.replace('if text.endswith("\\n"):', "if False:"), SM)
+m(sm, PB, PB.replace('text.endswith("\\n")', 'text.endswith("\\n\\n")'), SM)
+m(sm, PB, PB.replace("text[:-1]", "text[:-2]"), SM)
+m(sm, PB, PB.replace("text[:-1]", 'text.rstrip("\\n")'), SM)
+m(sm, PB, PB.replace('if raw == "":', "if False:"), SM)
+m(sm, PB, PB.replace('if raw == "":', 'if not raw.strip():'), SM)
+m(sm, PB, PB.replace('if raw == "":', 'if raw != "":'), SM)
+m(sm, PB, PB.replace("            return None", "            continue"), SM)
+m(sm, PB, PB.replace("a blank line", "empty"), SM)
+m(sm, PB, PB.replace('            err("manifest line is malformed: a blank line")\n', ""), SM)
+
+# --- resolve_release.py: the JDK inputs ----------------------------------------------------------------------------------------
+JD = 'JAVA_DISTRIBUTIONS = ("temurin", "graalvm")'
+for new in ('JAVA_DISTRIBUTIONS = ("temurin",)', 'JAVA_DISTRIBUTIONS = ("graalvm",)', 'JAVA_DISTRIBUTIONS = ("temurin", "graalvm", "zulu")',
+            'JAVA_DISTRIBUTIONS = ("temurin", "graalvm", "")', 'JAVA_DISTRIBUTIONS = ("temurin", "graal")', 'JAVA_DISTRIBUTIONS = ("Temurin", "graalvm")',
+            'JAVA_DISTRIBUTIONS = ("temurin", "graalvm", "jdkfile")', 'JAVA_DISTRIBUTIONS = ("temurin", "graalvm", "temurin ")'):
+    m(r, JD, new, RR)
+JV = 'JAVA_VERSION = re.compile(r"[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?")'
+for new in ('[0-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?', '[1-9][0-9]*(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?',
+            '[1-9](?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?', '[1-9][0-9]?(?:\\.[xX]|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?',
+            '[1-9][0-9]?(?:.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,3})?',
+            '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){2})?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){0,2})?',
+            '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1})?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})',
+            '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})*', '[1-9][0-9]?(?:(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?',
+            '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,3})){1,2})?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,1})){1,2})?',
+            '[1-9][0-9]?(?:\\.x|(?:\\.(?:[1-9][0-9]{0,2})){1,2})?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[0-9]{1,3})){1,2})?',
+            '[1-9][0-9]?(?:\\.x|(?:\\.[0-9]{0,3}){1,2})?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?(?:-ea)?',
+            '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?\\n?', '[1-9][0-9]?(?:\\.x|(?:\\.(?:0|[1-9][0-9]{0,2})){1,2})?|'):
+    m(r, JV, f'JAVA_VERSION = re.compile(r"{new}")', RR)
+WH = '    for label in ("java_distribution", "java_version"):\n        whole(label.replace("_", "-"), getattr(a, label) or "")'
+m(r, WH, WH.replace('("java_distribution", "java_version")', '("java_version",)'), RR)
+m(r, WH, WH.replace('("java_distribution", "java_version")', '("java_distribution",)'), RR)
+m(r, WH, WH.replace('("java_distribution", "java_version")', '()'), RR)
+m(r, WH, WH.replace('label.replace("_", "-")', "label"), RR)
+m(r, WH, WH.replace('getattr(a, label) or ""', '""'), RR)
+JC = '    if a.java_distribution is not None and a.java_distribution not in JAVA_DISTRIBUTIONS:'
+m(r, JC, JC.replace("a.java_distribution is not None and ", ""), RR)
+m(r, JC, JC.replace("is not None and", "is None and"), RR)
+m(r, JC, JC.replace("is not None and", "is not None or"), RR)
+m(r, JC, JC.replace("not in JAVA_DISTRIBUTIONS", "in JAVA_DISTRIBUTIONS"), RR)
+m(r, JC, "    if False:", RR)
+m(r, JC, JC.replace("a.java_distribution not in", "a.java_distribution.lower() not in"), RR)
+m(r, JC, JC.replace("a.java_distribution not in", "a.java_distribution.strip() not in"), RR)
+JM = "    if a.java_version is not None and not JAVA_VERSION.fullmatch(a.java_version):"
+m(r, JM, JM.replace("a.java_version is not None and ", ""), RR)
+m(r, JM, JM.replace("is not None and", "is None and"), RR)
+m(r, JM, JM.replace("is not None and", "is not None or"), RR)
+m(r, JM, JM.replace("not JAVA_VERSION.fullmatch", "JAVA_VERSION.fullmatch"), RR)
+m(r, JM, JM.replace("fullmatch", "match"), RR)
+m(r, JM, JM.replace("fullmatch", "search"), RR)
+m(r, JM, "    if False:", RR)
+m(r, JM, JM.replace("JAVA_VERSION.fullmatch(a.java_version)", "JAVA_VERSION.fullmatch(a.java_version.strip())"), RR)
+m(r, "must be one of {', '.join(JAVA_DISTRIBUTIONS)}, got '{a.java_distribution}'", "must be one of {', '.join(JAVA_DISTRIBUTIONS)}, got '{a.java_version}'", RR)
+m(r, "java-version must be NN, NN.x or NN.N.N (for example 25, 21.x or 25.0.2), got '{a.java_version}'", "java-version must be NN, got '{a.java_version}'", RR)
+FL = '    for flag in ("java-distribution", "java-version"):\n        p.add_argument(f"--{flag}", default=None)'
+m(r, FL, FL.replace("default=None", 'default=""'), RR)
+m(r, FL, FL.replace('("java-distribution", "java-version")', '("java-version",)'), RR)
+m(r, FL, FL.replace('("java-distribution", "java-version")', '("java-distribution",)'), RR)
+m(r, FL, FL.replace("default=None", 'default="temurin"'), RR)
+OWR = ('            for key, value in (("java-distribution", a.java_distribution), ("java-version", a.java_version)):\n'
+       '                if value is not None:\n                    fh.write(f"{key}={value}\\n")')
+m(r, OWR, OWR.replace("                if value is not None:\n", "                if True:\n"), RR)
+m(r, OWR, OWR.replace("                if value is not None:\n", "                if value is None:\n"), RR)
+m(r, OWR, OWR.replace('("java-distribution", a.java_distribution), ("java-version", a.java_version)', '("java-version", a.java_version),'), RR)
+m(r, OWR, OWR.replace('("java-distribution", a.java_distribution), ("java-version", a.java_version)', '("java-distribution", a.java_distribution),'), RR)
+m(r, OWR, OWR.replace('("java-distribution", a.java_distribution), ("java-version", a.java_version)', '("java-distribution", a.java_version), ("java-version", a.java_distribution)'), RR)
+m(r, OWR, OWR.replace('("java-version", a.java_version)', '("java_version", a.java_version)'), RR)
+m(r, OWR, OWR.replace('("java-distribution", a.java_distribution)', '("java_distribution", a.java_distribution)'), RR)
+m(r, OWR, OWR.replace('fh.write(f"{key}={value}\\n")', 'fh.write(f"{key}={value}")'), RR)
+m(r, OWR, OWR.replace('fh.write(f"{key}={value}\\n")', 'fh.write(f"{key}={value}\\n\\n")'), RR)
+m(r, OWR, OWR.replace('fh.write(f"{key}={value}\\n")', 'fh.write(f"{key}: {value}\\n")'), RR)
+m(r, OWR, OWR.replace('fh.write(f"{key}={value}\\n")', 'pass'), RR)
+
+
 # --- mutants that are equivalent to the script ---------------------------------------------------------------------------
 # A change that no input can make observable is not a guard to protect. Each is dropped from M with the reason it cannot be
 # told from the original; `test_mutations` checks that each still applies to the script exactly once, so a refactor that
@@ -772,3 +1252,49 @@ equivalent("resolve_release", '    if a.upload == "true" and a.target == "none":
            "the target is validated to be `none` or `github-packages` before this line, so `== none` and `!= github-packages` select the same case")
 equivalent("check_release_profile", "           for p in plugins + managed):", "           for p in plugins + managed + builds):",
            "a <build> element has no <artifactId> child, so adding the build elements to the sequence adds nothing that can match")
+
+equivalent("staged_manifest", 'LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")', 'LINE = re.compile(r"([0-9a-f]{64})  (.+)$")',
+           "`re.match` anchors at the start of the string already, so the leading `^` changes nothing")
+equivalent("staged_manifest", "CHUNK = 1 << 20", "CHUNK = 1 << 2",
+           "the chunk size only changes how many reads a file takes; the digest of the bytes is the same")
+equivalent("staged_manifest", 'return "".join(c if c.isprintable() and', 'not in "C" or c == " " else',
+           "`str.isprintable` is already false for every character of category Z but the ASCII space, so the category test adds nothing for Z")
+equivalent("staged_manifest", 'return "".join(c if c.isprintable() and', 'return "".join(c if c.isprintable() or c == " " else',
+           "`str.isprintable` is false for every character of category C and Z but the ASCII space, so the category test is redundant with it")
+equivalent("staged_manifest", 'return "".join(c if c.isprintable() and', 'return "".join(c if unicodedata.category(c)[0] not in "CZ" or c == " " else',
+           "the characters `str.isprintable` rejects are exactly those of category C or Z other than the ASCII space, so either test alone is enough")
+equivalent("staged_manifest", 'if name in (".", "..") or name.startswith(".")', 'if name.startswith(".") or "/" in name',
+           "`..` starts with a dot, so the explicit `.` and `..` members are covered by the leading-dot test")
+equivalent("staged_manifest", 'if name in (".", "..") or name.startswith(".")', 'if name in ("..",) or name.startswith(".")',
+           "`.` starts with a dot, so dropping it from the explicit members changes nothing")
+equivalent("staged_manifest", 'if name in (".", "..") or name.startswith(".")', 'or "\\\\" in name:',
+           "a NUL cannot be in a name read from a directory or in an environment variable")
+equivalent("staged_manifest", "fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)", "fd = os.open(path, os.O_NOFOLLOW | os.O_NONBLOCK)",
+           "os.O_RDONLY is 0 on every platform the workflow runs on")
+equivalent("staged_manifest", 'err("no main jar is staged")\n        ok = False', 'err("no main jar is staged")',
+           "no main jar is only possible with no name at all, which the manifest (never empty) always contradicts first, or with names that "
+           "are each already refused as not part of a release, so the result of closed_set is false either way")
+equivalent("staged_manifest", "        elif found[n] != want[n]:", "elif found[n].lower() != want[n].lower():",
+           "both digests are lowercase hexadecimal, the manifest parser refusing anything else, so folding case changes no comparison")
+equivalent("staged_manifest", 'print(f"ok - {len(found)} files match the manifest")', "{len(want)} files match",
+           "the line is printed only when every name is in both mappings, so they have the same length")
+for script in ("check_release_readiness", "staged_manifest"):
+    equivalent(script, 'BASE = re.compile(', ', re.A)',
+               "the pattern spells its classes out as ASCII ranges and uses no `\\w`, `\\d` or `\\s`, so the ASCII flag has nothing to restrict")
+equivalent("check_release_readiness", 'key = unicodedata.normalize("NFKC", n).casefold()', '.casefold()[:-1]',
+           "the gate compares only names ending in `.jar`, `.pom` or `.asc`, so two different names cannot agree on every character but the last "
+           "(`.jar`, `.pom` and `.asc` end in three different letters, each fixed by the letters before it); dropping the last character of the key "
+           "finds the same pairs")
+equivalent("staged_manifest", 'CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar", "-tests.jar")', '"-tests.jar", ".pom")',
+           "the suffixes are tested on names that already end in `.jar`, and no such name ends in `.pom`")
+equivalent("staged_manifest", "    if not KEY.fullmatch(value):", "return value.strip()",
+           "a value that passed the pattern holds no whitespace, so stripping it changes nothing")
+equivalent("staged_manifest", "    while True:\n        if len(path) > 1 and path.endswith(\"/\"):", 'path[:-1] or "/"',
+           "a path that ends in `/.` loses one character instead of two and the loop then removes the separator that is left, so it reaches the same text")
+equivalent("staged_manifest", "    ok = True\n    for base in sorted(main_bases(names)):", "err(f\"{base} is not a releasable",
+           "the names reach this function after `scan` has refused every name with a control, format, separator or unassigned character, and "
+           "`shown` changes only those, so a base never holds a character it would escape")
+equivalent("resolve_release", 'JAVA_VERSION = re.compile(', '{0,2})){0,2})?',
+           "the whole group is optional, so allowing it zero times adds no string")
+equivalent("resolve_release", 'JAVA_VERSION = re.compile(', r'{1,2})?\n?")',
+           "`whole` refuses every control character, a newline included, before the pattern is applied, so a value ending in one never reaches it")
