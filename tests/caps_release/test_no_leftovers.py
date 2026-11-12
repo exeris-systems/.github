@@ -12,7 +12,8 @@ import unittest
 import caps_release_helpers as h
 
 MODULES = ["test_release_readiness", "test_readiness_closed_set", "test_release_profile", "test_secrets", "test_drift",
-           "test_staging_binding", "test_gate_internals", "test_upload_command", "test_remove_signing_key"]
+           "test_staging_binding", "test_gate_internals", "test_upload_command", "test_remove_signing_key", "test_workflow", "test_staged_manifest",
+           "test_manifest_gate_agreement"]
 
 
 class Leftovers(h.Case):

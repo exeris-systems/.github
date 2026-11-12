@@ -747,6 +747,209 @@ m(y, "        raise OSError(\"the verified copy changed\")", "        pass", R)
 m(y, "    if os.path.lexists(dest) and (os.path.islink(dest) or not os.path.isdir(dest) or os.listdir(dest)):", "    if os.path.exists(dest) and (os.path.islink(dest) or not os.path.isdir(dest) or os.listdir(dest)):", R)
 
 
+# --- staged_manifest.py ------------------------------------------------------------------------------------------------
+sm = "staged_manifest"
+SM = ["test_staged_manifest", "test_manifest_gate_agreement"]
+LINE = 'LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")'
+for new in ('LINE = re.compile(r"^([0-9a-fA-F]{64})  (.+)$")', 'LINE = re.compile(r"^([0-9a-f]{63})  (.+)$")',
+            'LINE = re.compile(r"^([0-9a-f]{64,})  (.+)$")', 'LINE = re.compile(r"^([0-9a-f]{64}) (.+)$")',
+            'LINE = re.compile(r"^([0-9a-f]{64})\\s+(.+)$")', 'LINE = re.compile(r"^([0-9a-f]{64})  (.*)$")',
+            'LINE = re.compile(r"^([0-9a-f]{64})  (.+)$", re.I)', 'LINE = re.compile(r"([0-9a-f]{64})  (.+)$")',
+            'LINE = re.compile(r"^([0-9a-z]{64})  (.+)$")'):
+    m(sm, LINE, new, SM)
+m(sm, "CHUNK = 1 << 20", "CHUNK = 0", SM)
+m(sm, "CHUNK = 1 << 20", "CHUNK = 1 << 2", SM)
+# shown(): a name is printed without a control character, but with its spaces
+SH = 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] not in "CZ" or c == " " else'
+m(sm, SH, 'return "".join(c if True else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] not in "CZ" else', SM)
+m(sm, SH, 'return "".join(c if unicodedata.category(c)[0] not in "CZ" or c == " " else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() or c == " " else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] not in "C" or c == " " else', SM)
+m(sm, SH, 'return "".join(c if c.isprintable() and unicodedata.category(c)[0] in "CZ" or c == " " else', SM)
+# plain_name(): the names of the closed set are plain file names
+PN = r'if name in (".", "..") or name.startswith(".") or "/" in name or "\\" in name or "\x00" in name:'
+m(sm, PN, r'if name.startswith(".") or "/" in name or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith(".") or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith(".") or "/" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith(".") or "/" in name or "\\" in name:', SM)
+m(sm, PN, r'if name in (".", "..") or name.startswith("..") or "/" in name or "\\" in name or "\x00" in name:', SM)
+m(sm, PN, r'if name in ("..",) or name.startswith(".") or "/" in name or "\\" in name or "\x00" in name:', SM)
+PR = 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.strip()'
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "C" and c != " " for c in name) and name == name.strip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "Z" and c != " " for c in name) and name == name.strip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" for c in name) and name == name.strip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name)', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.lstrip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.rstrip()', SM)
+m(sm, PR, 'return not any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) or name == name.strip()', SM)
+m(sm, PR, 'return any(unicodedata.category(c)[0] in "CZ" and c != " " for c in name) and name == name.strip()', SM)
+# digest(): one open, no link followed, never blocks, the descriptor says what the file is, all of it is read
+OP = "fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)"
+m(sm, OP, "fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)", SM)
+m(sm, OP, "fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)", SM)
+m(sm, OP, "fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)", SM)
+m(sm, OP, "fd = os.open(path, os.O_NOFOLLOW | os.O_NONBLOCK)", SM)
+m(sm, "        if not stat.S_ISREG(os.fstat(fd).st_mode):\n            raise OSError(\"not a regular file\")",
+  "        if False:\n            raise OSError(\"not a regular file\")", SM)
+m(sm, "        if not stat.S_ISREG(os.fstat(fd).st_mode):", "        if stat.S_ISREG(os.fstat(fd).st_mode):", SM)
+m(sm, "        if not stat.S_ISREG(os.fstat(fd).st_mode):", "        if not stat.S_ISDIR(os.fstat(fd).st_mode):", SM)
+m(sm, "            h.update(block)", "            pass", SM)
+m(sm, "            h.update(block)", "            h.update(block[:-1])", SM)
+m(sm, "            if not block:\n                return h.hexdigest()", "            if not block:\n                return \"\"", SM)
+m(sm, "        h = hashlib.sha256()", "        h = hashlib.sha1()", SM)
+m(sm, "    finally:\n        os.close(fd)", "    finally:\n        pass", SM)
+m(sm, "            block = os.read(fd, CHUNK)", "            block = os.read(fd, CHUNK)[:100]", SM)
+# scan(): the directory is a real directory, and every entry is a plain regular file with a plain name
+ISDIR = "        if os.path.islink(directory) or not os.path.isdir(directory):"
+m(sm, ISDIR, "        if not os.path.isdir(directory):", SM)
+m(sm, ISDIR, "        if os.path.islink(directory):", SM)
+m(sm, ISDIR, "        if os.path.islink(directory) and not os.path.isdir(directory):", SM)
+m(sm, "            err(f\"{shown(directory)} is not a directory\")\n            return None", "            err(f\"{shown(directory)} is not a directory\")\n            return {}", SM)
+m(sm, "            err(f\"{shown(directory)} is not a directory\")", "            pass", SM)
+m(sm, "        err(f\"{shown(directory)} cannot be read ({exc})\")\n        return None", "        err(f\"{shown(directory)} cannot be read ({exc})\")\n        return {}", SM)
+m(sm, "        info = os.lstat(path)", "        info = os.stat(path)", SM)
+NOTREG = "        if not stat.S_ISREG(info.st_mode):\n            err(f\"{shown(name)} is not a regular file; only regular files are released\")"
+m(sm, NOTREG + "\n            bad = True", NOTREG, SM)
+m(sm, NOTREG, NOTREG.replace("if not stat.S_ISREG(info.st_mode):", "if False:"), SM)
+m(sm, NOTREG, NOTREG.replace("if not stat.S_ISREG(info.st_mode):", "if stat.S_ISDIR(info.st_mode):"), SM)
+m(sm, "        elif info.st_nlink != 1:", "        elif info.st_nlink > 2:", SM)
+m(sm, "        elif info.st_nlink != 1:", "        elif False:", SM)
+m(sm, "        elif info.st_nlink != 1:", "        elif info.st_nlink < 1:", SM)
+HARD = "            err(f\"{shown(name)} is a hard link; only plain files are released\")"
+m(sm, HARD + "\n            bad = True", HARD, SM)
+m(sm, "        elif not plain_name(name):", "        elif plain_name(name):", SM)
+m(sm, "        elif not plain_name(name):", "        elif False:", SM)
+PLAIN = "            err(f\"{shown(name)} is not a plain file name\")"
+m(sm, PLAIN + "\n            bad = True", PLAIN, SM)
+m(sm, "                found[name] = digest(path)", "                found[name] = \"\"", SM)
+CANNOT = "                err(f\"{shown(name)} cannot be read ({exc})\")"
+m(sm, CANNOT + "\n                bad = True", CANNOT, SM)
+m(sm, "    return None if bad else found", "    return found", SM)
+m(sm, "    return None if bad else found", "    return None", SM)
+m(sm, "    return None if bad else found", "    return None if not bad else found", SM)
+# closed_set(): every name belongs to a coordinate, and every coordinate is whole
+BASES = '    bases = {n[:-len(".jar")] for n in names\n             if n.endswith(".jar") and not n.endswith(("-sources.jar", "-javadoc.jar"))}'
+m(sm, BASES, BASES.replace('n.endswith(".jar") and not', 'n.endswith(".jar") or not'), SM)
+m(sm, BASES, BASES.replace('("-sources.jar", "-javadoc.jar")', '("-javadoc.jar",)'), SM)
+m(sm, BASES, BASES.replace('("-sources.jar", "-javadoc.jar")', '("-sources.jar",)'), SM)
+m(sm, BASES, BASES.replace('n[:-len(".jar")]', 'n[:-3]'), SM)
+m(sm, BASES, BASES.replace('n.endswith(".jar") and not n.endswith(("-sources.jar", "-javadoc.jar"))', 'n.endswith(".pom")'), SM)
+m(sm, BASES, BASES.replace(' and not n.endswith(("-sources.jar", "-javadoc.jar"))', ''), SM)
+EXP = 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}-javadoc.jar", f"{base}.pom"):'
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}.pom"):', SM)
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-javadoc.jar", f"{base}.pom"):', SM)
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}-javadoc.jar"):', SM)
+m(sm, EXP, 'for f in (f"{base}.jar", f"{base}-sources.jar", f"{base}-javadoc.jar", f"{base}.pom", f"{base}-tests.jar"):', SM)
+m(sm, "            expected.update((f, f + \".asc\"))", "            expected.update((f,))", SM)
+m(sm, "            expected.update((f, f + \".asc\"))", "            expected.update((f, f + \".sig\"))", SM)
+m(sm, "            expected.update((f, f + \".asc\"))", "            expected.update((f, f + \".asc\", f + \".sha1\"))", SM)
+m(sm, "        if n == \"pom.xml\":", "        if n == \"pom.xml\" and False:", SM)
+POMX = "            err(\"pom.xml is not part of a release: nothing a project would build from is staged\")"
+m(sm, POMX + "\n            ok = False", POMX, SM)
+m(sm, "        elif n not in expected:", "        elif n in expected:", SM)
+m(sm, "        elif n not in expected:", "        elif False:", SM)
+NOTPART = "\"the pom and their .asc signatures are released\")"
+m(sm, NOTPART + "\n            ok = False", NOTPART, SM)
+m(sm, "    for want in sorted(expected - set(names)):", "    for want in sorted(expected & set(names)):", SM)
+MISSING = "        err(f\"{shown(want)} is missing - a release holds all eight files of a coordinate\")"
+m(sm, MISSING + "\n        ok = False", MISSING, SM)
+m(sm, "    if not bases:", "    if bases:", SM)
+m(sm, "    if not bases:", "    if False:", SM)
+m(sm, "        err(\"no main jar is staged\")\n        ok = False", "        err(\"no main jar is staged\")", SM)
+# parse(): the manifest text is the canonical lines and nothing else
+m(sm, "    if not text.strip():", "    if not text:", SM)
+m(sm, "    if not text.strip():", "    if False:", SM)
+m(sm, "        err(\"the manifest is empty\")\n        return None", "        err(\"the manifest is empty\")\n        return {}", SM)
+m(sm, "    for raw in text.split(\"\\n\"):", "    for raw in text.splitlines():", SM)
+m(sm, "    for raw in text.split(\"\\n\"):", "    for raw in text.strip().split(\"\\n\"):", SM)
+m(sm, "        if not m or not plain_name(m.group(2)):", "        if not m:", SM)
+m(sm, "        if not m or not plain_name(m.group(2)):", "        if not plain_name(m.group(2)):", SM)
+m(sm, "        if not m or not plain_name(m.group(2)):", "        if not m and not plain_name(m.group(2)):", SM)
+MAL = "            err(f\"manifest line is malformed: {shown(raw)[:120]}\")"
+m(sm, MAL + "\n            return None", MAL + "\n            continue", SM)
+m(sm, "{shown(raw)[:120]}", "{shown(raw)[:0]}", SM)
+m(sm, "{shown(raw)[:120]}", "{shown(raw)[:1200]}", SM)
+m(sm, "{shown(raw)[:120]}", "{raw[:120]}", SM)
+m(sm, "        if m.group(2) in out:", "        if False:", SM)
+m(sm, "        if m.group(2) in out:", "        if m.group(2) not in out:", SM)
+TWICE = "            err(f\"manifest lists {shown(m.group(2))} twice\")"
+m(sm, TWICE + "\n            return None", TWICE, SM)
+m(sm, "        out[m.group(2)] = m.group(1)", "        out[m.group(2)] = m.group(1).upper()", SM)
+m(sm, "        out[m.group(2)] = m.group(1)", "        out[m.group(1)] = m.group(2)", SM)
+# render() and main()
+REND = "    return \"\".join(f\"{h}  {n}\\n\" for n, h in sorted(found.items()))"
+m(sm, REND, REND.replace("{h}  {n}", "{h} {n}"), SM)
+m(sm, REND, REND.replace("{n}\\n", "{n}"), SM)
+m(sm, REND, REND.replace("{h}  {n}", "{n}  {h}"), SM)
+m(sm, REND, REND.replace("sorted(found.items())", "sorted(found.items(), reverse=True)"), SM)
+m(sm, REND, REND.replace("sorted(found.items())", "list(found.items())[::-1]"), SM)
+m(sm, "    sub = p.add_subparsers(dest=\"cmd\", required=True)", "    sub = p.add_subparsers(dest=\"cmd\")", SM)
+m(sm, "    c.add_argument(\"--dir\", required=True)", "    c.add_argument(\"--dir\", default=\".\")", SM)
+m(sm, "    c.add_argument(\"--output\", required=True)", "    c.add_argument(\"--output\", default=\"/dev/null\")", SM)
+m(sm, "    c.add_argument(\"--name\", default=\"manifest\")", "    c.add_argument(\"--name\", default=\"m\")", SM)
+m(sm, "    v.add_argument(\"--dir\", required=True)", "    v.add_argument(\"--dir\", default=\".\")", SM)
+m(sm, "    v.add_argument(\"--manifest-env\", required=True)", "    v.add_argument(\"--manifest-env\", default=\"MANIFEST\")", SM)
+m(sm, "    if found is None:\n        return 1", "    if found is None:\n        return 0", SM)
+m(sm, "    if found is None:\n        return 1", "    if False:\n        return 1", SM)
+m(sm, "        if not found:\n            err(\"nothing is staged\")\n            return 1", "        if found:\n            err(\"nothing is staged\")\n            return 1", SM)
+m(sm, "            err(\"nothing is staged\")\n            return 1", "            err(\"nothing is staged\")\n            return 0", SM)
+m(sm, "        if not found:\n            err(\"nothing is staged\")", "        if False:\n            err(\"nothing is staged\")", SM)
+DELIM = "        delimiter = \"MANIFEST_\" + hashlib.sha256(text.encode()).hexdigest()[:16]"
+m(sm, DELIM, "        delimiter = \"MANIFEST_\"", SM)
+m(sm, DELIM, DELIM.replace("[:16]", "[:4]"), SM)
+m(sm, DELIM, "        delimiter = \"EOF\"", SM)
+m(sm, DELIM, DELIM.replace("text.encode()", "b\"\""), SM)
+m(sm, "        with open(a.output, \"a\", encoding=\"utf-8\") as out:", "        with open(a.output, \"w\", encoding=\"utf-8\") as out:", SM)
+WRITE = "            out.write(f\"{a.name}<<{delimiter}\\n{text}{delimiter}\\n\")"
+m(sm, WRITE, WRITE.replace("{delimiter}\\n\")", "{delimiter}\")"), SM)
+m(sm, WRITE, "            out.write(f\"{a.name}={text}\")", SM)
+m(sm, WRITE, WRITE.replace("{text}{delimiter}", "{text}\\n{delimiter}"), SM)
+m(sm, WRITE, WRITE.replace("{a.name}<<", "{a.name}="), SM)
+DIG = "            out.write(f\"{a.name}-digest={whole}\\n{a.name}-id={whole[:12]}\\n\")"
+m(sm, DIG, DIG.replace("[:12]", "[:11]"), SM)
+m(sm, DIG, DIG.replace("[:12]", "[:13]"), SM)
+m(sm, DIG, DIG.replace("{whole}", "{whole[:63]}"), SM)
+m(sm, DIG, DIG.replace("[:12]", "[-12:]"), SM)
+m(sm, DIG, DIG.replace("-digest=", "_digest=").replace("-id=", "_id="), SM)
+m(sm, "            whole = hashlib.sha256(text.encode()).hexdigest()", "            whole = hashlib.sha256(text.encode()[:-1]).hexdigest()", SM)
+m(sm, "        sys.stdout.write(text)\n        return 0", "        return 0", SM)
+m(sm, "        sys.stdout.write(text)\n        return 0", "        sys.stdout.write(text)\n        return 1", SM)
+m(sm, "    want = parse(os.environ.get(a.manifest_env, \"\"), err)", "    want = parse(os.environ[a.manifest_env], err)", SM)
+m(sm, "    want = parse(os.environ.get(a.manifest_env, \"\"), err)", "    want = parse(os.environ.get(a.manifest_env, \"x\"), err)", SM)
+m(sm, "    want = parse(os.environ.get(a.manifest_env, \"\"), err)", "    want = parse(os.environ.get(\"MANIFEST\", \"\"), err)", SM)
+m(sm, "    if want is None:\n        return 1", "    if want is None:\n        return 0", SM)
+SETOP = "    for n in sorted(set(found) | set(want)):"
+m(sm, SETOP, "    for n in sorted(set(found) & set(want)):", SM)
+m(sm, SETOP, "    for n in sorted(set(found)):", SM)
+m(sm, SETOP, "    for n in sorted(set(want)):", SM)
+NOTIN = "            err(f\"{shown(n)} is not in the manifest\")"
+m(sm, NOTIN + "\n            problems += 1", NOTIN, SM)
+NOTDIR = "            err(f\"{shown(n)} is in the manifest and not in the directory\")"
+m(sm, NOTDIR + "\n            problems += 1", NOTDIR, SM)
+DIFFERS = "            err(f\"{shown(n)} differs from the manifest\")"
+m(sm, DIFFERS + "\n            problems += 1", DIFFERS, SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n] == want[n]:", SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n].lower() != want[n].lower():", SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n][:32] != want[n][:32]:", SM)
+m(sm, "        elif found[n] != want[n]:", "        elif found[n][32:] != want[n][32:]:", SM)
+m(sm, "        if n not in want:\n            err(", "        if n in want:\n            err(", SM)
+m(sm, "    if not closed_set(sorted(found), err):\n        problems += 1", "    if not closed_set(sorted(found), err):\n        pass", SM)
+m(sm, "    if not closed_set(sorted(found), err):\n        problems += 1", "    if closed_set(sorted(found), err):\n        problems += 1", SM)
+m(sm, "    if not closed_set(sorted(found), err):", "    if not closed_set(sorted(want), err):", SM)
+FIN = "        print(\"::error::the staged files are not what the gate staged\", file=sys.stderr)"
+m(sm, FIN + "\n        return 1", FIN + "\n        return 0", SM)
+m(sm, "    if problems:\n" + FIN, "    if problems:\n        pass", SM)
+m(sm, "    if problems:\n        print(", "    if not problems:\n        print(", SM)
+m(sm, "    if problems:\n        print(", "    if problems > 1:\n        print(", SM)
+m(sm, "    print(f\"ok - {len(found)} files match the manifest\")", "    print(f\"ok - {len(want)} files match the manifest\")", SM)
+m(sm, "    print(f\"ok - {len(found)} files match the manifest\")", "    print(f\"ok - {len(found) + 1} files match the manifest\")", SM)
+m(sm, "    print(f\"ok - {len(found)} files match the manifest\")\n    return 0", "    print(f\"ok - {len(found)} files match the manifest\")\n    return 1", SM)
+m(sm, "        print(f\"::error::{msg}\", file=sys.stderr)", "        print(f\"::warning::{msg}\", file=sys.stderr)", SM)
+m(sm, "        print(f\"::error::{msg}\", file=sys.stderr)", "        print(f\"::error::{msg}\")", SM)
+
+
 # --- mutants that are equivalent to the script ---------------------------------------------------------------------------
 # A change that no input can make observable is not a guard to protect. Each is dropped from M with the reason it cannot be
 # told from the original; `test_mutations` checks that each still applies to the script exactly once, so a refactor that
@@ -772,3 +975,29 @@ equivalent("resolve_release", '    if a.upload == "true" and a.target == "none":
            "the target is validated to be `none` or `github-packages` before this line, so `== none` and `!= github-packages` select the same case")
 equivalent("check_release_profile", "           for p in plugins + managed):", "           for p in plugins + managed + builds):",
            "a <build> element has no <artifactId> child, so adding the build elements to the sequence adds nothing that can match")
+
+equivalent("staged_manifest", 'LINE = re.compile(r"^([0-9a-f]{64})  (.+)$")', 'LINE = re.compile(r"([0-9a-f]{64})  (.+)$")',
+           "`re.match` anchors at the start of the string already, so the leading `^` changes nothing")
+equivalent("staged_manifest", "CHUNK = 1 << 20", "CHUNK = 1 << 2",
+           "the chunk size only changes how many reads a file takes; the digest of the bytes is the same")
+equivalent("staged_manifest", 'return "".join(c if c.isprintable() and', 'not in "C" or c == " " else',
+           "`str.isprintable` is already false for every character of category Z but the ASCII space, so the category test adds nothing for Z")
+equivalent("staged_manifest", 'return "".join(c if c.isprintable() and', 'return "".join(c if c.isprintable() or c == " " else',
+           "`str.isprintable` is false for every character of category C and Z but the ASCII space, so the category test is redundant with it")
+equivalent("staged_manifest", 'return "".join(c if c.isprintable() and', 'return "".join(c if unicodedata.category(c)[0] not in "CZ" or c == " " else',
+           "the characters `str.isprintable` rejects are exactly those of category C or Z other than the ASCII space, so either test alone is enough")
+equivalent("staged_manifest", 'if name in (".", "..") or name.startswith(".")', 'if name.startswith(".") or "/" in name',
+           "`..` starts with a dot, so the explicit `.` and `..` members are covered by the leading-dot test")
+equivalent("staged_manifest", 'if name in (".", "..") or name.startswith(".")', 'if name in ("..",) or name.startswith(".")',
+           "`.` starts with a dot, so dropping it from the explicit members changes nothing")
+equivalent("staged_manifest", 'if name in (".", "..") or name.startswith(".")', 'or "\\\\" in name:',
+           "a NUL cannot be in a name read from a directory or in an environment variable")
+equivalent("staged_manifest", "fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)", "fd = os.open(path, os.O_NOFOLLOW | os.O_NONBLOCK)",
+           "os.O_RDONLY is 0 on every platform the workflow runs on")
+equivalent("staged_manifest", 'err("no main jar is staged")\n        ok = False', 'err("no main jar is staged")',
+           "no main jar is only possible with no name at all, which the manifest (never empty) always contradicts first, or with names that "
+           "are each already refused as not part of a release, so the result of closed_set is false either way")
+equivalent("staged_manifest", "        elif found[n] != want[n]:", "elif found[n].lower() != want[n].lower():",
+           "both digests are lowercase hexadecimal, the manifest parser refusing anything else, so folding case changes no comparison")
+equivalent("staged_manifest", 'print(f"ok - {len(found)} files match the manifest")', "{len(want)} files match",
+           "the line is printed only when every name is in both mappings, so they have the same length")

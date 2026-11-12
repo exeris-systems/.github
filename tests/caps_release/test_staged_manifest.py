@@ -141,6 +141,23 @@ class Contents(Base):
         res = self.verify(d, manifest_of(d) + extra)
         self.refused_findings(res, *(f"more-{i}.jar is in the manifest and not in the directory" for i in range(3)))
 
+    def test_a_whole_coordinate_the_manifest_does_not_list_is_refused_file_by_file(self):
+        d = self.directory("staged", "a-1.0.0")
+        manifest = manifest_of(d)
+        make_coordinate(d, "b-2.0.0")
+        res = self.verify(d, manifest)
+        self.refused_findings(res, *(f"{n} is not in the manifest" for n in coordinate_names("b-2.0.0")), findings=8)
+
+    def test_a_hash_that_differs_in_one_digit_anywhere_is_a_different_hash(self):
+        d = self.directory()
+        lines = manifest_of(d).splitlines()
+        for position in (0, 1, 31, 32, 33, 62, 63):
+            with self.subTest(position):
+                digest, name = lines[0].split("  ", 1)
+                flipped = digest[:position] + ("0" if digest[position] != "0" else "1") + digest[position + 1:]
+                res = self.verify(d, "\n".join([f"{flipped}  {name}", *lines[1:]]) + "\n")
+                self.refused_findings(res, f"{name} differs from the manifest", findings=1)
+
     def test_a_zero_length_file_is_not_the_file_the_manifest_lists(self):
         d = self.directory()
         manifest = manifest_of(d)
@@ -395,15 +412,18 @@ class ManifestText(Base):
         return res
 
     def test_an_unset_variable_is_a_refusal_not_zero_files_matching(self):
-        self.assert_refused("", "the manifest is empty", set_var=False)
+        res = self.assert_refused("", "the manifest is empty", set_var=False)
+        self.assertEqual(res.errors(), ["::error::the manifest is empty"], "the directory is not judged against nothing")
 
     def test_an_empty_variable_is_a_refusal(self):
-        self.assert_refused("", "the manifest is empty")
+        res = self.assert_refused("", "the manifest is empty")
+        self.assertEqual(res.errors(), ["::error::the manifest is empty"])
 
     def test_a_manifest_of_whitespace_is_a_refusal(self):
         for text in (" ", "\n", "\n\n\n", " \n ", "\t\n"):
             with self.subTest(text):
-                self.assert_refused(text, "the manifest is empty")
+                res = self.assert_refused(text, "the manifest is empty")
+                self.assertEqual(res.errors(), ["::error::the manifest is empty"])
 
     def test_upper_case_hex_is_malformed(self):
         first = self.good.splitlines()[0]
@@ -622,6 +642,35 @@ class Unexpected(Base):
         res = h.run_main(SCRIPT, ["create", "--dir", d, "--output", self.path("no-such-dir", "out")])
         self.assertEqual(res.rc, 1, res)
         self.assertEqual(len(res.errors()), 1, res)
+
+    def test_a_directory_that_cannot_be_listed_is_one_finding(self):
+        d = self.directory()
+        manifest = manifest_of(d)
+        module = h.load(SCRIPT)
+
+        def denied(path):
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        with mock.patch.object(module.os, "listdir", denied):
+            res = h.run_main(SCRIPT, ["verify", "--dir", d, "--manifest-env", "MANIFEST"], env=h.clean_env(MANIFEST=manifest))
+        self.refused_findings(res, "cannot be read", findings=1, final=False)
+
+    def test_a_file_that_cannot_be_read_is_one_finding_and_no_manifest_line_for_it(self):
+        d = self.directory()
+        manifest = manifest_of(d)
+        module = h.load(SCRIPT)
+        real = module.digest
+
+        def unreadable(path):
+            if path.endswith("a-1.0.0.pom"):
+                raise PermissionError(errno.EACCES, "Permission denied", path)
+            return real(path)
+        with mock.patch.object(module, "digest", unreadable):
+            res = h.run_main(SCRIPT, ["verify", "--dir", d, "--manifest-env", "MANIFEST"], env=h.clean_env(MANIFEST=manifest))
+            self.refused_findings(res, "a-1.0.0.pom cannot be read", findings=1, final=False)
+            out = self.path("out")
+            res = h.run_main(SCRIPT, ["create", "--dir", d, "--output", out])
+        self.refused_findings(res, "a-1.0.0.pom cannot be read", findings=1, final=False)
+        self.assertFalse(os.path.exists(out))
 
     def test_keyboard_interrupt_is_not_swallowed(self):
         d = self.directory()

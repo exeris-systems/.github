@@ -35,12 +35,18 @@ What the suite covers, per script, on the accepting path and on every refusing p
   no value is printed.
 - `remove_signing_key.py`: the private keyring removed and the post-condition checked; the secret home and the exported key removed by
   literal path operations on every way out.
+- `staged_manifest.py`: `create` (sorted `<sha256>  <name>` lines, an output heredoc whose delimiter occurs in no line, `-digest` and `-id`,
+  illegal names and non-regular entries refused with nothing written) and `verify` (a directory equal to the manifest in the environment,
+  every difference one finding, the closed set of a coordinate, a `pom.xml` or `.mvn` or `settings.xml` refused, every malformed manifest
+  text refused); each file opened once without following links; the closed set it accepts against the set the real gate stages
+  (`test_manifest_gate_agreement.py`).
 - An unexpected failure in any script is one `::error::` line; usage errors are exit 2.
 - ASCII-only versions in `resolve_release.py`, `scan_snapshots.py` and the gate; the XML size and depth bounds of the four POM readers.
 
-`test_upload_command.py` runs the workflow's own upload command against a `file://` repository, on files staged by the real gate, and
-asserts the repository layout. It needs `mvn` and the deploy plugin in the local Maven repository, and is skipped, never passed,
-without them.
+`test_upload_command.py` runs the `upload` job of the workflow against a `file://` repository: the real gate stages a fixture build, the
+manifest is made of the staged directory, the directory is copied to a fresh download directory, and the job's own comparison, settings and
+upload steps run from it. It needs `mvn`, `/usr/bin/python3` and the deploy plugin in the local Maven repository, and is skipped, never
+passed, without them.
 
 `python scripts/run_caps_release_tests.py` discovers `test*.py` here and fails when it collects no
 test, so an empty suite cannot pass.
@@ -58,12 +64,14 @@ test, so an empty suite cannot pass.
   `CAPS_MUTANT_TIMEOUT=240 python3 -B tests/caps_release/test_mutations.py --record` (a pass with no recorded killer runs every
   selected test against a surviving mutant, which takes longer than the 25 seconds a normal run allows). A mutant that no input can
   tell from the script is listed with its reason in `EQUIVALENT` instead of in the table.
-- `workflow_invariants.py` reads `caps-release.yml` as data (the two targets and no other repository or bundle, the signing secrets only in
-  `publish`, `packages: write` only in `upload`, the upload token in the upload step alone and the passphrase in the signing step alone,
-  the id token only in `attest`, the order sign, remove the key, gate, manifest, artifact in `publish` and download, compare with the
-  manifest, settings, upload in `upload`, the upload run from the download directory to one URL without a profile, the gate staging
-  what the upload and the attestation take, the scripts' digest re-verified after project code, pinned actions, safe defaults).
-  `test_workflow.py` mutates the workflow text once per invariant to prove each can fail.
+- `workflow_invariants.py` reads `caps-release.yml` as data and states the four-job split as invariants: the permissions of each job
+  (`packages: write` in `upload` alone, `build` and `publish` read-only, `attest` with the id token and attestations and nothing else);
+  where the job token and the signing secrets may appear (the token in the last step of `upload` and the read-only resolve step of `build`,
+  in any spelling; the key in the import step and the passphrase in the signing step of `publish`); that `upload` and `attest` check out
+  only this repository's scripts, restore no cache, run no file from the download directory, interpolate nothing into shell text and take
+  only the manifest and the artifact name from `publish`; the order of the steps of `upload` and of `publish`; that the manifest travels as
+  a job output and is compared before anything is uploaded or attested; the pins, the defaults and the scripts' digest.
+  `test_workflow.py` mutates the workflow text (and moves steps) at least once per identifier the checker can report.
 - A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
   is reported as an expected failure and becomes an unexpected success, which fails the run, when the
   script is fixed; the decorator is then removed.
