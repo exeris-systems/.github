@@ -191,8 +191,6 @@ class Oversize(Staged):
         self.assertIn(f"larger than {self.mod.MAX_TOTAL_BYTES} bytes", res.err)
         self.assertEqual(os.listdir(self.tmpdir), [], "nothing of it was copied")
 
-    @known_defect("oversize-bundle-line", "a bundle file over the size bound ends in the generic unexpected-failure line instead of a "
-                  "`central bundle:` reason; check_release_readiness.py:check_bundle lets take() raise")
     def test_the_refusal_of_an_oversize_bundle_is_a_central_bundle_line(self):
         os.makedirs(os.path.dirname(self.bundle_path), exist_ok=True)
         with open(self.bundle_path, "wb") as fh:

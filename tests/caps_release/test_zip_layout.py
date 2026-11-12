@@ -326,15 +326,11 @@ class Bookkeeping(Layout):
     """What the gate does not look at in the central directory and in a deflate stream. The names and the bytes `zipfile` reads
     are right in each of these; a stricter extractor refuses the archive or reads it differently."""
 
-    @known_defect("central-entry-disk", "a central record that starts on another disk is accepted; layout_problem reads only the end "
-                  "record's disk numbers")
     def test_a_central_record_on_another_disk_is_refused(self):
         entries = self.entries()
         entries[2].central["disk"] = 1
         self.refuse(entries)
 
-    @known_defect("central-record-overrun", "a last central record whose name length runs past the directory is accepted; "
-                  "layout_problem never compares the record lengths with cd_size")
     def test_a_central_record_that_overruns_the_directory_is_refused(self):
         entries = self.entries()
         data, _ = build(entries)
@@ -350,8 +346,6 @@ class Bookkeeping(Layout):
         self.put(bytes(patched))
         self.refused(self.check("--expect-bundle", "true"))
 
-    @known_defect("deflate-overrun", "an entry whose deflate stream goes on after the declared size is accepted: zipfile reads the "
-                  "declared bytes, a streaming extractor reads the whole stream; layout_problem never inflates")
     def test_a_deflate_stream_that_inflates_to_more_than_the_declared_size_is_refused(self):
         entries = self.entries()
         victim = entries[0]
@@ -382,8 +376,6 @@ class RenamingExtras(Layout):
         victim.central_extra = block if where in ("central", "both") else b""
         return entries
 
-    @known_defect("unicode-path-extra", "an entry renamed by a Unicode Path extra field is accepted; check_release_readiness.py:"
-                  "layout_problem compares names but never the extra fields")
     def test_a_unicode_path_extra_field_that_renames_an_entry_is_refused(self):
         for where in ("local", "central", "both"):
             with self.subTest(where):
@@ -442,9 +434,6 @@ class Names(Layout):
         self.refused(res)
         self.assertNotIn("unexpectedly", res.err)
 
-    @known_defect("undecodable-utf8-name", "a UTF-8-flagged entry name that is not UTF-8 ends in the generic unexpected-failure line "
-                  "instead of a `central bundle:` reason; check_release_readiness.py:judge_private_copy catches only BadZipFile "
-                  "around zipfile.ZipFile(copy)")
     def test_an_undecodable_utf8_flagged_name_is_one_central_bundle_line(self):
         entries = self.entries()
         entries.append(Entry(b"\xff\xfe/x.jar", b"x", flags=0x800))

@@ -245,9 +245,6 @@ class ByteLevel(Fuzz):
 
 
 class Pinned(Fuzz):
-    @known_defect("zipfile-exceptions", "a damaged central directory can raise NotImplementedError (version needed) or "
-                  "UnicodeDecodeError (UTF-8 flag) out of zipfile.ZipFile, which judge_private_copy does not catch, so the gate ends "
-                  "in `failed unexpectedly` instead of a `central bundle:` reason")
     def test_no_damage_to_the_directory_ends_in_the_generic_failure_line(self):
         _, _, _, pinned = self.run_fuzz("deflated", 8, None, SEED)
         self.assertEqual(pinned, [])

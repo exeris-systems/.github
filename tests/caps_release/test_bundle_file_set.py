@@ -68,9 +68,6 @@ class ClosedSet(Set):
                         entries[n + ext] = full[n + ext]
                 self.accepted(self.judge(entries))
 
-    @known_defect("checksums-optional", "a bundle with no checksum file at all is accepted although the documented file set is the "
-                  "eight files and the md5, sha1, sha256 and sha512 of each; check_release_readiness.py:judge_bundle requires only the "
-                  "eight signed files, so Central's own check is the first to notice")
     def test_a_bundle_without_any_checksum_is_refused(self):
         entries = {n: d for n, d in self.entries().items() if not n.endswith(ALGORITHMS)}
         self.assertEqual(len(entries), 8)
@@ -177,8 +174,6 @@ class Checksums(Set):
                 res = self.judge(self.with_checksum(".sha256", text.encode("utf-8")))
                 self.refused(res, f"{self.name('.jar.sha256')} does not match {self.stem}.jar")
 
-    @known_defect("checksum-star", "any number of leading stars is stripped from the file name in a checksum file; the documented form "
-                  "allows one (check_release_readiness.py:judge_bundle uses lstrip)")
     def test_a_name_with_two_leading_stars_is_not_the_file_name(self):
         d = self.digest(".sha256")
         self.refused(self.judge(self.with_checksum(".sha256", f"{d} **{self.stem}.jar".encode())), "does not match")

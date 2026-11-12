@@ -30,7 +30,9 @@ regular file, stay within the entry and size bounds, and be bound to what was bu
 
   * the file set is EXACTLY the gated set: for each built coordinate, under
     `<group path of its pom>/<artifactId>/<version>/`, the four built files, the `.asc` of each, and
-    the `.md5`, `.sha1`, `.sha256` and `.sha512` of those eight; nothing else, and no other coordinate;
+    all four of `.md5`, `.sha1`, `.sha256` and `.sha512` of each of those eight (the set the Central
+    publishing plugin writes; a missing or additional checksum file is a finding); nothing else, and
+    no other coordinate;
   * every entry name is a relative, normalised path (directory entries are plain relative paths and
     carry no payload), with no `.`, `..` or empty segment, no backslash and no control character; a
     name occurs once, and no two names collide under case folding or Unicode normalisation (NFKC); no
@@ -38,17 +40,26 @@ regular file, stay within the entry and size bounds, and be bound to what was bu
   * a bundle file has the bytes of its counterpart of the same name in `target/`;
   * each `.asc` in the bundle is a good signature of the bundle's own file, with the same key check;
   * each checksum file holds the digest of the file it names, and, when it also holds a file name,
-    that name.
+    that name, with at most one leading `*`.
 
 The archive layout is checked entry by entry: the local file header at each central-directory offset
 carries the same name, flags, method and (without a data descriptor) sizes and CRC as the central
 record, the entries follow one another without a gap from offset 0 to the central directory, and the
-end record is the last 22 bytes. An archive comment, data before, between or after the entries, a
-ZIP64 record and encryption refuse the bundle, so a streaming extractor and this gate see the same
-files.
+end record is the last 22 bytes. The central records are walked one by one: each starts on disk 0,
+their lengths add up to the directory's size exactly and their number is the end record's count. The
+extra fields of both headers are parsed as (id, size) records inside their bounds; one that is
+malformed, a ZIP64 record, or any id outside a short list of timestamp and owner records (0x5455,
+0x5855, 0x7855, 0x7875, 0x000A and the JDK's 0xCAFE) is refused, so no field can rename or redirect an
+entry (the Unicode Path field 0x7075 replaces a name for the extractors that honour it). Only the
+methods stored and deflated are accepted, and every payload is read from the private copy in bounded
+chunks: a deflate stream must end exactly at the declared compressed size, and the bytes it yields must
+number the declared uncompressed size and have the declared CRC. An archive comment, data before,
+between or after the entries, a ZIP64 record and encryption refuse the bundle, so a streaming
+extractor and this gate see the same files. Any failure to open or list the archive is one
+`central bundle: <reason>` line that names the kind of failure and never echoes archive text.
 
 The bundle is only listed and read in bounded streams, never extracted into the tree; the bounds are
-MAX_ENTRIES entries, MAX_TOTAL_BYTES in all, and a compression ratio of at most MAX_RATIO for an entry
+MAX_ENTRIES entries, MAX_TOTAL_BYTES in all (a bundle file larger than that is refused unread), and a compression ratio of at most MAX_RATIO for an entry
 of MIN_RATIO_BYTES or more. All findings are reported before the gate fails; no main jar is fatal at once.
 
 WHAT IS STAGED IS WHAT WAS VERIFIED. Each gated file is opened once (`O_NOFOLLOW|O_NONBLOCK`, `fstat`
@@ -56,8 +67,8 @@ must say regular file), read to the end into a private directory of the gate whi
 computed, and every check (signature, POM, javadoc, bundle) is made on that private copy. Staging
 re-hashes the live file and refuses on any difference, then copies from the private copy while hashing
 again and refuses unless the digest equals the one taken when the file was read. What is staged is
-byte-identical to what was verified. A run with any finding stages NOTHING (and removes a partial
-stage), so no directory a later step could mistake for a release exists after a refusal. Every
+byte-identical to what was verified. A run with any finding stages NOTHING, and a stage that ends before it is complete, by a finding,
+an interrupt or any exception, is removed, so no directory a later step could mistake for a release exists after a refusal. Every
 subprocess call is bounded by a timeout, and an expiry is a refusal.
 
 Usage: check_release_readiness.py --target-dir DIR [--expect-bundle {true,false}] [--uploaded]
@@ -103,6 +114,10 @@ MAX_XML_DEPTH = 200
 SUBPROCESS_TIMEOUT = 120
 BUNDLE_KEY = "central-publishing/central-bundle.zip"
 CHECKSUMS = {".md5": "md5", ".sha1": "sha1", ".sha256": "sha256", ".sha512": "sha512"}
+CHUNK = 64 * 1024
+# Extra-field ids an entry may carry: extended and Info-ZIP timestamps and owners, NTFS times and the
+# JDK's marker. Every other id, in particular the Unicode Path field (0x7075), is refused.
+HARMLESS_EXTRAS = frozenset({0x5455, 0x5855, 0x7855, 0x7875, 0x000A, 0xCAFE})
 CLASSIFIER_SUFFIXES = ("-sources.jar", "-javadoc.jar", "-tests.jar")
 
 # A version is a snapshot exactly when Maven's ArtifactUtils.isSnapshot says so: it ends with
@@ -218,13 +233,17 @@ def digest_of_file(path: str) -> str:
     return h.hexdigest()
 
 
+class TooLarge(OSError):
+    """A file over the size bound."""
+
+
 def take(src: str, scratch: str, limit: int | None = None) -> tuple[str, str]:
     """Read SRC once, to the end: copy it into a private directory under SCRATCH (keeping its base name)
     while hashing the same bytes. Returns (private path, SHA-256 of what was read)."""
     h = hashlib.sha256()
     with os.fdopen(open_regular(src), "rb") as fin:
         if limit is not None and os.fstat(fin.fileno()).st_size > limit:
-            raise OSError(f"larger than {limit} bytes")
+            raise TooLarge(f"larger than {limit} bytes")
         private = os.path.join(tempfile.mkdtemp(dir=scratch), os.path.basename(src) or "file")
         with open(private, "xb") as fout:
             for chunk in iter(lambda: fin.read(1 << 20), b""):
@@ -403,21 +422,26 @@ def stage(dest: str, t: str, files: list[str], bundle: str | None, err, held=Non
     if the live file still has that digest, and is copied from the private copy while hashing it again;
     a difference, a link, a special file or a vanished file is an error. A file with no record is
     copied from the live file, opened without following a link and required to be regular. Returns True
-    when DEST was created here (the caller removes it if any file failed)."""
+    when DEST was created here (the caller removes it if any file failed); an exception that ends the
+    copying removes DEST here and propagates."""
     held = held or {}
     if os.path.lexists(dest) and (os.path.islink(dest) or not os.path.isdir(dest) or os.listdir(dest)):
         err(f"{shown(dest)} is not an empty directory; the gated files cannot be staged there")
         return False
     os.makedirs(dest, mode=0o700, exist_ok=True)
-    copies = [(f, os.path.join(t, f), os.path.join(dest, f)) for f in files]
-    if bundle:
-        os.makedirs(os.path.join(dest, "central-publishing"), mode=0o700, exist_ok=True)
-        copies.append((BUNDLE_KEY, bundle, os.path.join(dest, "central-publishing", "central-bundle.zip")))
-    for key, src, dst in copies:
-        try:
-            copy_gated(src, dst, held.get(key))
-        except OSError as exc:
-            err(f"{shown(src)} cannot be staged ({shown(' '.join(str(exc).split()))})")
+    try:
+        copies = [(f, os.path.join(t, f), os.path.join(dest, f)) for f in files]
+        if bundle:
+            os.makedirs(os.path.join(dest, "central-publishing"), mode=0o700, exist_ok=True)
+            copies.append((BUNDLE_KEY, bundle, os.path.join(dest, "central-publishing", "central-bundle.zip")))
+        for key, src, dst in copies:
+            try:
+                copy_gated(src, dst, held.get(key))
+            except OSError as exc:
+                err(f"{shown(src)} cannot be staged ({shown(' '.join(str(exc).split()))})")
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)         # an interrupted stage is not left behind
+        raise
     return True
 
 
@@ -493,6 +517,8 @@ def layout_problem(path: str, infos: list[zipfile.ZipInfo]) -> str | None:
                     return f"the local header of {shown(name)} disagrees with the central record in flags or method"
                 if zip64_extra(extra):
                     return "an entry has a ZIP64 record"
+                if renaming_extra(extra):
+                    return "an entry has an extra field that can rename or redirect it"
                 end = pos + 30 + nlen + elen + i.compress_size
                 if flags & 0x8:
                     fh.seek(end)
@@ -505,11 +531,103 @@ def layout_problem(path: str, infos: list[zipfile.ZipInfo]) -> str | None:
                     return f"the local header of {shown(name)} disagrees with the central record in size or CRC"
                 if end > cd_off:
                     return "an entry runs into the central directory"
+                problem = payload_problem(fh, pos + 30 + nlen + elen, i)
+                if problem:
+                    return f"{problem} ({shown(name)})"
                 pos = end
             if pos != cd_off:
                 return "there is data between the last entry and the central directory"
+            return central_problem(fh, cd_off, cd_size, total)
     except (OSError, struct.error, ValueError, OverflowError) as exc:
         return f"its layout cannot be read ({type(exc).__name__})"
+    return None
+
+
+def central_problem(fh, cd_off: int, cd_size: int, count: int) -> str | None:
+    """Why the central directory is not exactly COUNT records, each on disk 0 with extra fields that
+    cannot rename an entry, whose lengths add up to CD_SIZE; None when it is."""
+    pos, limit = cd_off, cd_off + cd_size
+    for _ in range(count):
+        fh.seek(pos)
+        head = fh.read(46)
+        if len(head) < 46 or pos + 46 > limit or head[:4] != b"PK\x01\x02":
+            return "a central record is missing or cut short"
+        nlen, elen, clen, disk = struct.unpack_from("<4H", head, 28)
+        if disk:
+            return "a central record starts on another disk"
+        length = 46 + nlen + elen + clen
+        if pos + length > limit:
+            return "a central record runs past the central directory"
+        fh.seek(pos + 46 + nlen)
+        extra = fh.read(elen)
+        if len(extra) < elen:
+            return "a central record is cut short"
+        if zip64_extra(extra):
+            return "an entry has a ZIP64 record"
+        if renaming_extra(extra):
+            return "an entry has an extra field that can rename or redirect it"
+        pos += length
+    if pos != limit:
+        return "the central directory holds bytes after its last record"
+    return None
+
+
+def renaming_extra(extra: bytes) -> bool:
+    """Whether a well-formed extra field holds a record outside HARMLESS_EXTRAS. The structure is
+    checked by zip64_extra, which the caller asks first."""
+    pos = 0
+    while pos + 4 <= len(extra):
+        ident, length = struct.unpack("<2H", extra[pos:pos + 4])
+        if ident not in HARMLESS_EXTRAS:
+            return True
+        pos += 4 + length
+    return False
+
+
+def payload_problem(fh, start: int, info: zipfile.ZipInfo) -> str | None:
+    """Why the data at START is not the entry INFO declares, or None. The data is stored or a raw deflate
+    stream of exactly INFO.compress_size bytes that yields INFO.file_size bytes with the CRC INFO.CRC.
+    It is read in chunks and never yields more than one byte past the declared size, so the work is
+    bounded by the declared sizes."""
+    fh.seek(start)
+    left, made, crc = info.compress_size, 0, 0
+    inflater = zlib.decompressobj(-15) if info.compress_type == zipfile.ZIP_DEFLATED else None
+    try:
+        while left:
+            chunk = fh.read(min(CHUNK, left))
+            if not chunk:
+                return "an entry is cut short"
+            left -= len(chunk)
+            if inflater is None:
+                out, chunk = chunk, b""
+                made += len(out)
+                crc = zlib.crc32(out, crc)
+            while chunk:
+                if inflater.eof:
+                    return "a deflate stream goes on after its end"
+                out = inflater.decompress(chunk, max(info.file_size - made, 0) + 1)
+                made += len(out)
+                crc = zlib.crc32(out, crc)
+                if made > info.file_size:
+                    return "an entry inflates to more than its declared size"
+                if inflater.eof:
+                    chunk = b""
+                    if inflater.unused_data or left:
+                        return "a deflate stream ends before its declared compressed size"
+                else:
+                    chunk = inflater.unconsumed_tail
+                    if chunk and not out:
+                        return "a deflate stream cannot be inflated"
+            if made > info.file_size:
+                return "an entry holds more than its declared size"
+    except zlib.error:
+        return "a deflate stream cannot be inflated"
+    if inflater is not None and not inflater.eof:
+        return "a deflate stream does not end"
+    if made != info.file_size:
+        return "an entry is not the size it declares"
+    if crc & 0xFFFFFFFF != info.CRC:
+        return "an entry does not have the CRC it declares"
     return None
 
 
@@ -542,7 +660,11 @@ def check_bundle(t, bundle, built, err, good_signature, held=None, scratch=None)
     own = scratch is None
     scratch = tempfile.mkdtemp(prefix="bundle-verify-") if own else scratch
     try:
-        held[BUNDLE_KEY] = take(bundle, scratch, MAX_TOTAL_BYTES)
+        try:
+            held[BUNDLE_KEY] = take(bundle, scratch, MAX_TOTAL_BYTES)
+        except TooLarge as exc:
+            err(f"central bundle: {exc}")
+            return False
         return judge_private_copy(t, bundle, held[BUNDLE_KEY][0], built, err, good_signature, held)
     finally:
         if own:
@@ -552,11 +674,14 @@ def check_bundle(t, bundle, built, err, good_signature, held=None, scratch=None)
 def judge_private_copy(t, bundle, copy, built, err, good_signature, held) -> bool:
     try:
         zf = zipfile.ZipFile(copy)
+        infos = zf.infolist()
     except zipfile.BadZipFile:
         err(f"{shown(bundle)} is not a zip file")
         return False
+    except (NotImplementedError, UnicodeDecodeError, OSError, ValueError, RuntimeError, zlib.error, EOFError) as exc:
+        err(f"central bundle: its directory cannot be read ({type(exc).__name__})")
+        return False
     with zf:
-        infos = zf.infolist()
         if len(infos) > MAX_ENTRIES:
             err(f"central bundle: {len(infos)} entries exceed the limit of {MAX_ENTRIES}")
             return False
@@ -662,6 +787,10 @@ def judge_bundle(t, zf, infos, built, err, good_signature, held=None) -> None:
             for extra in ("", ".asc"):
                 if f"{d}/{stem}{suffix}{extra}" not in files:
                     err(f"central bundle: {shown(d)} holds no {shown(stem + suffix + extra)}")
+                    continue
+                for c in CHECKSUMS:
+                    if f"{d}/{stem}{suffix}{extra}{c}" not in files:
+                        err(f"central bundle: {shown(d)} holds no {shown(stem + suffix + extra + c)}")
 
     # the file set is exactly the gated set
     expected: set[str] = set()
@@ -720,7 +849,7 @@ def judge_bundle(t, zf, infos, built, err, good_signature, held=None) -> None:
                     stated = raw.decode("ascii", "replace").split() if len(raw) <= 4096 else []
                     subject_name = subject.rpartition("/")[2]
                     if (len(stated) not in (1, 2) or stated[0].lower() != h.hexdigest()
-                            or (len(stated) == 2 and stated[1].lstrip("*") != subject_name)):
+                            or (len(stated) == 2 and stated[1].removeprefix("*") != subject_name)):
                         err(f"central bundle: {shown(name)} does not match {shown(subject_name)}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

@@ -387,8 +387,6 @@ class WhenItStages(Staged):
         self.assertTrue(os.path.isdir(deep))
         self.assertEqual(stat.S_IMODE(os.stat(deep).st_mode), 0o700)
 
-    @known_defect("interrupted-stage", "a stage interrupted part-way (KeyboardInterrupt, or an exception that is not an OSError) is "
-                  "left behind: check_release_readiness.py:gate removes the partial stage only when stage() returns findings")
     def test_a_stage_that_is_interrupted_part_way_is_removed(self):
         original = self.mod.copy_gated
         calls = []
