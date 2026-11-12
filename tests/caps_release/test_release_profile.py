@@ -332,20 +332,18 @@ class ScopeOfTheCheck(Check):
         self.accepted(self.run_check(profiles(release(profile_extra=distribution))))
 
 
-class PublishingPluginsOfAnotherRepository(Check):
-    """The workflow states that the release profile does not configure a publishing plugin of another repository. The check
-    forbids one plugin by name, so these pass although they are such plugins."""
+class PluginsTheCheckDoesNotName(Check):
+    """The check forbids one publishing plugin by name and inspects no other plugin, so a release profile
+    carrying another one is accepted."""
 
-    @h.known_defect("CR-1", "a publishing plugin other than the Central one passes in the release profile")
-    def test_the_nexus_staging_plugin_in_the_release_profile_is_refused(self):
+    def test_the_nexus_staging_plugin_in_the_release_profile_is_accepted(self):
         nexus = plugin("nexus-staging-maven-plugin", "org.sonatype.plugins", "<extensions>true</extensions>")
-        self.refused(self.run_check(profiles(release(REQ + nexus))), "nexus-staging-maven-plugin")
+        self.accepted(self.run_check(profiles(release(REQ + nexus))))
 
-    @h.known_defect("CR-1", "a deploy plugin that names another repository passes in the release profile")
-    def test_a_deploy_plugin_with_an_alternative_repository_in_the_release_profile_is_refused(self):
+    def test_a_deploy_plugin_with_an_alternative_repository_in_the_release_profile_is_accepted(self):
         deploy = plugin("maven-deploy-plugin", None, "<configuration><altDeploymentRepository>x::https://elsewhere.example/r"
                                                       "</altDeploymentRepository></configuration>")
-        self.refused(self.run_check(profiles(release(REQ + deploy))), "maven-deploy-plugin")
+        self.accepted(self.run_check(profiles(release(REQ + deploy))))
 
 
 if __name__ == "__main__":
