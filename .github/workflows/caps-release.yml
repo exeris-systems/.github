@@ -116,8 +116,10 @@
 # PRECONDITIONS THE WORKFLOW CHECKS. A capability is a single-module project: a POM that declares
 # `<modules>` is refused, because the readiness gate, the run artifact and the attestation all read
 # the root `target/` and would otherwise disagree about what was released. Its `release` profile
-# configures the signing, sources and javadoc plugins and does not configure a publishing plugin
-# of another repository. The version a dry run is given is one MAJOR.MINOR.PATCH line, matched as a
+# configures the signing, sources and javadoc plugins and does not configure the one publishing
+# plugin `check_release_profile.py` names. No other plugin of the POM is inspected: the project's
+# build runs with the signing key present, as step 6 says. The version a dry run is given is one
+# MAJOR.MINOR.PATCH line, matched as a
 # whole string. A snapshot project version (Maven's own definition: a `SNAPSHOT` suffix in any case,
 # or the timestamped form) is an error on every run. A snapshot among the DEPENDENCIES, or a
 # floating version (a range, `LATEST`, `RELEASE`) anywhere, refuses any run with `upload: true`; on
@@ -225,8 +227,8 @@ jobs:
       # Maven treats `-P release` for a profile that does not exist as a warning and builds on,
       # which produces unsigned artifacts that fail much later with a message naming neither the
       # profile nor the cause. This refuses it up front, and refuses a release profile that lacks
-      # the signing, sources or javadoc plugin or that carries a publishing plugin of another
-      # repository.
+      # the signing, sources or javadoc plugin or that carries the publishing plugin the script
+      # names. It inspects nothing else in the POM.
       - name: Refuse a ref without the release profile
         run: |
           set -euo pipefail
