@@ -171,7 +171,7 @@ class Mutants(unittest.TestCase):
         self.assertGreaterEqual(len(M), 400)
 
     def test_every_equivalent_mutant_is_justified_and_still_applies_once(self):
-        self.assertGreaterEqual(len(EQUIVALENT), 10)
+        self.assertGreaterEqual(len(EQUIVALENT), 5)
         seen = set()
         for script, old, new, why in EQUIVALENT:
             with open(source_of(script), encoding="utf-8") as fh:

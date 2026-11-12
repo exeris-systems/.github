@@ -4,7 +4,7 @@ type: reference
 visibility: public
 owning-repo: .github
 status: active
-last-verified: 2026-11-11
+last-verified: 2026-11-12
 ---
 
 # Tests of the capability release scripts
@@ -16,28 +16,30 @@ asserts on its exit status and output.
 
 What the suite covers, per script, on the accepting path and on every refusing path:
 
-- `resolve_release.py`: target, upload and version validation; every C0, DEL and C1 control
-  character refused in every input; tag shape; tag and version agreement; containment of a tag in
-  the default branch with the comparison replaced; the dispatch upload rule.
-- `check_release_profile.py`: the release profile, a root `<modules>`, the Central plugin and
-  publishing server id.
+- `resolve_release.py`: the two targets (`none` and `github-packages`; any other value, padded or in another case, is one
+  `::error::` line), upload and version validation; every C0, DEL and C1 control character refused in every input; tag shape; tag and
+  version agreement; containment of a tag in the default branch with the comparison replaced; `publish` only for an upload to
+  `github-packages`, a warning for an upload with `none`, and the dispatch upload rule.
+- `check_release_profile.py --pom P`: the `release` profile, a `<modules>` anywhere, the signing, sources and javadoc plugins in the
+  release profile's `<build><plugins>`, and the Central publishing plugin refused there. The scope of the check (what it does not read)
+  is stated in `test_release_profile.py`.
 - `check_pom_version.py`: a tagged POM that does and does not say the tagged version.
-- `scan_snapshots.py`: hard and soft SNAPSHOT classes, a property and a comment ignored, the
-  upload and dry-run difference.
-- `check_auto_publish.py`: `autoPublish` and `waitUntil` values in an effective POM.
-- `check_dry_run_log.py`: a log that states the skip, one that begins an upload, one that proves
-  nothing.
-- `check_drift.py`: a clean, a modified, a deleted and an added file in the generated tree.
-- `check_release_readiness.py`: missing artifacts, javadoc without `index.html`, absent and bad
-  signatures, a POM that does not yield a full coordinate, the exact file set of a Central bundle,
-  its archive layout (a hand-built corpus and a seeded mutation fuzz), the read-once private copies
-  and the staging that must equal what was verified, the XML and subprocess bounds.
-- `check_secrets.py`, `check_dry_run_log.py`: the secrets each target needs; the dry-run proof; an
-  unexpected failure is one `::error::` line.
-- `remove_signing_key.py`: the private keyring removed and the post-condition checked; the secret
-  home and the exported key removed by literal path operations on every way out.
-- ASCII-only versions in `resolve_release.py`, `scan_snapshots.py` and the gate; the XML size and
-  depth bounds of the five POM readers.
+- `scan_snapshots.py`: hard and soft SNAPSHOT classes, a property and a comment ignored, the upload and dry-run difference.
+- `check_drift.py`: a clean, a modified, a deleted and an added file in the generated tree; the refusal names the fix and no deployment.
+- `check_release_readiness.py --target-dir D [--gpg G] [--stage S]`: the closed file set of each coordinate (main, sources and javadoc
+  jars, pom, and a detached signature of each) and everything else refused; non-regular files; signatures checked with the given
+  `gpg` on the gate's private copies; the javadoc `index.html`; the coordinate read from the pom; the read-once private copies and the
+  staging that must equal what was verified; the XML and subprocess bounds.
+- `check_secrets.py`: no arguments; only the literal `true` of the two signing-secret booleans counts; the missing secrets are named and
+  no value is printed.
+- `remove_signing_key.py`: the private keyring removed and the post-condition checked; the secret home and the exported key removed by
+  literal path operations on every way out.
+- An unexpected failure in any script is one `::error::` line; usage errors are exit 2.
+- ASCII-only versions in `resolve_release.py`, `scan_snapshots.py` and the gate; the XML size and depth bounds of the four POM readers.
+
+`test_upload_command.py` runs the workflow's own upload command against a `file://` repository, on files staged by the real gate, and
+asserts the repository layout. It needs `mvn` and the deploy plugin in the local Maven repository, and is skipped, never passed,
+without them.
 
 `python scripts/run_caps_release_tests.py` discovers `test*.py` here and fails when it collects no
 test, so an empty suite cannot pass.
@@ -55,16 +57,14 @@ test, so an empty suite cannot pass.
   `CAPS_MUTANT_TIMEOUT=240 python3 -B tests/caps_release/test_mutations.py --record` (a pass with no recorded killer runs every
   selected test against a surviving mutant, which takes longer than the 25 seconds a normal run allows). A mutant that no input can
   tell from the script is listed with its reason in `EQUIVALENT` instead of in the table.
-- `workflow_invariants.py` reads `caps-release.yml` as data (secrets only in `publish`, the id token
-  only in `attest`, the gate staging what both uploads and the attestation take, key removal directly after the deploy, the scripts' digest re-verified after
-  project code, pinned actions, safe defaults). `test_workflow.py` mutates the workflow text once per
-  invariant to prove each can fail.
+- `workflow_invariants.py` reads `caps-release.yml` as data (the two targets and no other repository or bundle, secrets only in
+  `publish`, the upload token in the upload step alone and the passphrase in the signing step alone, the id token only in `attest`,
+  the order sign, remove the key, gate, upload, the upload run from the staging directory to one URL without a profile, the gate staging
+  what both uploads and the attestation take, the scripts' digest re-verified after project code, pinned actions, safe defaults).
+  `test_workflow.py` mutates the workflow text once per invariant to prove each can fail.
 - A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
   is reported as an expected failure and becomes an unexpected success, which fails the run, when the
   script is fixed; the decorator is then removed.
-- `zip_support.py` writes archives header by header and holds two readers that share no code with the
-  gate (a strict layout reader and a streaming local-header walk); `test_zip_fuzz.py` damages valid
-  bundles with a fixed seed and accepts only outcomes on which the gate and both readers agree.
 - A subprocess bound is a module constant. The tests assert its value, assert that the call passes it
   to `subprocess.run`, and lower the constant to a fraction of a second against a double that sleeps.
 - Tests that need `gpg` generate a throwaway key in a temporary keyring and skip when `gpg` is absent.
