@@ -37,7 +37,7 @@ Usage:
                     a later job reads it from there and never from the caller's input, so the JDK
                     that runs on a runner holding a credential is the validated one. Not given, it is
                     neither validated nor written.
-  --java-version    NN, NN.x or NN.N.N: a major version of one or two digits without a leading zero,
+  --java-version    NN, NN.x, NN.N or NN.N.N: a major version of one or two digits without a leading zero,
                     optionally `.x`, or followed by one or two numbers of at most three digits
                     (`25`, `21.x`, `25.0.2`). Handled like --java-distribution, written as
                     `java-version=<J>`.

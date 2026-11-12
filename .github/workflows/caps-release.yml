@@ -40,7 +40,8 @@
 # with any other base, and `staged_manifest.py` refuses it again on `create` and on `verify`, so a base
 # holds no comma, quote, space, `$`, backtick, `;` or non-ASCII character by the time `upload` runs.
 #
-# THE JDK. `java-distribution` (`temurin` or `graalvm`) and `java-version` (`NN`, `NN.x` or `NN.N.N`) are
+# THE JDK. `java-distribution` (`temurin` or `graalvm`) and `java-version` (`NN`, `NN.x`, `NN.N` or
+# `NN.N.N`) are
 # validated by `resolve_release.py` in `build`; every job installs the JDK from `build`'s outputs, never
 # from the caller's inputs, so the runner that holds a credential installs only a validated JDK.
 #

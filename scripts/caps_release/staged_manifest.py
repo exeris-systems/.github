@@ -59,8 +59,9 @@ verify  Reads the manifest from the environment variable VAR (never from an argu
         Nothing in DIR is executed, imported or interpreted; files are read as bytes.
 
 Exit status: 0 the directory is what the manifest says; 1 any difference or any unexpected failure (one
-`::error::` line per finding on stderr; every refusal of `verify` ends with the line
-`the staged files are not what the gate staged`); 2 usage error.
+`::error::` line per finding on stderr; every refusal of `verify` that judged the directory or the
+manifest ends with the line `the staged files are not what the gate staged`, and an unexpected failure
+is one `::error::` line alone); 2 usage error.
 Output: `ok - <n> files match the manifest` on stdout.
 """
 from __future__ import annotations
