@@ -105,8 +105,8 @@ scripts/
                          is run rather than wired in
   label_map_check.py     labels-from-verdict.json names only tags in the schema and labels in labels.yml
   caller_bundle_check.py the reviewed repository's bundle pin against this one's (§B.6a)
-  caps_release/          one script per decision of a capability release, written to be called by a
-                         reusable workflow, `caps-release.yml`, that this repository does not hold yet;
+  caps_release/          one script per decision of a capability release, called by the reusable
+                         workflow `caps-release.yml`;
                          standard library only, no
                          dependency on GitHub's environment beyond its arguments: resolve_release,
                          check_release_profile, check_pom_version, scan_snapshots, check_drift,

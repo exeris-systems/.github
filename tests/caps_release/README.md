@@ -11,7 +11,7 @@ last-verified: 2026-11-12
 
 This directory holds the tests of `scripts/caps_release/`, the scripts that decide what is signed and
 uploaded. They are written to be called by a reusable capability release workflow, `caps-release.yml`,
-which this repository does not hold yet; elsewhere on this page "the calling workflow" is that
+in `.github/workflows/`; elsewhere on this page "the calling workflow" is that
 workflow. A test here runs a script on plain files in a temporary directory, with no GitHub environment and no network, and
 asserts on its exit status and output.
 
@@ -75,5 +75,7 @@ test, so an empty suite cannot pass.
 
 - It runs the scripts, not the calling workflow: nothing here executes on GitHub, so the passing of inputs, secrets and
   permissions from the calling workflow to the scripts is not exercised.
+- The reusable workflow is read as data and its upload command is run against a `file://` repository; the workflow itself is not
+  run, and `test_upload_command.py` is skipped without `mvn` and the deploy plugin in the local Maven repository.
 - `gpg` is a double in all but the tests that name the real one; a signature is judged by the double's rule there.
 - The mutation run is most of the suite's time: one fork per mutant, each bounded by 25 seconds (240 when recording the killers).

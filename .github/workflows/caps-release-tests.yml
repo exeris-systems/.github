@@ -1,6 +1,5 @@
 # The tests of the scripts in scripts/caps_release/, which decide what is signed and uploaded and are
-# written to be called by a reusable capability release workflow, caps-release.yml, that this
-# repository does not hold yet. They cover tag shape and containment, version agreement, SNAPSHOT
+# called by the reusable capability release workflow, caps-release.yml. They cover tag shape and containment, version agreement, SNAPSHOT
 # refusal, the release-profile check, the drift check, the readiness gate and key removal. Each script
 # is run on plain files, so removing or inverting a guard fails here instead of in a release.
 #
