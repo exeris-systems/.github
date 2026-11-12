@@ -13,11 +13,10 @@ report the tree clean. git receives the resolved, repository-relative path liter
 (`--literal-pathspecs`), so a pathspec magic prefix (`:(exclude)`) or a glob character in it is a file
 name and not an instruction.
 
-Usage: check_drift.py --repo DIR --generated PATH [--uploaded]
+Usage: check_drift.py --repo DIR --generated PATH
 
   --repo       the working tree; `git` runs there
   --generated  repository-relative path of the generated tree; empty is refused
-  --uploaded   the run has already uploaded: the refusal also tells the reader to drop the deployment
 
 Exit status: 0 no difference; 1 a difference, an empty or unusable path, or `git` failing (a tree that
 cannot be asked is not a clean one); 2 usage error.
@@ -58,7 +57,6 @@ def run(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--repo", required=True)
     p.add_argument("--generated", required=True)
-    p.add_argument("--uploaded", action="store_true")
     a = p.parse_args(argv)
     if not a.generated:
         print("::error::the generated path is empty.", file=sys.stderr)
@@ -98,9 +96,8 @@ def run(argv: list[str] | None) -> int:
     if status.stdout.strip():
         print(status.stdout.rstrip())
         print(git(a.repo, "diff", "--", rel).stdout.rstrip())
-        tail = " If a deployment was uploaded, DROP it." if a.uploaded else \
-            " Run the two-pass build and commit the result."
-        print(f"::error::{shown} does not match what this build produced.{tail}", file=sys.stderr)
+        print(f"::error::{shown} does not match what this build produced. "
+              "Run the two-pass build and commit the result.", file=sys.stderr)
         return 1
     print(f"ok - {a.generated} is what this build produces")
     return 0
