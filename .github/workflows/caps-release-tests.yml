@@ -1,0 +1,24 @@
+# The tests of the scripts in scripts/caps_release/, which decide what is signed and uploaded and are
+# written to be called by a reusable capability release workflow, caps-release.yml, that this
+# repository does not hold yet. They cover tag shape and containment, version agreement, SNAPSHOT
+# refusal, the release-profile check, the drift check, the readiness gate and key removal. Each script
+# is run on plain files, so removing or inverting a guard fails here instead of in a release.
+#
+# Its own workflow and not a job of `guardrails.yml`, which runs on pull requests alone: the scripts
+# are tested on every push as well. No path filter, so the check reports on every change; and the
+# runner fails when it collects no test, so an empty directory cannot pass. The scripts and their
+# tests use the standard library only.
+name: caps-release-tests
+on:
+  pull_request:
+  push:
+permissions:
+  contents: read
+jobs:
+  caps-release-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.14" }
+      - run: python scripts/run_caps_release_tests.py
