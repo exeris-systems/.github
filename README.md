@@ -64,8 +64,9 @@ does not run is a gate nobody has tested.
                          commit the running workflow came from (`github.job_workflow_sha`), copied out
                          of the workspace into `$RUNNER_TEMP` and verified against a digest taken
                          before any project code ran. The readiness gate closes the set of releasable
-                         files, binds the Central bundle to what was built (the exact file set and a
-                         checked ZIP layout), and, only when every check passed, stages exactly the
+                         files, binds the Central bundle to what was built (the exact file set, the
+                         four checksum files of each of the eight files, and a checked ZIP layout,
+                         extra fields and payloads), and, only when every check passed, stages exactly the
                          bytes it verified: the run artifact and the attestation are that set and
                          nothing else, and a refused run leaves no artifact
     caps-release-tests.yml  the tests of those scripts, on every pull request and every push; fails

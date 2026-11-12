@@ -113,7 +113,9 @@
 # files (a main jar, its `-sources` and `-javadoc` jars, the pom, their `.asc` signatures, and the
 # Central bundle) and refuses everything else that `target/` holds under those extensions: a `-tests`
 # jar, any other classifier, a symbolic link. It binds the Central bundle to the files that were
-# built, and copies exactly the files it gated into `$RUNNER_TEMP/gated-files` (`--stage`). The run
+# built (the bundle holds exactly the eight gated files and all four checksum files, `.md5`, `.sha1`,
+# `.sha256` and `.sha512`, of each of them, as the Central publishing plugin writes it; its ZIP layout,
+# extra fields and payloads are checked entry by entry), and copies exactly the files it gated into `$RUNNER_TEMP/gated-files` (`--stage`). The run
 # artifact is that directory and nothing else, and the attestation covers the run artifact, so the
 # three cannot disagree about what was released.
 #
@@ -125,7 +127,8 @@
 # A refused run stages NOTHING: the gate creates `gated-files` only when every check passed, and
 # removes it if staging itself fails. The artifact steps therefore run on success only, so a failed
 # gate leaves no artifact that could be mistaken for a release, and `attest` and any later reader
-# only ever see a directory a passing gate wrote. Diagnosis of a refusal is the gate's log, whose
+# only ever see a directory a passing gate wrote. A passing gate has staged files, so both artifact
+# steps fail on an empty path (`if-no-files-found: error`). Diagnosis of a refusal is the gate's log, whose
 # `::error::` lines name every finding.
 #
 # Actions are pinned by commit, the way the release workflows of the SDK, the kernel and the
@@ -339,7 +342,7 @@ jobs:
         with:
           name: release-gate-${{ steps.rel.outputs.version }}
           path: ${{ runner.temp }}/gated-files
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
 
   publish:
@@ -550,7 +553,7 @@ jobs:
         with:
           name: release-${{ needs.build.outputs.version }}
           path: ${{ runner.temp }}/gated-files
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
 
   # Provenance says which workflow, at which commit, on which runner produced a file; a signature
