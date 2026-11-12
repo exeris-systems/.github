@@ -18,7 +18,7 @@ asserts on its exit status and output.
 What the suite covers, per script, on the accepting path and on every refusing path:
 
 - `resolve_release.py`: the two targets (`none` and `github-packages`; any other value, padded or in another case, is one
-  `::error::` line), upload and version validation; every C0, DEL and C1 control character refused in every input; tag shape; tag and
+  `::error::` line), upload and version validation; the JDK distribution (`temurin`, `graalvm`) and version (`NN`, `NN.x`, `NN.N.N`) when given; every C0, DEL and C1 control character refused in every input; tag shape; tag and
   version agreement; containment of a tag in the default branch with the comparison replaced; `publish` only for an upload to
   `github-packages`, a warning for an upload with `none`, and the dispatch upload rule.
 - `check_release_profile.py --pom P`: the `release` profile, a `<modules>` anywhere, the signing, sources and javadoc plugins in the
@@ -28,7 +28,8 @@ What the suite covers, per script, on the accepting path and on every refusing p
 - `scan_snapshots.py`: hard and soft SNAPSHOT classes, a property and a comment ignored, the upload and dry-run difference.
 - `check_drift.py`: a clean, a modified, a deleted and an added file in the generated tree; the refusal names the fix and no deployment.
 - `check_release_readiness.py --target-dir D [--gpg G] [--stage S]`: the closed file set of each coordinate (main, sources and javadoc
-  jars, pom, and a detached signature of each) and everything else refused; non-regular files; signatures checked with the given
+  jars, pom, and a detached signature of each) and everything else refused; a base that is not `<artifactId>-<MAJOR.MINOR.PATCH>` (artifactId
+  `[A-Za-z0-9_.-]`, at most 200 characters in all) and names that collide under case folding refused; non-regular files; signatures checked with the given
   `gpg` on the gate's private copies; the javadoc `index.html`; the coordinate read from the pom; the read-once private copies and the
   staging that must equal what was verified; the XML and subprocess bounds.
 - `check_secrets.py`: no arguments; only the literal `true` of the two signing-secret booleans counts; the missing secrets are named and
@@ -38,7 +39,8 @@ What the suite covers, per script, on the accepting path and on every refusing p
 - `staged_manifest.py`: `create` (sorted `<sha256>  <name>` lines, an output heredoc whose delimiter occurs in no line, `-digest` and `-id`,
   illegal names and non-regular entries refused with nothing written) and `verify` (a directory equal to the manifest in the environment,
   every difference one finding, the closed set of a coordinate, a `pom.xml` or `.mvn` or `settings.xml` refused, every malformed manifest
-  text refused); each file opened once without following links; the closed set it accepts against the set the real gate stages
+  text, a blank line included, refused; every refusal of `verify` ends with the same final line; the same base rule as the gate; names that
+  collide under case folding or normalisation refused; `--dir` judged as written, `link/` as `link`); each file opened once without following links; the closed set it accepts against the set the real gate stages
   (`test_manifest_gate_agreement.py`).
 - An unexpected failure in any script is one `::error::` line; usage errors are exit 2.
 - ASCII-only versions in `resolve_release.py`, `scan_snapshots.py` and the gate; the XML size and depth bounds of the four POM readers.

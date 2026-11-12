@@ -114,7 +114,7 @@ scripts/
                          standard library only, no
                          dependency on GitHub's environment beyond its arguments: resolve_release,
                          check_release_profile, check_pom_version, scan_snapshots, check_drift,
-                         check_release_readiness, check_secrets, remove_signing_key. Each reports through its exit status (0 ok, 1 refused,
+                         check_release_readiness, check_secrets, remove_signing_key, staged_manifest. Each reports through its exit status (0 ok, 1 refused,
                          2 usage) and ends every failure, an unexpected exception included, with a
                          `::error::` line on stderr. The scripts that read a POM refuse a DOCTYPE
                          before any entity is read
