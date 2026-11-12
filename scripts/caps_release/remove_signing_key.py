@@ -19,7 +19,9 @@ descriptor-relative calls. Every subprocess is bounded by a timeout; an expiry i
 
 Every path argument is refused when it holds a control, format, separator or unassigned character
 (a newline in a path would append a second `NAME=value` line to the environment file). A secret
-home that is a symbolic link is reported and never followed or deleted through; the run still fails.
+home or verify home that is a symbolic link is reported and never followed or deleted through,
+however it is spelled: trailing separators and `.` components are removed from the text before any
+check, so `link/` and `link/.` name the link itself. The run still fails.
 
 Usage: remove_signing_key.py --secret-home DIR --verify-home DIR --public-key FILE --env-file FILE
                              [--gpg PATH] [--gpgconf PATH]
@@ -57,8 +59,24 @@ def unusual(ch: str) -> bool:
     return unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp", "Cn", "Cs")
 
 
+def literal(path: str) -> str:
+    """PATH without trailing separators and trailing `.` components, computed on the text alone.
+
+    The system resolves `link/` and `link/.` to the link's target, so a check made on such a spelling
+    judges the target and not the link. The name that is checked and operated on is the last component
+    itself. Nothing is resolved: no `realpath`, no lookup."""
+    while True:
+        if len(path) > 1 and path.endswith("/"):
+            path = path.rstrip("/") or "/"
+        elif path.endswith("/."):
+            path = path[:-2] or "/"
+        else:
+            return path
+
+
 def remove_tree(path: str) -> None:
     """Delete a directory tree; a symbolic link is removed as a link and never followed."""
+    path = literal(path)
     if os.path.islink(path):
         os.unlink(path)
     elif os.path.lexists(path):
@@ -68,6 +86,7 @@ def remove_tree(path: str) -> None:
 def remove_literally(path: str, tree: bool) -> None:
     """Delete PATH with literal path operations only (no shell, no pattern, no validation of its
     characters); a symbolic link is never followed and never deleted through. Best effort."""
+    path = literal(path)
     try:
         if stat.S_ISDIR(os.lstat(path).st_mode):
             if tree:
@@ -126,16 +145,17 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
     if problems and any("--secret-home" in m for m in problems):
         return
 
-    if os.path.islink(a.secret_home):
+    secret_home, verify_home = literal(a.secret_home), literal(a.verify_home)
+    if os.path.islink(secret_home):
         fail("the private keyring still exists after removal: the secret home is a symbolic link, "
              "which is reported and not followed.")
-    elif os.path.isdir(a.secret_home):
+    elif os.path.isdir(secret_home):
         try:
-            subprocess.run([a.gpgconf, "--kill", "gpg-agent"], env={**os.environ, "GNUPGHOME": a.secret_home},
+            subprocess.run([a.gpgconf, "--kill", "gpg-agent"], env={**os.environ, "GNUPGHOME": secret_home},
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=SUBPROCESS_TIMEOUT)
         except (OSError, subprocess.TimeoutExpired):
             pass
-        shutil.rmtree(a.secret_home, ignore_errors=True)
+        shutil.rmtree(secret_home, ignore_errors=True)
     if problems:
         return
 
@@ -153,8 +173,8 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
             fail("the file named as the public key holds a secret key and was not imported; "
                  "a secret key is still on the runner in that file until it is deleted.")
         else:
-            os.makedirs(a.verify_home, mode=0o700, exist_ok=True)
-            os.chmod(a.verify_home, 0o700)
+            os.makedirs(verify_home, mode=0o700, exist_ok=True)
+            os.chmod(verify_home, 0o700)
             done = subprocess.run([a.gpg, "--batch", "--import", a.public_key], env=verify_env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
                                   timeout=SUBPROCESS_TIMEOUT)
@@ -167,9 +187,9 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
     if problems:
         return
 
-    os.makedirs(a.verify_home, mode=0o700, exist_ok=True)
-    os.chmod(a.verify_home, 0o700)
-    if os.path.lexists(a.secret_home):
+    os.makedirs(verify_home, mode=0o700, exist_ok=True)
+    os.chmod(verify_home, 0o700)
+    if os.path.lexists(secret_home):
         fail("the private keyring still exists after removal.")
     listed = subprocess.run([a.gpg, "--list-secret-keys", "--with-colons"], env=verify_env,
                             capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)

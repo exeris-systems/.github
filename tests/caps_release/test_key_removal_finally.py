@@ -209,9 +209,6 @@ class Links(Root):
         self.assertFalse(os.path.lexists(self.verify))
         self.assertEqual([c for c in self.calls() if c["tool"] == "gpgconf"], [], "no agent is stopped through the link")
 
-    @known_defect("trailing-slash-follows-link", "a secret home or verify home given as a symbolic link plus a trailing slash (or "
-                  "`/.`) is followed: os.path.islink and os.lstat resolve `link/`, so shutil.rmtree empties the link's target; "
-                  "remove_signing_key.py:129 and :138 (removal), :72 and :74 (remove_literally), :62 and :65 (remove_tree)")
     def test_a_symbolic_link_written_with_a_trailing_slash_is_not_followed(self):
         for suffix in ("/", "/."):
             with self.subTest(f"secret home {suffix!r}"):
