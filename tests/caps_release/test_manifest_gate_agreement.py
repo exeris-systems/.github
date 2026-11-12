@@ -129,14 +129,11 @@ class Agreement(Fixture):
                 gate, verified = self.gate_and_verify(base)
                 self.assertEqual((gate.rc, verified.rc), (0, 0), (gate, verified))
 
-    @h.known_defect("closed-set-agreement", "verify accepts a coordinate whose name is not ASCII, which the gate refuses "
-                                             "(staged_manifest.py closed_set puts no limit on the characters of a base)")
     def test_a_coordinate_that_is_not_ascii_is_refused_by_the_verification_as_by_the_gate(self):
         gate, verified = self.gate_and_verify("é-1.0.0")
         self.assertEqual(gate.rc, 1, gate)
         self.assertEqual(verified.rc, 1, verified)
 
-    @h.known_defect("closed-set-agreement", "verify accepts a SNAPSHOT coordinate, which the gate refuses (staged_manifest.py closed_set)")
     def test_a_snapshot_coordinate_is_refused_by_the_verification_as_by_the_gate(self):
         for base in ("a-1.0.0-SNAPSHOT", "a-1.0.0-20260101.101010-1"):
             self.setUp()
@@ -144,8 +141,6 @@ class Agreement(Fixture):
             self.assertEqual(gate.rc, 1, gate)
             self.assertEqual(verified.rc, 1, f"{base}: {verified}")
 
-    @h.known_defect("closed-set-agreement", "verify takes a `-tests` jar for the main jar of a coordinate of its own, which the gate "
-                                             "refuses as a classifier (staged_manifest.py closed_set)")
     def test_a_tests_jar_with_its_own_eight_files_is_refused_by_the_verification_as_by_the_gate(self):
         gate, verified = self.gate_and_verify("a-1.0.0-tests")
         self.assertEqual(gate.rc, 1, gate)

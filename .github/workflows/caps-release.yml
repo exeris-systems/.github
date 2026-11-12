@@ -32,6 +32,14 @@
 #            `attestations: write`. Takes the same artifact through the same manifest check, and
 #            runs no project code.
 #
+# WHAT A RELEASABLE FILE NAME IS. The files of a coordinate are named `<base>` plus a suffix, and `upload`
+# splices `<base>` into a comma separated list in the job that holds the package credential. A base is
+# `<artifactId>-<version>`: the artifactId of `[A-Za-z0-9_.-]` (Maven's own character set for an
+# artifactId) not starting with `-` or `.`, the version ASCII MAJOR.MINOR.PATCH as `resolve_release.py`
+# accepts it, at most 200 characters. The readiness gate (`check_release_readiness.py`) refuses a build
+# with any other base, and `staged_manifest.py` refuses it again on `create` and on `verify`, so a base
+# holds no comma, quote, space, `$`, backtick, `;` or non-ASCII character by the time `upload` runs.
+#
 # WHAT A DRY RUN CAN NEVER DO. It holds no secret: the `secrets:` below are read by `publish` alone.
 # It cannot upload: only `upload` holds `packages: write` and a dry run never reaches it. It cannot
 # attest: attestations are written to the repository and to a public transparency log that has no
@@ -649,6 +657,11 @@ jobs:
       # the header says what that does and does not do. The signatures are attached to their
       # artifacts as `jar.asc` and `pom.asc`. GitHub Packages refuses a version that already exists,
       # which fails this step and the job.
+      #
+      # `$base` is spliced into the comma separated `-Dfiles` below, so it must hold no comma, quote
+      # or other metacharacter. It cannot: the comparison in the step before refused a directory in
+      # which any base is not <artifactId>-<MAJOR.MINOR.PATCH> with the artifactId of [A-Za-z0-9_.-],
+      # and the readiness gate refused the same names upstream.
       - name: Upload the gated files
         env:
           GITHUB_TOKEN: ${{ github.token }}

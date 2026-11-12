@@ -327,8 +327,6 @@ class Entries(Base):
             with self.subTest(target):
                 self.refused_findings(self.verify(target, manifest), "is not a directory", findings=1, final=False)
 
-    @h.known_defect("slash-link", "a symlinked directory named with a trailing slash is followed: os.path.islink('link/') is False "
-                                  "(staged_manifest.py scan, the islink test)")
     def test_a_symlinked_directory_named_with_a_trailing_slash_is_refused(self):
         d = self.directory()
         link = self.path("link")
@@ -451,13 +449,10 @@ class ManifestText(Base):
     def test_a_byte_order_mark_is_malformed(self):
         self.assert_refused("﻿" + self.good, "malformed")
 
-    @h.known_defect("blank-lines", "blank lines in a manifest are skipped, so text that is not the canonical `<hash>  <name>` lines is accepted "
-                                    "(staged_manifest.py parse, `if raw == \"\": continue`)")
     def test_trailing_blank_lines_are_malformed(self):
         res = self.verify(self.d, self.good + "\n\n")
         self.assertEqual(res.rc, 1, res)
 
-    @h.known_defect("blank-lines", "a blank line between two lines of a manifest is skipped (staged_manifest.py parse)")
     def test_a_blank_line_inside_the_manifest_is_malformed(self):
         res = self.verify(self.d, self.good.replace("\n", "\n\n", 1))
         self.assertEqual(res.rc, 1, res)
@@ -521,14 +516,11 @@ class Names(Base):
         self.assertEqual(res.rc, 1)
         self.assertTrue(all(ln.startswith("::error::") for ln in res.err.splitlines()), res.err)
 
-    @h.known_defect("case-names", "two coordinates whose names differ only by case are both accepted (staged_manifest.py closed_set), "
-                                   "so a case-insensitive extraction would make one overwrite the other")
     def test_names_that_differ_only_by_case_are_refused(self):
         d = self.directory("staged", "a-1.0.0", "A-1.0.0")
         res = self.verify(d, manifest_of(d))
         self.assertEqual(res.rc, 1, res)
 
-    @h.known_defect("normalisation-names", "names that differ only by Unicode normalisation are both accepted (staged_manifest.py closed_set)")
     def test_names_that_differ_only_by_unicode_normalisation_are_refused(self):
         nfc, nfd = unicodedata.normalize("NFC", "é-1.0.0"), unicodedata.normalize("NFD", "é-1.0.0")
         self.assertNotEqual(nfc, nfd)
@@ -536,8 +528,6 @@ class Names(Base):
         res = self.verify(d, manifest_of(d))
         self.assertEqual(res.rc, 1, res)
 
-    @h.known_defect("base-charset", "the base of a coordinate is any run of printable characters, and it is spliced into the comma-separated "
-                                     "`-Dfiles` of the upload (staged_manifest.py closed_set accepts `a,b-1.0.0`)")
     def test_a_base_with_a_comma_a_quote_or_a_dollar_is_refused(self):
         accepted = []
         for base in ("a,b-1.0.0", 'a"b-1.0.0', "a$b-1.0.0", "a`b-1.0.0", "a b-1.0.0", "a'b-1.0.0", "a;b-1.0.0"):
@@ -612,8 +602,6 @@ class Unexpected(Base):
         finally:
             setattr(module, seam, original)
 
-    @h.known_defect("unexpected", "an unexpected exception is a traceback, not one ::error:: line and exit 1 (staged_manifest.py main has no handler, "
-                                   "unlike every other script of the directory)")
     def test_an_unexpected_exception_is_one_error_line_and_exit_one(self):
         d = self.directory()
         for argv in (["verify", "--dir", d, "--manifest-env", "MANIFEST"], ["create", "--dir", d, "--output", self.path("o")]):
@@ -622,7 +610,6 @@ class Unexpected(Base):
             self.assertEqual(len(res.errors()), 1, res)
             self.assertEqual(len(res.err.splitlines()), 1, "the message is flattened to one line")
 
-    @h.known_defect("unexpected", "a file that vanishes between the listing and the look at it is a traceback (staged_manifest.py scan)")
     def test_a_file_that_vanishes_while_the_directory_is_read_is_a_refusal(self):
         d = self.directory()
         module = h.load(SCRIPT)
@@ -636,7 +623,6 @@ class Unexpected(Base):
             res = h.run_main(SCRIPT, ["verify", "--dir", d, "--manifest-env", "MANIFEST"], env=h.clean_env(MANIFEST=manifest_of(d)))
         self.assertEqual(res.rc, 1, res)
 
-    @h.known_defect("unexpected", "an unwritable --output is a traceback (staged_manifest.py create, the open of the output file)")
     def test_an_unwritable_output_is_one_error_line_and_exit_one(self):
         d = self.directory()
         res = h.run_main(SCRIPT, ["create", "--dir", d, "--output", self.path("no-such-dir", "out")])
