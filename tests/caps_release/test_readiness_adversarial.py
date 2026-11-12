@@ -13,6 +13,23 @@ from readiness_support import Fixture, SUFFIXES, make_zip, pom_xml, sig_of
 S = "check_release_readiness"
 
 
+def _tree(root):
+    """Kind, mode and content of everything under root; a link by its text."""
+    out = {}
+    for base, dirs, files in os.walk(root):
+        for name in dirs + files:
+            p = os.path.join(base, name)
+            st = os.lstat(p)
+            if stat.S_ISLNK(st.st_mode):
+                out[p] = ("link", os.readlink(p))
+            elif stat.S_ISDIR(st.st_mode):
+                out[p] = ("dir", stat.S_IMODE(st.st_mode))
+            else:
+                with open(p, "rb") as fh:
+                    out[p] = ("file", stat.S_IMODE(st.st_mode), fh.read())
+    return out
+
+
 class Gate(Fixture):
     """A refusal is complete: exit 1, the closing line, and nothing in target/ touched."""
 
@@ -334,6 +351,56 @@ class Staging(Gate):
         self.refused(self.stage_run(prepare=a_file), "is not an empty directory")
         self.refused(self.stage_run(prepare=lambda: os.symlink(self.path("absent"), self.stage)), "is not an empty directory")
         self.assertFalse(os.path.exists(self.path("absent")))
+
+    def stage_cases(self):
+        """Every shape of --stage that is not absent and not an empty directory, each built fresh by its prepare."""
+        def into(target_name, files):
+            def prepare():
+                target = self.path(target_name)
+                shutil.rmtree(target, ignore_errors=True)
+                os.makedirs(target)
+                for f in files:
+                    with open(os.path.join(target, f), "w") as fh:
+                        fh.write("old")
+                os.symlink(target, self.stage)
+            return prepare
+
+        def directory(files):
+            def prepare():
+                os.makedirs(self.stage)
+                for f in files:
+                    with open(os.path.join(self.stage, f), "w") as fh:
+                        fh.write("old")
+            return prepare
+
+        def a_file():
+            with open(self.stage, "w") as fh:
+                fh.write("old")
+        return {"link to an empty directory": into("elsewhere", []), "link to a directory with content": into("elsewhere", ["keep"]),
+                "dangling link": lambda: os.symlink(self.path("absent"), self.stage), "file": a_file,
+                "directory with content": directory(["keep"]), "directory holding only a hidden file": directory([".hidden"])}
+
+    def test_every_shape_of_stage_that_is_not_absent_or_empty_is_refused_and_left_exactly_as_it_was(self):
+        for label, prepare in self.stage_cases().items():
+            with self.subTest(label):
+                if os.path.lexists(self.stage):
+                    os.remove(self.stage) if os.path.islink(self.stage) or os.path.isfile(self.stage) else shutil.rmtree(self.stage)
+                prepare()
+                before = _tree(self.tmp)
+                res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--stage", self.stage])
+                self.refused(res, "is not an empty directory")
+                self.assertEqual(_tree(self.tmp), before, "nothing is created, written or removed, through the path or beside it")
+
+    def test_an_existing_empty_stage_directory_is_left_in_place_when_the_gate_has_a_finding(self):
+        os.makedirs(self.stage)
+        os.chmod(self.stage, 0o755)
+        inode = os.stat(self.stage).st_ino
+        os.remove(os.path.join(self.target, "a-1.0.0.jar"))
+        res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--stage", self.stage])
+        self.refused(res)
+        self.assertTrue(os.path.isdir(self.stage) and not os.path.islink(self.stage))
+        self.assertEqual(os.listdir(self.stage), [], "an existing empty directory is not filled by a run with a finding")
+        self.assertEqual(os.stat(self.stage).st_ino, inode, "and it is the same directory")
 
     def test_the_stage_directory_and_its_files_are_not_world_accessible(self):
         self.accepted(self.stage_run())
