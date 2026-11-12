@@ -8,8 +8,9 @@
 # is the release path of the SDK, the kernel and the tooling.
 #
 # TARGETS. `none` (the default) uploads nothing. `github-packages` uploads to
-# `https://maven.pkg.github.com/<owner>/<repository>`. Any other value is refused by the first
-# step. GitHub Packages refuses to overwrite a released version: the upload of a version that
+# `https://maven.pkg.github.com/<owner>/<repository>`. Any other value is refused by the
+# step `Resolve the version and refuse an unreleasable ref`, before any project code runs. GitHub
+# Packages refuses to overwrite a released version: the upload of a version that
 # already exists fails, and so does the job. That failure is the behaviour; a version is released
 # once, and a fix is a new version.
 #
