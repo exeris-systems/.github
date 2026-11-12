@@ -38,6 +38,10 @@ What the suite covers, per script, on the accepting path and on every refusing p
 - An unexpected failure in any script is one `::error::` line; usage errors are exit 2.
 - ASCII-only versions in `resolve_release.py`, `scan_snapshots.py` and the gate; the XML size and depth bounds of the four POM readers.
 
+`test_upload_command.py` runs the workflow's own upload command against a `file://` repository, on files staged by the real gate, and
+asserts the repository layout. It needs `mvn` and the deploy plugin in the local Maven repository, and is skipped, never passed,
+without them.
+
 `python scripts/run_caps_release_tests.py` discovers `test*.py` here and fails when it collects no
 test, so an empty suite cannot pass.
 
@@ -54,6 +58,11 @@ test, so an empty suite cannot pass.
   `CAPS_MUTANT_TIMEOUT=240 python3 -B tests/caps_release/test_mutations.py --record` (a pass with no recorded killer runs every
   selected test against a surviving mutant, which takes longer than the 25 seconds a normal run allows). A mutant that no input can
   tell from the script is listed with its reason in `EQUIVALENT` instead of in the table.
+- `workflow_invariants.py` reads `caps-release.yml` as data (the two targets and no other repository or bundle, secrets only in
+  `publish`, the upload token in the upload step alone and the passphrase in the signing step alone, the id token only in `attest`,
+  the order sign, remove the key, gate, upload, the upload run from the staging directory to one URL without a profile, the gate staging
+  what both uploads and the attestation take, the scripts' digest re-verified after project code, pinned actions, safe defaults).
+  `test_workflow.py` mutates the workflow text once per invariant to prove each can fail.
 - A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
   is reported as an expected failure and becomes an unexpected success, which fails the run, when the
   script is fixed; the decorator is then removed.
