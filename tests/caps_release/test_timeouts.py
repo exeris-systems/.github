@@ -15,7 +15,6 @@ import time
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import Fixture
 from test_remove_signing_key import Doubles
 from test_resolve_release import TAG, argv

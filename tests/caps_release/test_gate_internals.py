@@ -15,7 +15,6 @@ import unicodedata
 import zipfile
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import GROUP, Fixture, pom_xml, sig_of, write_zip
 from test_staging_binding import Staged, bounded, patched
 from zip_support import Entry, build, compress
@@ -236,13 +235,19 @@ class UnreadableEntries(Fixture):
         self.assertEqual(len([e for e in res.errors() if "central bundle:" in e]), 1)
         self.assertNotIn("unexpectedly", res.err)
 
-    def test_a_bad_crc_is_a_bad_zip_file(self):
+    JAR = "eu/exeris/caps/a/1.0.0/a-1.0.0.jar"
+
+    def test_a_bad_crc_is_a_layout_finding_that_names_the_entry(self):
         jar = self.read_target("a-1.0.0.jar")
         entries = self.entries(method=0, raw=bytes([jar[0] ^ 0xFF]) + jar[1:])
-        self.one_line(self.judge(entries), "BadZipFile")
+        res = self.judge(entries)
+        self.refused(res, f"central bundle: an entry does not have the CRC it declares ({self.JAR})")
+        self.assertNotIn("unexpectedly", res.err)
 
-    def test_a_damaged_deflate_stream_is_a_zlib_error(self):
-        self.one_line(self.judge(self.entries(raw=b"\xff\xff\xff\xff\xff\xff")), "error")
+    def test_a_damaged_deflate_stream_is_a_layout_finding_that_names_the_entry(self):
+        res = self.judge(self.entries(raw=b"\xff\xff\xff\xff\xff\xff"))
+        self.refused(res, f"central bundle: a deflate stream cannot be inflated ({self.JAR})")
+        self.assertNotIn("unexpectedly", res.err)
 
     def test_an_entry_that_claims_more_bytes_than_the_file_holds_is_refused_by_zipfile_as_overlapping(self):
         """`EOFError` cannot be reached through an archive on disk: zipfile refuses an overlapping entry first."""

@@ -3,8 +3,8 @@
 The gpg double accepts a detached signature only when it is `SIG:<sha256 of the file>`, so a signature
 made for one file never verifies another and the gate's pairing of file and signature is observable
 without a keyring. `Fixture.real_coordinate` and `Fixture.bundle_entries` build a bundle that is bound
-to what was built: the same bytes as `target/`, signatures by that rule, correct checksum files and the
-group path of the POM.
+to what was built: the same bytes as `target/`, signatures by that rule, all four correct checksum files of each of the
+eight files and the group path of the POM.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ want="SIG:$(sha256sum "$3" | cut -d' ' -f1)"
 
 SUFFIXES = (".jar", "-sources.jar", "-javadoc.jar", ".pom")
 GROUP = "eu.exeris.caps"
+CHECKSUM_ALGORITHMS = ((".md5", "md5"), (".sha1", "sha1"), (".sha256", "sha256"), (".sha512", "sha512"))
 
 
 def sig_of(path):
@@ -139,11 +140,12 @@ class Fixture(h.Case):
             d = f"{group.replace('.', '/')}/{artifact}/{version}"
             for suffix in SUFFIXES:
                 data = self.read_target(base + suffix)
-                entries[f"{d}/{base}{suffix}"] = data
-                entries[f"{d}/{base}{suffix}.asc"] = self.read_target(base + suffix + ".asc")
-                if checksums and suffix == ".jar":
-                    for ext, algo in ((".md5", "md5"), (".sha1", "sha1"), (".sha256", "sha256"), (".sha512", "sha512")):
-                        entries[f"{d}/{base}{suffix}{ext}"] = hashlib.new(algo, data).hexdigest().encode()
+                signature = self.read_target(base + suffix + ".asc")
+                for name, content in ((f"{d}/{base}{suffix}", data), (f"{d}/{base}{suffix}.asc", signature)):
+                    entries[name] = content
+                    if checksums:
+                        for ext, algo in CHECKSUM_ALGORITHMS:
+                            entries[name + ext] = hashlib.new(algo, content).hexdigest().encode()
         return entries
 
     def write_bundle(self, entries, compression=zipfile.ZIP_DEFLATED):

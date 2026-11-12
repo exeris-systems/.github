@@ -9,7 +9,6 @@ import tempfile
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from test_remove_signing_key import Doubles, RealBase
 
 S = "remove_signing_key"

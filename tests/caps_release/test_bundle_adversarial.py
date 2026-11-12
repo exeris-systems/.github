@@ -14,8 +14,7 @@ import unittest
 import zlib
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
-from readiness_support import GROUP, Fixture, deflate_zeros, pom_xml, raw_zip, sig_bytes, sig_of, write_zip
+from readiness_support import CHECKSUM_ALGORITHMS, GROUP, Fixture, deflate_zeros, pom_xml, raw_zip, sig_bytes, sig_of, write_zip
 
 S = "check_release_readiness"
 D = "eu/exeris/caps/a/1.0.0"
@@ -57,7 +56,7 @@ class Bundle(Fixture):
 class Binding(Bundle):
     def test_the_correct_bundle_passes_with_every_digest_algorithm_checked(self):
         entries = self.entries()
-        self.assertEqual(sum(1 for n in entries if n.endswith((".md5", ".sha1", ".sha256", ".sha512"))), 4)
+        self.assertEqual(sum(1 for n in entries if n.endswith((".md5", ".sha1", ".sha256", ".sha512"))), 32)
         self.accepted(self.judge(entries))
 
     def test_the_wrong_group_path_is_refused(self):
@@ -144,8 +143,9 @@ class Binding(Bundle):
         evil = b"PK-evil-jar"
         entries[self.named(".jar")] = evil
         entries[self.named(".jar.asc")] = sig_bytes(evil)
-        for ext, algo in ((".md5", "md5"), (".sha1", "sha1"), (".sha256", "sha256"), (".sha512", "sha512")):
-            entries[self.named(".jar" + ext)] = hashlib.new(algo, evil).hexdigest().encode()
+        for subject in (".jar", ".jar.asc"):
+            for ext, algo in CHECKSUM_ALGORITHMS:
+                entries[self.named(subject + ext)] = hashlib.new(algo, entries[self.named(subject)]).hexdigest().encode()
         res = self.judge(entries, f"{self.named('.jar')} differs from target/{STEM}.jar")
         self.assertNotIn("not a good signature", "\n".join(res.errors()))
         self.assertNotIn("does not match", "\n".join(res.errors()))
@@ -325,7 +325,7 @@ class Names(Bundle):
     def test_a_directory_entry_without_a_payload_is_neither_a_file_nor_a_finding(self):
         res = self.judge(self.with_extra(self.named(".module") + "/", b""), None, proc=False)
         self.accepted(res)
-        self.assertIn("central bundle: 12 file(s), 0 outside a coordinate", res.out)
+        self.assertIn("central bundle: 40 file(s), 0 outside a coordinate", res.out)
 
 
 class Gaps(Bundle):
@@ -510,11 +510,11 @@ class Bounds(Bundle):
         self.assertLess(time.monotonic() - start, 15)
         err = proc.stderr.decode()
         self.assertEqual(proc.returncode, 1, err)
-        self.assertIn(f"{self.named('.jar')} differs from target/{STEM}.jar", err)
+        self.assertIn(f"central bundle: an entry inflates to more than its declared size ({self.named('.jar')})", err)
         self.assertNotIn("MemoryError", err)
 
-    def test_a_lie_that_makes_the_visible_prefix_equal_to_the_build_is_accepted_by_the_reader_and_rejected_by_a_checking_extractor(self):
-        """The gate reads the declared prefix, as zipfile does. Every extractor that inflates the stream sees a CRC error."""
+    def test_a_lie_that_makes_the_visible_prefix_equal_to_the_build_is_refused_where_an_extractor_fails_on_it(self):
+        """The stream goes on after the declared size; the gate inflates the whole payload and refuses it, as a checking extractor does."""
         jar = self.read_target(f"{STEM}.jar")
         z = zlib.compressobj(9, zlib.DEFLATED, -15)
         stream = z.compress(jar + b"\0" * 4096) + z.flush()
@@ -523,10 +523,10 @@ class Bounds(Bundle):
         items.append(dict(name=self.named(".jar"), data=stream, method=8, crc=zlib.crc32(jar), usize=len(jar), csize=len(stream)))
         raw_zip(self.bundle_path, items)
         gate = self.check("--expect-bundle", "true")
-        self.accepted(gate)
+        self.refused(gate, f"central bundle: an entry inflates to more than its declared size ({self.named('.jar')})")
         unzip = subprocess.run(["unzip", "-tq", self.bundle_path], capture_output=True) if self.have("unzip") else None
         if unzip is not None:
-            self.assertNotEqual(unzip.returncode, 0, "unzip -t rejects the entry, so the gate's acceptance is not an extractor's")
+            self.assertNotEqual(unzip.returncode, 0, "unzip -t rejects the entry, as the gate does")
 
     @staticmethod
     def have(tool):

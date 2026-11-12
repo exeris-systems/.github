@@ -11,7 +11,7 @@ import time
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect, pom
+from caps_release_helpers import pom
 from test_pom_scripts import CENTRAL_PLUGIN, NS, PROFILE, RELEASE_WITH_CENTRAL, EFF_PLUGIN, aeff, dep, eff
 
 PROFILE_S = "check_release_profile"

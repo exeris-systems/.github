@@ -16,7 +16,6 @@ import tempfile
 import zipfile
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import GROUP, Fixture, SUFFIXES, pom_xml, sig_of
 
 S = "check_release_readiness"

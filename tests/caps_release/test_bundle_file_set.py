@@ -10,7 +10,6 @@ import os
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import GROUP, Fixture, write_zip
 
 S = "check_release_readiness"
@@ -57,16 +56,21 @@ class ClosedSet(Set):
         self.accepted(res)
         self.assertIn("central bundle: 40 file(s), 0 outside a coordinate", res.out)
 
-    def test_a_subset_of_the_checksums_is_accepted_as_it_is_today(self):
-        """Characterised: only the eight signed files are required; whether a checksum is required is the next test."""
+    def test_a_subset_of_the_checksums_is_refused_and_each_missing_file_is_named(self):
+        """All four checksum files of each of the eight files are required, not some of them."""
         for label, keep in (("md5 and sha1 only", (".md5", ".sha1")), ("sha512 only", (".sha512",)), ("one algorithm per file", None)):
             with self.subTest(label):
-                entries = {n: d for n, d in self.all_checksums().items() if not n.endswith(ALGORITHMS)}
                 full = self.all_checksums()
+                entries = {n: d for n, d in full.items() if not n.endswith(ALGORITHMS)}
                 for i, n in enumerate(sorted(entries)):
                     for ext in (keep if keep is not None else (ALGORITHMS[i % 4],)):
                         entries[n + ext] = full[n + ext]
-                self.accepted(self.judge(entries))
+                missing = sorted(set(full) - set(entries))
+                self.assertTrue(missing)
+                res = self.judge(entries)
+                self.refused(res)
+                for n in missing:
+                    self.assertIn(f"central bundle: {self.dir} holds no {n.rpartition('/')[2]}", res.err)
 
     def test_a_bundle_without_any_checksum_is_refused(self):
         entries = {n: d for n, d in self.entries().items() if not n.endswith(ALGORITHMS)}

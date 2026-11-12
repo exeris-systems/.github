@@ -24,7 +24,6 @@ import time
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import Fixture, GROUP, sig_of
 from zip_support import Entry, build, extra_block, strict_reason, stream_view, zipfile_view
 

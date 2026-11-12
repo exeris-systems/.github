@@ -311,8 +311,9 @@ class RealBundle(Fixture):
         self.assertIn(f"central bundle: {len(entries)} file(s), 0 outside a coordinate", res.out)
         self.assertIn("coordinate: a-1.0.0", res.out)
 
-    def test_a_clean_bundle_without_checksum_files(self):
-        self.accepted(self.check_bundle(checksums=False))
+    def test_a_clean_bundle_without_checksum_files_is_refused(self):
+        res = self.check_bundle(checksums=False)
+        self.refused(res, "central bundle: eu/exeris/caps/a/1.0.0 holds no a-1.0.0.jar.md5")
 
     def test_directory_entries_are_allowed(self):
         entries = {"eu/": b"", "eu/exeris/": b"", "eu/exeris/caps/a/1.0.0/": b""}

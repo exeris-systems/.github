@@ -10,7 +10,6 @@ import time
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import GROUP, Fixture, SUFFIXES, make_zip, pom_xml, sig_bytes, sig_of, write_zip
 
 S = "check_release_readiness"

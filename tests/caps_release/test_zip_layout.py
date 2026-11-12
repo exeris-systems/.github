@@ -9,7 +9,6 @@ import struct
 import zlib
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect
 from readiness_support import Fixture
 from zip_support import (Entry, build, extra_block, strict_reason, stream_view, unicode_path_extra, zipfile_view,
                          DESCRIPTOR)

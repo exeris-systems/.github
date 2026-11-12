@@ -7,7 +7,7 @@ import stat
 import unittest
 
 import caps_release_helpers as h
-from caps_release_helpers import known_defect, pom
+from caps_release_helpers import pom
 from readiness_support import Fixture, pom_xml
 from test_pom_scripts import EFF_PLUGIN, dep, eff
 
