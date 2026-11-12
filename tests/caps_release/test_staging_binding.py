@@ -16,10 +16,11 @@ import tempfile
 import zipfile
 
 import caps_release_helpers as h
-from readiness_support import GROUP, Fixture, SUFFIXES, pom_xml, sig_of
+from readiness_support import GROUP, Fixture, pom_xml, sig_of
 
 S = "check_release_readiness"
-NAMES = ["a-1.0.0.jar", "a-1.0.0-sources.jar", "a-1.0.0-javadoc.jar", "a-1.0.0.pom", "a-1.0.0.jar.asc", "a-1.0.0.pom.asc"]
+NAMES = ["a-1.0.0.jar", "a-1.0.0-sources.jar", "a-1.0.0-javadoc.jar", "a-1.0.0.pom", "a-1.0.0.jar.asc", "a-1.0.0-sources.jar.asc",
+         "a-1.0.0-javadoc.jar.asc", "a-1.0.0.pom.asc"]
 
 
 class Hang(Exception):
@@ -74,10 +75,10 @@ class Staged(Fixture):
         """Run in this process; BEFORE_STAGE(held) runs after every check and before the first byte is staged."""
         original = self.mod.stage
 
-        def stage(dest, t, files, bundle, err, held=None):
+        def stage(dest, t, files, err, held=None):
             if before_stage:
                 before_stage(held)
-            return original(dest, t, files, bundle, err, held)
+            return original(dest, t, files, err, held)
 
         argv = ["--target-dir", self.target, "--gpg", self.gpg, *extra, "--stage", self.stage]
         with self.private_tmp(), patched(self.mod, stage=stage, **patches):
@@ -191,42 +192,6 @@ class Swaps(Staged):
         self.assertEqual(self.staged_files()["a-1.0.0.jar"], want)
         self.assertNotEqual(self.read_target("a-1.0.0.jar"), want, "the swap really happened")
 
-    def test_the_bundle_replaced_by_a_different_valid_zip_is_not_staged(self):
-        self.write_bundle(self.bundle_entries())
-        variants = {
-            "stored instead of deflated": lambda: self.write_bundle(self.bundle_entries(), compression=zipfile.ZIP_STORED),
-            "same-size different bytes": lambda: self.flip_last_bundle_byte(),
-            "extra directory entry": lambda: self.write_bundle({**self.bundle_entries(), "eu/": b""}),
-            "symbolic link": lambda: self.link_bundle(),
-            "deleted": lambda: os.remove(self.bundle_path),
-            "fifo": lambda: self.fifo_bundle(),
-        }
-        for label, swap in variants.items():
-            with self.subTest(label):
-                shutil.rmtree(self.stage, ignore_errors=True)
-                shutil.rmtree(os.path.dirname(self.bundle_path), ignore_errors=True)
-                self.write_bundle(self.bundle_entries())
-                with bounded(30):
-                    res = self.run_gate("--expect-bundle", "true", before_stage=lambda held, s=swap: s())
-                self.assert_not_staged(res, "central-publishing/central-bundle.zip")
-
-    def flip_last_bundle_byte(self):
-        with open(self.bundle_path, "rb") as fh:
-            data = bytearray(fh.read())
-        data[10] ^= 0x01                                    # a header byte that only holds the entry's time
-        with open(self.bundle_path, "wb") as fh:
-            fh.write(data)
-
-    def link_bundle(self):
-        elsewhere = self.path("bundle-copy.zip")
-        shutil.copy(self.bundle_path, elsewhere)
-        os.remove(self.bundle_path)
-        os.symlink(elsewhere, self.bundle_path)
-
-    def fifo_bundle(self):
-        os.remove(self.bundle_path)
-        os.mkfifo(self.bundle_path)
-
     @staticmethod
     def overwrite_first_byte(path):
         with open(path, "r+b") as fh:
@@ -306,19 +271,6 @@ class WhenItStages(Staged):
         self.accepted(res)
         self.assertEqual(calls, [self.stage])
 
-    def test_a_bundle_finding_never_reaches_staging(self):
-        self.write_bundle({**self.bundle_entries(), self.bundle_name(".module"): b"{}"})
-        calls, stage = self.recorder()
-        with self.private_tmp(), patched(self.mod, stage=stage):
-            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true", "--stage", self.stage])
-        self.assertEqual(res.rc, 1)
-        self.assertEqual(calls, [])
-        self.assertFalse(os.path.lexists(self.stage))
-
-    @staticmethod
-    def bundle_name(suffix):
-        return f"eu/exeris/caps/a/1.0.0/a-1.0.0{suffix}"
-
     def test_a_stage_that_fails_part_way_is_removed(self):
         for failing_call in range(1, 6):
             with self.subTest(failing_call):
@@ -331,9 +283,8 @@ class WhenItStages(Staged):
                         raise OSError("disk full")
                     return original(src, dst, gated)
                 shutil.rmtree(self.stage, ignore_errors=True)
-                self.write_bundle(self.bundle_entries())
                 with self.private_tmp(), patched(self.mod, copy_gated=copy_gated):
-                    res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true", "--stage", self.stage])
+                    res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--stage", self.stage])
                 self.assertEqual(res.rc, 1, res)
                 self.assertGreaterEqual(len(calls), failing_call)
                 self.assertFalse(os.path.lexists(self.stage), "the partial stage is removed")
@@ -422,25 +373,20 @@ class PrivateCopies(Staged):
         cases = {
             "success": ({}, 0), "refusal": ({}, 1), "unexpected exception": ({"gate": explode}, 1),
             "interrupt": ({"gate": interrupt}, KeyboardInterrupt), "an exception while reading": ({"take": explode}, 1),
-            "an exception in the bundle": ({"judge_private_copy": explode}, 1),
         }
         for label, (patches, outcome) in cases.items():
             with self.subTest(label):
                 shutil.rmtree(self.target)
                 os.makedirs(self.target)
                 self.real_coordinate()
-                extra = []
                 if label == "refusal":
                     os.remove(self.live("a-1.0.0.pom.asc"))
-                if label == "an exception in the bundle":
-                    self.write_bundle(self.bundle_entries())
-                    extra = ["--expect-bundle", "true"]
                 with self.private_tmp(), patched(self.mod, **patches):
                     if outcome is KeyboardInterrupt:
                         with self.assertRaises(KeyboardInterrupt):
                             h.run_main(S, argv)
                     else:
-                        res = h.run_main(S, argv + extra)
+                        res = h.run_main(S, argv)
                         self.assertEqual(res.rc, outcome, res)
                         if "exception" in label:
                             self.assertEqual(len(res.errors()), 1, res)
@@ -459,25 +405,22 @@ class PrivateCopies(Staged):
 
     def test_the_private_directory_and_every_copy_are_unpredictable_and_closed_to_others(self):
         self.use_py_gpg()
-        self.write_bundle(self.bundle_entries())
         with self.private_tmp():
-            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"],
-                             env=h.clean_env(PYGPG_LOG=self.log))
+            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg], env=h.clean_env(PYGPG_LOG=self.log))
         self.accepted(res)
         calls = self.gpg_calls()
-        self.assertEqual(len(calls), 8, "the four built files and the four of the bundle, each against its signature")
+        self.assertEqual(len(calls), 4, "the four built files, each against its signature")
         for call in calls:
             self.assertEqual(call["argv"][0], "--verify")
             for path in call["argv"][1:]:
                 self.assertTrue(os.path.isabs(path))
-                scratch = os.path.dirname(os.path.dirname(path))
                 self.assertTrue(path.startswith(self.tmpdir + os.sep), path)
             self.assertEqual(set(call["dir_modes"]), {0o700}, "each file sits in a directory of its own, closed to others")
+            self.assertEqual(set(call["scratch_modes"]), {0o700})
         tops = {os.path.relpath(p, self.tmpdir).split(os.sep)[0] for c in calls for p in c["argv"][1:]}
-        self.assertTrue(all(n.startswith("bundle-verify-") for n in tops), tops)
-        self.assertEqual(len(tops), 2, "the gate's scratch directory and the bundle check's, each from mkdtemp")
+        self.assertEqual(len(tops), 1, "one scratch directory, from mkdtemp")
         for top in tops:
-            self.assertRegex(top, r"^bundle-verify-[A-Za-z0-9_]{8}$")
+            self.assertRegex(top, r"^release-verify-[A-Za-z0-9_]{8}$")
 
     def test_a_name_that_is_already_taken_is_never_used_or_removed(self):
         """The scratch directory is made by mkdtemp: a directory or a link that holds the first name it tries is skipped over."""
@@ -487,19 +430,19 @@ class PrivateCopies(Staged):
         os.mkdir(victim)
         with open(os.path.join(victim, "sentinel"), "w") as fh:
             fh.write("keep")
-        os.mkdir(os.path.join(self.tmpdir, "bundle-verify-aaaaaaaa"))
-        with open(os.path.join(self.tmpdir, "bundle-verify-aaaaaaaa", "attacker"), "w") as fh:
+        os.mkdir(os.path.join(self.tmpdir, "release-verify-aaaaaaaa"))
+        with open(os.path.join(self.tmpdir, "release-verify-aaaaaaaa", "attacker"), "w") as fh:
             fh.write("x")
-        os.symlink(victim, os.path.join(self.tmpdir, "bundle-verify-bbbbbbbb"))
+        os.symlink(victim, os.path.join(self.tmpdir, "release-verify-bbbbbbbb"))
         names = iter(["aaaaaaaa", "bbbbbbbb", "cccccccc"] + [f"{i:08x}" for i in range(1, 400)])
         self.use_py_gpg()
         with self.private_tmp(), patched(tempfile, _get_candidate_names=lambda: _Fixed(names)):
             res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg], env=h.clean_env(PYGPG_LOG=self.log))
         self.accepted(res)
         self.assertEqual(os.listdir(victim), ["sentinel"], "nothing was written through the link")
-        self.assertEqual(os.listdir(os.path.join(self.tmpdir, "bundle-verify-aaaaaaaa")), ["attacker"])
+        self.assertEqual(os.listdir(os.path.join(self.tmpdir, "release-verify-aaaaaaaa")), ["attacker"])
         used = {os.path.dirname(os.path.dirname(c["argv"][1])) for c in self.gpg_calls()}
-        self.assertEqual({os.path.basename(u) for u in used}, {"bundle-verify-cccccccc"}, "the first free name is used")
+        self.assertEqual({os.path.basename(u) for u in used}, {"release-verify-cccccccc"}, "the first free name is used")
 
     def test_a_private_copy_is_created_exclusively(self):
         """`take` refuses to write over a file that is already there, so a planted link is not followed."""
@@ -515,7 +458,7 @@ class PrivateCopies(Staged):
         with open(victim, "rb") as fh:
             self.assertEqual(fh.read(), b"keep")
 
-    def test_the_read_point_refuses_links_special_files_and_oversize_without_blocking(self):
+    def test_the_read_point_refuses_links_and_special_files_without_blocking(self):
         elsewhere = self.path("elsewhere")
         shutil.copy(self.live("a-1.0.0.jar"), elsewhere)
         os.symlink(elsewhere, self.path("link.jar"))
@@ -526,8 +469,6 @@ class PrivateCopies(Staged):
                 with self.subTest(name):
                     with self.assertRaises(OSError):
                         self.mod.take(self.path(name), self.tmpdir)
-            with self.assertRaises(OSError):
-                self.mod.take(self.live("a-1.0.0.jar"), self.tmpdir, limit=3)
             private, digest = self.mod.take(self.live("a-1.0.0.jar"), self.tmpdir)
         self.assertEqual(digest, hashlib.sha256(self.read_target("a-1.0.0.jar")).hexdigest())
         with open(private, "rb") as fh:

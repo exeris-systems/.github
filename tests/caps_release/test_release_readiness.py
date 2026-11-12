@@ -1,20 +1,15 @@
-"""check_release_readiness: completeness, signatures (a gpg double and real gpg), and the Central bundle."""
+"""check_release_readiness: completeness and signatures of the built files (a gpg double and real gpg)."""
 from __future__ import annotations
 
 import hashlib
 import os
 import shutil
-import stat
 import subprocess
-import sys
 import tempfile
-import time
 import unittest
-import warnings
-import zipfile
 
 import caps_release_helpers as h
-from readiness_support import Fixture, GROUP, make_zip, pom_xml, sig_of, write_zip
+from readiness_support import Fixture, GROUP, make_zip, pom_xml, sig_of
 
 S = "check_release_readiness"
 
@@ -179,19 +174,12 @@ class Complete(Fixture):
         self.refused(res, "is not a good signature")
         self.assertEqual(len([e for e in res.errors() if "not a good signature" in e]), 4)
 
-    def test_expect_bundle_default_is_false(self):
-        self.coordinate()
-        self.accepted(self.check())
-        self.accepted(self.check("--expect-bundle", "false"))
-
-    def test_uploaded_changes_the_final_refusal(self):
-        self.coordinate(skip=(".pom",))
-        self.assertIn("DROP it", self.check("--uploaded").errors()[-1])
-        self.assertNotIn("DROP", self.check().errors()[-1])
-
     def test_usage(self):
         self.assertEqual(h.run_proc(S, []).rc, 2)
-        self.assertEqual(h.run_proc(S, ["--target-dir", self.target, "--expect-bundle", "maybe"]).rc, 2)
+        for flag in ("--expect-bundle", "--uploaded"):
+            with self.subTest(flag):
+                self.assertEqual(h.run_proc(S, ["--target-dir", self.target, flag, "true"]).rc, 2)
+                self.assertEqual(h.run_main(S, ["--target-dir", self.target, flag, "true"]).rc, 2)
 
     # --- gaps ---------------------------------------------------------------------------------
 
@@ -217,133 +205,6 @@ class Complete(Fixture):
         with open(os.path.join(self.target, "a-1.0.0.jar.asc"), "w") as fh:
             fh.write(sig_of(outside))
         self.refused(self.check())
-
-
-class Bundle(Fixture):
-    def setUp(self):
-        super().setUp()
-        self.coordinate()
-
-    def test_bundle_expected_but_missing_or_not_a_zip(self):
-        self.refused(self.check("--expect-bundle", "true"), "central-bundle.zip is missing")
-        os.makedirs(os.path.join(self.target, "central-publishing"))
-        with open(os.path.join(self.target, "central-publishing", "central-bundle.zip"), "w") as fh:
-            fh.write("nope")
-        self.refused(self.check("--expect-bundle", "true"), "is not a zip file")
-
-    def test_a_bundle_nobody_expects_is_not_read(self):
-        self.bundle(["stray.txt"])
-        self.accepted(self.check("--expect-bundle", "false"))
-        self.accepted(self.check())
-
-    def test_stray_entries_are_each_named(self):
-        base = self.good_bundle()
-        d = "eu/exeris/caps/a/1.0.0"
-        strays = {
-            "top level": "README.md",
-            "wrong depth": "a/1.0.0/a-1.0.0.pom",
-            "other artifact name": f"{d}/other-1.0.0.jar",
-            "other version in the name": f"{d}/a-1.0.1.jar",
-            "prefix only": f"{d}/a-1.0.0x.jar",
-            "no separator": f"{d}/a-1.0.0jar",
-            "dot file": f"{d}/.hidden",
-            "own directory missing pom": "eu/exeris/caps/b/2.0.0/b-2.0.0.jar",
-            "parent traversal": "../x",
-            "traversal beside": f"{d}/../x",
-            "empty name": "x/",
-        }
-        for label, name in strays.items():
-            if name.endswith("/"):
-                continue
-            with self.subTest(label):
-                self.bundle(base + [name])
-                res = self.check("--expect-bundle", "true")
-                self.refused(res, f"central bundle: {name} is not a file of a published coordinate")
-
-    def test_a_coordinate_whose_pom_is_missing_is_all_stray(self):
-        names = [n for n in self.good_bundle() if not n.endswith(".pom")]
-        self.bundle(names)
-        res = self.check("--expect-bundle", "true")
-        self.refused(res)
-        self.assertGreaterEqual(len([e for e in res.errors() if "is not a file of a published coordinate" in e]), len(names))
-
-    def test_a_pom_of_another_version_does_not_make_the_files_belong(self):
-        d = "eu/exeris/caps/a/1.0.0"
-        self.bundle([f"{d}/a-1.0.0.jar", "eu/exeris/caps/a/0.9.0/a-0.9.0.pom"])
-        self.refused(self.check("--expect-bundle", "true"), f"{d}/a-1.0.0.jar")
-
-    def test_bundle_refusal_with_uploaded(self):
-        self.bundle(self.good_bundle() + ["x.txt"])
-        self.assertIn("DROP it", self.check("--expect-bundle", "true", "--uploaded").errors()[-1])
-
-    # --- gaps ---------------------------------------------------------------------------------
-
-    def test_entries_that_escape_the_bundle_root_are_stray(self):
-        base = self.good_bundle()
-        for evil in ("g/../../..-...pom", "/abs/a/1.0.0/a-1.0.0.pom"):
-            with self.subTest(evil):
-                self.bundle(base + [evil])
-                self.refused(self.check("--expect-bundle", "true"))
-
-    def test_a_bundle_for_a_different_coordinate_than_the_one_built_is_refused(self):
-        self.bundle(self.good_bundle(a="other", v="9.9.9"))
-        self.refused(self.check("--expect-bundle", "true"))
-
-    def test_duplicate_entries_in_the_bundle_are_refused(self):
-        names = self.good_bundle()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            self.bundle(names + [names[1]])
-        self.refused(self.check("--expect-bundle", "true"))
-
-
-class RealBundle(Fixture):
-    """A bundle that is what the build produced: the target/ bytes, verified signatures, correct checksums."""
-
-    def setUp(self):
-        super().setUp()
-        self.real_coordinate()
-
-    def test_a_clean_bundle(self):
-        entries = self.bundle_entries()
-        res = self.check_bundle(entries)
-        self.accepted(res)
-        self.assertIn(f"central bundle: {len(entries)} file(s), 0 outside a coordinate", res.out)
-        self.assertIn("coordinate: a-1.0.0", res.out)
-
-    def test_a_clean_bundle_without_checksum_files_is_refused(self):
-        res = self.check_bundle(checksums=False)
-        self.refused(res, "central bundle: eu/exeris/caps/a/1.0.0 holds no a-1.0.0.jar.md5")
-
-    def test_directory_entries_are_allowed(self):
-        entries = {"eu/": b"", "eu/exeris/": b"", "eu/exeris/caps/a/1.0.0/": b""}
-        entries.update(self.bundle_entries())
-        self.accepted(self.check_bundle(entries))
-
-    def test_a_clean_bundle_of_two_coordinates(self):
-        self.real_coordinate(artifact="b", version="2.0.0")
-        self.accepted(self.check_bundle(coords=(("a", "1.0.0"), ("b", "2.0.0"))))
-
-    def test_the_group_path_comes_from_the_parent_when_the_pom_names_none(self):
-        shutil.rmtree(self.target)
-        os.makedirs(self.target)
-        self.coordinate("a-1.0.0", pom_text=pom_xml(group=None, parent_group="org.parent"))
-        self.accepted(self.check_bundle(group="org.parent"))
-        self.refused(self.check_bundle(group="org.other"), "is not under the group org.parent")
-
-    def test_a_zip_bomb_is_refused_by_its_ratio_quickly_and_nothing_is_extracted(self):
-        entries = self.bundle_entries()
-        entries["eu/exeris/caps/a/1.0.0/a-1.0.0.bomb"] = b"\0" * (100 * 1024 * 1024)
-        self.write_bundle(entries)
-        before = self.tree()
-        tmp_before = {n for n in os.listdir(tempfile.gettempdir()) if n.startswith("bundle-verify-")}
-        start = time.monotonic()
-        res = self.check("--expect-bundle", "true")
-        self.assertLess(time.monotonic() - start, 10)
-        self.refused(res, "expands by more than 200 times")
-        self.assertEqual(self.tree(), before, "nothing is written under the tree")
-        self.assertEqual({n for n in os.listdir(tempfile.gettempdir()) if n.startswith("bundle-verify-")} - tmp_before, set(),
-                         "the verification scratch directory is removed")
 
 
 @unittest.skipUnless(h.have_gpg(), "gpg is not installed")

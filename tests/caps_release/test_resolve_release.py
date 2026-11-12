@@ -62,14 +62,14 @@ class Accepts(h.Case):
         self.accepted(self.both(SCRIPT, argv(TAG, version="1.2.3")))
 
     def test_upload_from_default_branch_publishes(self):
-        for target in ("central", "github-packages"):
+        for target in ("github-packages",):
             with self.subTest(target):
                 res = self.both(SCRIPT, argv(BRANCH, target=target, upload="true", ref="refs/heads/main"))
                 self.accepted(res)
                 self.assertIn(f"resolved: version=1.2.3 target={target} publish=true", res.out)
 
     def test_upload_from_tag_publishes_whatever_the_ref_when_contained(self):
-        res = self.both(SCRIPT, argv(TAG, target="central", upload="true"))
+        res = self.both(SCRIPT, argv(TAG, target="github-packages", upload="true"))
         self.accepted(res)
         self.assertIn("publish=true", res.out)
 
@@ -86,7 +86,7 @@ class Accepts(h.Case):
         self.accepted(self.both(SCRIPT, argv(BRANCH, upload="true", ref="refs/heads/other")))
 
     def test_default_branch_with_slash(self):
-        self.accepted(self.both(SCRIPT, argv(BRANCH, target="central", upload="true", default_branch="rel/1",
+        self.accepted(self.both(SCRIPT, argv(BRANCH, target="github-packages", upload="true", default_branch="rel/1",
                                              ref="refs/heads/rel/1")))
 
     def test_generated_path_shapes_the_contract_allows(self):
@@ -137,9 +137,13 @@ class Refuses(h.Case):
         return res
 
     def test_target_outside_its_set(self):
-        for t in ("", "Central", "CENTRAL", "central ", " central", "maven", "github_packages", "none\n", "all"):
+        for t in ("", "central", "Central", "CENTRAL", "central ", " central", "maven", "github_packages", "none\n", "all",
+                  "github-packages ", " github-packages", "github-packages\n", "GitHub-Packages", "github-package", "None", "NONE",
+                  "none ", "github-packages,none", "github-packages\u200b"):
             with self.subTest(repr(t)):
-                self.check(BRANCH, target=t)
+                res = self.check(BRANCH, target=t)
+                self.assertEqual(len(res.errors()), 1, res)
+                self.assertEqual(res.out, "", "nothing is resolved")
 
     def test_upload_outside_its_set(self):
         for u in ("", "True", "TRUE", "1", "yes", "true ", " false", "no"):
@@ -212,13 +216,13 @@ class Refuses(h.Case):
         refs = ["refs/heads/feature", "refs/heads/main-evil", "refs/heads/main/../x", "refs/heads/main/",
                 "refs/heads/Main", "refs/heads/main ", "refs/tags/v1.2.3", "refs/pull/1/merge", "main", "", "heads/main",
                 "refs/heads/mainx", "refs/heads//main"]
-        for target in ("central", "github-packages"):
+        for target in ("github-packages",):
             for r in refs:
                 with self.subTest(target + " " + repr(r)):
                     self.check(BRANCH, "allowed on main only", target=target, upload="true", ref=r)
 
     def test_upload_off_a_tag_without_a_known_default_branch(self):
-        self.check(BRANCH, "unknown default branch", target="central", upload="true", ref="refs/heads/", default_branch="")
+        self.check(BRANCH, "unknown default branch", target="github-packages", upload="true", ref="refs/heads/", default_branch="")
 
     def test_a_ref_type_that_only_looks_like_tag_is_a_branch_that_needs_its_version(self):
         for rt in ("Tag", "TAG", "tAg"):
@@ -420,13 +424,82 @@ class NonPrinting(h.Case):
                 self.accepted(res)
 
 
+class Targets(h.Case):
+    """Two targets exist: `none` uploads nothing and `github-packages` uploads; `publish` needs both an upload and a target."""
+
+    def test_the_two_targets_resolve_and_name_themselves(self):
+        for target in ("none", "github-packages"):
+            with self.subTest(target):
+                res = self.both(SCRIPT, argv(BRANCH, target=target))
+                self.accepted(res)
+                self.assertIn(f"target={target} publish=false", res.out)
+
+    def test_a_refused_target_is_exactly_one_error_line_whose_text_names_both_targets(self):
+        for t in ("central", "Central", "github-packages ", ""):
+            for run in (h.run_main, h.run_proc):
+                with self.subTest(repr(t), run=run.__name__):
+                    res = run(SCRIPT, argv(BRANCH, target=t))
+                    self.assertEqual(res.rc, 1, res)
+                    self.assertEqual(len(res.errors()), 1, res)
+                    self.assertEqual(len(res.err.splitlines()), 1, res)
+                    self.assertIn("target must be 'none' or 'github-packages'", res.err)
+
+    def test_publish_is_true_only_for_an_upload_to_github_packages(self):
+        matrix = {("none", "false"): "false", ("none", "true"): "false", ("github-packages", "false"): "false",
+                  ("github-packages", "true"): "true"}
+        for (target, upload), want in matrix.items():
+            with self.subTest(target=target, upload=upload):
+                out = self.path(f"out-{target}-{upload}")
+                res = self.both(SCRIPT, argv(BRANCH, target=target, upload=upload, ref="refs/heads/main", output=out))
+                self.accepted(res)
+                with open(out) as fh:
+                    self.assertEqual(fh.read(), f"version=1.2.3\npublish={want}\n")
+                self.assertIn(f"publish={want}", res.out)
+
+    def test_an_upload_with_target_none_is_one_warning_and_no_publish(self):
+        for ref in ("refs/heads/main", "refs/heads/feature"):
+            for run in (h.run_main, h.run_proc):
+                with self.subTest(ref, run=run.__name__):
+                    res = run(SCRIPT, argv(BRANCH, upload="true", ref=ref))
+                    self.assertEqual(res.rc, 0, res)
+                    self.assertEqual(res.errors(), [])
+                    warnings = [ln for ln in res.out.splitlines() if ln.startswith("::warning::")]
+                    self.assertEqual(len(warnings), 1, res)
+                    self.assertIn("target 'none'", warnings[0])
+                    self.assertIn("publish=false", res.out)
+
+    def test_a_dispatch_uploads_from_the_default_branch_only(self):
+        self.accepted(self.both(SCRIPT, argv(BRANCH, target="github-packages", upload="true", ref="refs/heads/main")))
+        for ref in ("refs/heads/feature", "refs/pull/1/merge", "refs/tags/v1.2.3", "refs/heads/main-evil", ""):
+            with self.subTest(repr(ref)):
+                res = self.both(SCRIPT, argv(BRANCH, target="github-packages", upload="true", ref=ref))
+                self.refused(res, "allowed on main only")
+                self.assertEqual(len(res.errors()), 1)
+        res = self.both(SCRIPT, argv(BRANCH, target="github-packages", upload="true", ref="refs/heads/main",
+                                     default_branch="trunk"))
+        self.refused(res, "allowed on trunk only")
+
+    def test_a_tag_upload_needs_no_particular_ref_but_a_contained_commit(self):
+        self.accepted(self.both(SCRIPT, argv(TAG, target="github-packages", upload="true")))
+        self.refused(self.both(SCRIPT, argv(TAG, target="github-packages", upload="true", compare_status="ahead")), "NOT on main")
+        self.refused(self.both(SCRIPT, argv(TAG, target="github-packages", upload="true", compare_status="diverged")), "NOT on main")
+
+    def test_a_refusal_resolves_nothing_whatever_the_target(self):
+        out = self.path("out")
+        for target in ("none", "github-packages"):
+            for bad in (dict(version="1.2"), dict(generated_path="../x")):
+                with self.subTest(target=target, bad=bad):
+                    self.refused(self.both(SCRIPT, argv(BRANCH, target=target, output=out, **bad)))
+        self.assertFalse(os.path.exists(out))
+
+
 class Output(h.Case):
     def test_success_appends_two_lines_and_keeps_existing_content(self):
         out = self.write("out", "keep=1\n")
         self.accepted(self.both(SCRIPT, argv(BRANCH, output=out)))
         with open(out) as fh:
             self.assertEqual(fh.read(), "keep=1\nversion=1.2.3\npublish=false\n")
-        self.accepted(self.both(SCRIPT, argv(BRANCH, target="central", upload="true", ref="refs/heads/main", output=out)))
+        self.accepted(self.both(SCRIPT, argv(BRANCH, target="github-packages", upload="true", ref="refs/heads/main", output=out)))
         with open(out) as fh:
             self.assertEqual(fh.read().splitlines()[-2:], ["version=1.2.3", "publish=true"])
 
@@ -439,7 +512,7 @@ class Output(h.Case):
         cases = [argv(BRANCH, target="x"), argv(BRANCH, upload="x"), argv(BRANCH, generated_path="../x"),
                  argv(BRANCH, version="1.2"), argv(TAG, ref_name="v1"), argv(TAG, version="9.9.9"),
                  argv(TAG, compare_status="ahead"),
-                 argv(BRANCH, target="central", upload="true", ref="refs/heads/other"),
+                 argv(BRANCH, target="github-packages", upload="true", ref="refs/heads/other"),
                  argv(BRANCH, version="1.2.3\n")]
         for args in cases:
             with self.subTest(args):

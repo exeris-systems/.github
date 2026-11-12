@@ -1,4 +1,4 @@
-"""The four scripts that read a POM as XML: release profile, POM version, SNAPSHOT scan, auto-publish."""
+"""The scripts that read a POM as XML: the hostile-document refusals, the POM version and the SNAPSHOT scan."""
 from __future__ import annotations
 
 import os
@@ -10,12 +10,6 @@ from caps_release_helpers import pom
 
 NS = "http://maven.apache.org/POM/4.0.0"
 
-PROFILE = "<profiles><profile><id>release</id></profile></profiles>"
-CENTRAL_PLUGIN = """<plugin><groupId>org.sonatype.central</groupId>
-<artifactId>central-publishing-maven-plugin</artifactId>
-<configuration><publishingServerId>central</publishingServerId></configuration></plugin>"""
-RELEASE_WITH_CENTRAL = f"<profiles><profile><id>release</id><build><plugins>{CENTRAL_PLUGIN}</plugins></build></profile></profiles>"
-
 BOMB = ('<?xml version="1.0"?><!DOCTYPE l [<!ENTITY a "aaaaaaaaaaaaaaaaaaaa">'
         + "".join(f'<!ENTITY {c} "' + f"&{p};" * 10 + '">' for p, c in zip("abcdefgh", "bcdefghi"))
         + ']><project><version>&i;</version></project>')
@@ -26,10 +20,9 @@ XXE = ('<?xml version="1.0"?><!DOCTYPE l [<!ENTITY x SYSTEM "file:///etc/hostnam
 class XmlHostile(h.Case):
     """Entity expansion and external entities: refused, bounded in time, and never read from disk."""
     scripts = {
-        "check_release_profile": lambda self, f: ["--pom", f, "--target", "none"],
+        "check_release_profile": lambda self, f: ["--pom", f],
         "check_pom_version": lambda self, f: ["--pom", f, "--want", "1.0.0"],
         "scan_snapshots": lambda self, f: ["--effective-pom", f, "--dependencies", self.write("deps", ""), "--upload", "true"],
-        "check_auto_publish": lambda self, f: ["--effective-pom", f],
     }
 
     def test_billion_laughs_is_refused_in_bounded_time(self):
@@ -62,138 +55,6 @@ class XmlHostile(h.Case):
                 self.refused(self.both(name, args(self, self.path("absent.xml"))))
             with self.subTest(name, case="directory"):
                 self.refused(self.both(name, args(self, self.tmp)))
-
-
-class ReleaseProfile(h.Case):
-    S = "check_release_profile"
-
-    def run_check(self, body, target="none", ns="", extra=()):
-        f = self.write("pom.xml", pom(body, ns))
-        return self.both(self.S, ["--pom", f, "--target", target, *extra])
-
-    def test_profile_present_for_every_target_without_central_plugin(self):
-        for target in ("none", "github-packages"):
-            with self.subTest(target):
-                res = self.run_check(PROFILE, target)
-                self.accepted(res)
-                self.assertIn("Central plugin: false", res.out)
-
-    def test_central_target_needs_plugin_and_server_id(self):
-        res = self.run_check(RELEASE_WITH_CENTRAL, "central")
-        self.accepted(res)
-        self.assertIn("Central plugin: true", res.out)
-
-    def test_server_id_and_artifact_id_are_compared_without_surrounding_whitespace(self):
-        spaced = RELEASE_WITH_CENTRAL.replace(">central<", "> central <").replace(
-            ">central-publishing-maven-plugin<", ">\n central-publishing-maven-plugin\n<")
-        self.accepted(self.run_check(spaced, "central"))
-
-    def test_output_flag_records_whether_the_central_plugin_exists(self):
-        for body, want in ((PROFILE, "false"), (RELEASE_WITH_CENTRAL, "true")):
-            with self.subTest(want):
-                out = self.path("out")
-                if os.path.exists(out):
-                    os.remove(out)
-                self.accepted(self.run_check(body, "none", extra=["--output", out]))
-                with open(out) as fh:
-                    self.assertEqual(fh.read(), f"has_central_plugin={want}\n")
-
-    def test_output_is_appended_not_replaced(self):
-        out = self.write("out", "keep=1\n")
-        self.accepted(self.run_check(PROFILE, "none", extra=["--output", out]))
-        with open(out) as fh:
-            self.assertEqual(fh.read(), "keep=1\nhas_central_plugin=false\n")
-
-    def test_namespace_and_prefix_are_read(self):
-        self.accepted(self.run_check(PROFILE, "none", ns=NS))
-        prefixed = ('<?xml version="1.0"?><p:project xmlns:p="http://maven.apache.org/POM/4.0.0"><p:profiles>'
-                    '<p:profile><p:id>release</p:id></p:profile></p:profiles></p:project>')
-        f = self.write("p.xml", prefixed)
-        self.accepted(self.both(self.S, ["--pom", f, "--target", "none"]))
-
-    def test_id_with_surrounding_whitespace_or_in_cdata_is_the_value_xml_says(self):
-        for ident in ("  release \n", "<![CDATA[release]]>"):
-            with self.subTest(ident):
-                self.accepted(self.run_check(f"<profiles><profile><id>{ident}</id></profile></profiles>"))
-
-    def test_no_release_profile(self):
-        bodies = {
-            "no profiles": "",
-            "other id": "<profiles><profile><id>releases</id></profile></profiles>",
-            "case": "<profiles><profile><id>Release</id></profile></profiles>",
-            "suffix": "<profiles><profile><id>release-candidate</id></profile></profiles>",
-            "empty id": "<profiles><profile><id/></profile></profiles>",
-            "comment": "<profiles><profile><!-- <id>release</id> --><id>other</id></profile></profiles>",
-            "comment only": "<!-- <profiles><profile><id>release</id></profile></profiles> -->",
-            "id outside a profile": "<id>release</id>",
-            "profile outside profiles": "<profile><id>release</id></profile>",
-            "id nested deeper": "<profiles><profile><build><id>release</id></build></profile></profiles>",
-            "profiles under build": "<build><profiles><profile><id>release</id></profile></profiles></build>",
-            "artifact id": "<artifactId>release</artifactId>",
-            "whitespace inside the word": "<profiles><profile><id>rel ease</id></profile></profiles>",
-        }
-        for label, body in bodies.items():
-            with self.subTest(label):
-                self.refused(self.run_check(body), "release")
-
-    def test_root_modules_is_refused_in_every_form(self):
-        for mods in ("<modules><module>a</module></modules>", "<modules/>", "<modules></modules>"):
-            for ns in ("", NS):
-                with self.subTest(mods, ns=ns):
-                    self.refused(self.run_check(PROFILE + mods, "none", ns), "single-module")
-
-    def test_modules_in_a_comment_is_not_a_modules_element(self):
-        self.accepted(self.run_check(PROFILE + "<!-- <modules><module>a</module></modules> -->"))
-
-    def test_central_target_without_the_plugin_or_the_server_id(self):
-        cases = {
-            "no plugin": (PROFILE, "central-publishing-maven-plugin"),
-            "no server id": (PROFILE.replace("</profile>", "<build><plugins><plugin><artifactId>central-publishing-maven-plugin"
-                                             "</artifactId></plugin></plugins></build></profile>"), "publishingServerId"),
-            "wrong server id": (RELEASE_WITH_CENTRAL.replace(">central<", ">ossrh<"), "publishingServerId"),
-            "server id case": (RELEASE_WITH_CENTRAL.replace(">central<", ">Central<"), "publishingServerId"),
-            "plugin in a comment": (PROFILE + "<!-- " + CENTRAL_PLUGIN + " -->", "central-publishing-maven-plugin"),
-            "similar plugin name": (RELEASE_WITH_CENTRAL.replace("central-publishing-maven-plugin",
-                                                                "central-publishing-maven-plugin2"), "central-publishing"),
-        }
-        for label, (body, frag) in cases.items():
-            with self.subTest(label):
-                self.refused(self.run_check(body, "central"), frag)
-
-    def test_every_missing_item_is_listed_on_the_one_error_line(self):
-        res = self.run_check("<modules><module>a</module></modules>", "central")
-        self.refused(res)
-        self.assertEqual(len(res.errors()), 1)
-        for frag in ("release", "single-module", "central-publishing-maven-plugin", "publishingServerId"):
-            self.assertIn(frag, res.errors()[0])
-
-    def test_refusal_writes_nothing_to_output(self):
-        out = self.path("out")
-        self.refused(self.run_check("", "none", extra=["--output", out]))
-        self.assertFalse(os.path.exists(out))
-        self.refused(self.run_check(PROFILE + "<modules/>", "none", extra=["--output", out]))
-        self.assertFalse(os.path.exists(out))
-
-    def test_target_outside_its_set_is_a_usage_error(self):
-        f = self.write("pom.xml", pom(PROFILE))
-        self.assertEqual(h.run_main(self.S, ["--pom", f, "--target", "maven"]).rc, 2)
-        self.assertEqual(h.run_proc(self.S, ["--pom", f, "--target", "maven"]).rc, 2)
-        self.assertEqual(h.run_proc(self.S, ["--pom", f]).rc, 2)
-
-    # --- gaps: states the behaviour the contract and the error text promise ---------------------
-
-    def test_modules_inside_the_release_profile_is_refused(self):
-        body = "<profiles><profile><id>release</id><modules><module>a</module></modules></profile></profiles>"
-        self.refused(self.run_check(body))
-
-    def test_central_plugin_outside_the_release_profile_is_refused(self):
-        body = PROFILE + f"<build><plugins>{CENTRAL_PLUGIN}</plugins></build>"
-        self.refused(self.run_check(body, "central"))
-
-    def test_a_dependency_named_like_the_plugin_is_not_the_plugin(self):
-        body = PROFILE + ("<dependencies><dependency><artifactId>central-publishing-maven-plugin</artifactId></dependency>"
-                          "</dependencies><properties><publishingServerId>central</publishingServerId></properties>")
-        self.refused(self.run_check(body, "central"))
 
 
 class PomVersion(h.Case):
@@ -384,128 +245,6 @@ class ScanSnapshots(h.Case):
     def test_a_timestamped_snapshot_plugin_is_refused(self):
         self.refused(self.scan(eff(plugins="<plugin><artifactId>p</artifactId><version>1.0-20260101.120000-1</version></plugin>"),
                                upload="false"))
-
-
-EFF_PLUGIN = """<plugin><groupId>org.sonatype.central</groupId><artifactId>central-publishing-maven-plugin</artifactId>
-<version>0.8.0</version>{cfg}</plugin>"""
-
-
-def aeff(cfg="", managed=None, ns=""):
-    plugin = EFF_PLUGIN.format(cfg=cfg)
-    body = f"<build><plugins>{plugin}</plugins>"
-    if managed is not None:
-        body += f"<pluginManagement><plugins>{EFF_PLUGIN.format(cfg=managed)}</plugins></pluginManagement>"
-    return pom(body + "</build>", ns)
-
-
-class AutoPublish(h.Case):
-    S = "check_auto_publish"
-
-    def check(self, xml):
-        return self.both(self.S, ["--effective-pom", self.write("eff.xml", xml)])
-
-    def test_absent_values_pass(self):
-        res = self.check(aeff())
-        self.accepted(res)
-        self.assertIn("1 central-publishing-maven-plugin declaration(s)", res.out)
-
-    def test_a_dependency_with_the_plugins_artifact_id_is_not_a_plugin(self):
-        res = self.check(pom("<dependencies><dependency><artifactId>central-publishing-maven-plugin</artifactId>"
-                             "<autoPublish>true</autoPublish></dependency></dependencies>"))
-        self.accepted(res)
-        self.assertIn("0 central-publishing-maven-plugin", res.out)
-
-    def test_pom_without_the_plugin_passes(self):
-        res = self.check(pom("<build><plugins><plugin><artifactId>other</artifactId><configuration>"
-                             "<autoPublish>true</autoPublish></configuration></plugin></plugins></build>"))
-        self.accepted(res)
-        self.assertIn("0 central-publishing-maven-plugin", res.out)
-
-    def test_good_values(self):
-        for cfg in ("<configuration><autoPublish>false</autoPublish><waitUntil>validated</waitUntil></configuration>",
-                    "<configuration><waitUntil>VALIDATED</waitUntil></configuration>",
-                    "<configuration><waitUntil>Validated</waitUntil></configuration>",
-                    "<configuration><autoPublish> false </autoPublish></configuration>",
-                    "<configuration><autoPublish>false</autoPublish></configuration>",
-                    "<executions><execution><configuration><autoPublish>false</autoPublish>"
-                    "</configuration></execution></executions>"):
-            with self.subTest(cfg):
-                self.accepted(self.check(aeff(cfg)))
-
-    def test_contrary_autopublish_values(self):
-        for v in ("true", "True", "TRUE", "False", "FALSE", "", "${autoPublish}", "${env.X}", "0", "no", "falsey",
-                  "false false", "fals"):
-            with self.subTest(repr(v)):
-                res = self.check(aeff(f"<configuration><autoPublish>{v}</autoPublish></configuration>"))
-                self.refused(res, "autoPublish")
-
-    def test_contrary_waituntil_values(self):
-        for v in ("published", "PUBLISHED", "uploaded", "UPLOADED", "", "${waitUntil}", "validate", "validated2",
-                  "not validated"):
-            with self.subTest(repr(v)):
-                self.refused(self.check(aeff(f"<configuration><waitUntil>{v}</waitUntil></configuration>")), "waitUntil")
-
-    def test_value_given_as_an_attribute_or_empty_element_is_refused(self):
-        for cfg in ('<configuration><autoPublish value="false"/></configuration>',
-                    "<configuration><autoPublish/></configuration>",
-                    '<configuration><waitUntil value="validated"/></configuration>'):
-            with self.subTest(cfg):
-                self.refused(self.check(aeff(cfg)))
-
-    def test_execution_level_and_nested_values(self):
-        cfg = "<executions><execution><configuration><autoPublish>true</autoPublish></configuration></execution></executions>"
-        self.refused(self.check(aeff(cfg)), "autoPublish")
-        deep = "<configuration><a><b><waitUntil>published</waitUntil></b></a></configuration>"
-        self.refused(self.check(aeff(deep)), "waitUntil")
-
-    def test_a_managed_declaration_is_checked_too(self):
-        """pluginManagement with autoPublish true, beside a build plugin that says false."""
-        res = self.check(aeff("<configuration><autoPublish>false</autoPublish></configuration>",
-                              managed="<configuration><autoPublish>true</autoPublish></configuration>"))
-        self.refused(res, "autoPublish")
-        res = self.check(aeff("<configuration><autoPublish>false</autoPublish></configuration>",
-                              managed="<configuration><waitUntil>published</waitUntil></configuration>"))
-        self.refused(res, "waitUntil")
-
-    def test_a_second_declaration_that_is_contrary_is_refused_among_good_ones(self):
-        res = self.check(pom("<build><plugins>"
-                             + EFF_PLUGIN.format(cfg="<configuration><autoPublish>false</autoPublish></configuration>")
-                             + EFF_PLUGIN.format(cfg="<configuration><autoPublish>true</autoPublish></configuration>")
-                             + "</plugins></build>"))
-        self.refused(res)
-
-    def test_every_contrary_value_is_reported_one_per_line(self):
-        res = self.check(aeff("<configuration><autoPublish>true</autoPublish><waitUntil>published</waitUntil></configuration>"))
-        self.refused(res)
-        self.assertEqual(len(res.errors()), 2)
-
-    def test_the_plugin_under_another_group_is_still_checked(self):
-        xml = pom("<build><plugins><plugin><groupId>evil</groupId><artifactId>central-publishing-maven-plugin</artifactId>"
-                  "<configuration><autoPublish>true</autoPublish></configuration></plugin></plugins></build>")
-        self.refused(self.check(xml), "autoPublish")
-
-    def test_namespace_prefix_and_profile_contexts(self):
-        self.refused(self.check(aeff("<configuration><autoPublish>true</autoPublish></configuration>", ns=NS)))
-        xml = pom("<profiles><profile><id>release</id><build><plugins>"
-                  + EFF_PLUGIN.format(cfg="<configuration><autoPublish>true</autoPublish></configuration>")
-                  + "</plugins></build></profile></profiles>")
-        self.refused(self.check(xml))
-        prefixed = ('<?xml version="1.0"?><p:project xmlns:p="http://maven.apache.org/POM/4.0.0"><p:build><p:plugins><p:plugin>'
-                    '<p:artifactId>central-publishing-maven-plugin</p:artifactId><p:configuration>'
-                    '<p:autoPublish>true</p:autoPublish></p:configuration></p:plugin></p:plugins></p:build></p:project>')
-        self.refused(self.check(prefixed))
-
-    def test_artifact_id_with_surrounding_whitespace_is_still_the_plugin(self):
-        xml = pom("<build><plugins><plugin><artifactId>\n central-publishing-maven-plugin \n</artifactId>"
-                  "<configuration><autoPublish>true</autoPublish></configuration></plugin></plugins></build>")
-        self.refused(self.check(xml))
-
-    def test_a_commented_out_value_is_not_a_value(self):
-        self.accepted(self.check(aeff("<configuration><!-- <autoPublish>true</autoPublish> --></configuration>")))
-
-    def test_usage(self):
-        self.assertEqual(h.run_proc(self.S, []).rc, 2)
-        self.assertEqual(h.run_main(self.S, []).rc, 2)
 
 
 if __name__ == "__main__":

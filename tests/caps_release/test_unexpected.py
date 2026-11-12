@@ -1,19 +1,17 @@
 """Every script ends an unexpected exception with exactly one `::error::` line and exit 1; usage errors stay exit 2."""
 from __future__ import annotations
 
-import builtins
 import os
-import stat
 import unittest
 
 import caps_release_helpers as h
 from caps_release_helpers import pom
-from readiness_support import Fixture, pom_xml
-from test_pom_scripts import EFF_PLUGIN, dep, eff
+from readiness_support import Fixture
+from test_pom_scripts import dep, eff
 
-WRAPPED = ["resolve_release", "check_drift", "check_pom_version", "check_release_profile", "check_auto_publish",
-           "scan_snapshots", "check_release_readiness"]
-ALL = WRAPPED + ["remove_signing_key", "check_dry_run_log", "check_secrets"]
+WRAPPED = ["resolve_release", "check_drift", "check_pom_version", "check_release_profile", "scan_snapshots",
+           "check_release_readiness", "check_secrets"]
+ALL = WRAPPED + ["remove_signing_key"]
 NEWLINE_MESSAGE = "boom\n::error::forged\nsecond line"
 
 
@@ -36,10 +34,10 @@ class Injected(h.Case):
         "resolve_release": ["--target", "none", "--upload", "false", "--version", "1.2.3", "--generated-path", "g", "--ref-type", "branch"],
         "check_drift": ["--repo", ".", "--generated", "g"],
         "check_pom_version": ["--pom", "p", "--want", "1.0.0"],
-        "check_release_profile": ["--pom", "p", "--target", "none"],
-        "check_auto_publish": ["--effective-pom", "p"],
+        "check_release_profile": ["--pom", "p"],
         "scan_snapshots": ["--effective-pom", "p", "--dependencies", "d", "--upload", "true"],
         "check_release_readiness": ["--target-dir", "t"],
+        "check_secrets": [],
     }
 
     def test_a_runtime_error_inside_the_script_is_one_error_line_and_exit_one(self):
@@ -77,22 +75,6 @@ class Injected(h.Case):
         with open(env) as fh:
             self.assertEqual(fh.read(), "KEEP=1\n")
 
-    def test_the_dry_run_log_check_ends_an_unexpected_exception_with_one_line(self):
-        log = self.write("log", "Skipping the upload of the bundle at user's request")
-        module = h.load("check_dry_run_log")
-        real = builtins.open
-
-        def boom(path, *a, **k):
-            if path == log:
-                raise RuntimeError("boom")
-            return real(path, *a, **k)
-        module.open = boom
-        try:
-            res = h.run_main("check_dry_run_log", ["--log", log])
-        finally:
-            del module.open
-        self.assertEqual((res.rc, len(res.errors())), (1, 1))
-
     def test_the_secrets_check_ends_an_unexpected_exception_with_one_line(self):
         module = h.load("check_secrets")
 
@@ -103,7 +85,7 @@ class Injected(h.Case):
         fake = type("os", (), {"environ": Env()})
         module.os = fake
         try:
-            res = h.run_main("check_secrets", ["--target", "central"])
+            res = h.run_main("check_secrets", [])
         finally:
             module.os = real
         self.assertEqual((res.rc, len(res.errors())), (1, 1))
@@ -111,16 +93,6 @@ class Injected(h.Case):
 
 class Seams(h.Case):
     """The real seams: an unwritable output, a summary that cannot be opened, an input nobody may read."""
-
-    def test_an_unwritable_output_is_one_error_line_for_the_profile_check(self):
-        f = self.write("pom.xml", pom("<profiles><profile><id>release</id></profile></profiles>"))
-        for out in (self.tmp, self.path("absent", "out")):
-            for run in (h.run_main, h.run_proc):
-                with self.subTest(out, run=run.__name__):
-                    res = run("check_release_profile", ["--pom", f, "--target", "none", "--output", out])
-                    self.assertEqual((res.rc, len(res.errors())), (1, 1), res)
-                    self.assertIn("failed unexpectedly", res.err)
-                    self.assertNotIn("ok - this ref", res.out)
 
     def test_an_unwritable_summary_is_one_error_line_for_the_snapshot_scan(self):
         eff_f = self.write("eff.xml", eff(dep("1.0-SNAPSHOT")))
@@ -135,10 +107,8 @@ class Seams(h.Case):
     def test_an_unreadable_input_is_one_error_line_for_every_script_that_reads_one(self):
         cases = {
             "check_pom_version": ["--pom", self.path("absent"), "--want", "1.0.0"],
-            "check_release_profile": ["--pom", self.path("absent"), "--target", "none"],
-            "check_auto_publish": ["--effective-pom", self.path("absent")],
+            "check_release_profile": ["--pom", self.path("absent")],
             "scan_snapshots": ["--effective-pom", self.path("absent"), "--dependencies", self.write("d", ""), "--upload", "true"],
-            "check_dry_run_log": ["--log", self.path("absent")],
             "check_release_readiness": ["--target-dir", self.path("absent")],
             "check_drift": ["--repo", self.path("absent"), "--generated", "g"],
         }
@@ -154,10 +124,8 @@ class Seams(h.Case):
         if os.access(locked, os.R_OK):
             self.skipTest("permissions are not enforced for this user")
         for name, argv in (("check_pom_version", ["--pom", locked, "--want", "1.0.0"]),
-                           ("check_release_profile", ["--pom", locked, "--target", "none"]),
-                           ("check_auto_publish", ["--effective-pom", locked]),
-                           ("scan_snapshots", ["--effective-pom", locked, "--dependencies", self.write("d", ""), "--upload", "true"]),
-                           ("check_dry_run_log", ["--log", locked])):
+                           ("check_release_profile", ["--pom", locked]),
+                           ("scan_snapshots", ["--effective-pom", locked, "--dependencies", self.write("d", ""), "--upload", "true"])):
             with self.subTest(name):
                 res = h.run_proc(name, argv)
                 self.assertEqual((res.rc, len(res.errors())), (1, 1), res)
@@ -188,15 +156,6 @@ class Readiness(Fixture):
         self.assertEqual(len(res.errors()), 2, "the finding and the closing line, nothing about a missing coordinate or a crash")
         self.assertNotIn("unexpectedly", res.err)
 
-    def test_an_unreadable_bundle_is_one_error_line(self):
-        self.write_bundle(self.bundle_entries())
-        os.chmod(self.bundle_path, 0)
-        self.addCleanup(os.chmod, self.bundle_path, 0o600)
-        if os.access(self.bundle_path, os.R_OK):
-            self.skipTest("permissions are not enforced for this user")
-        res = self.check("--expect-bundle", "true")
-        self.assertEqual((res.rc, len(res.errors())), (1, 1), res)
-
     def test_a_gpg_that_cannot_run_makes_every_signature_bad_and_stages_nothing_unchecked(self):
         res = self.check("--gpg", self.path("no-such-gpg"))
         self.refused(res, "is not a good signature")
@@ -212,19 +171,29 @@ class Usage(h.Case):
 
     def test_missing_required_arguments_are_a_usage_error_wherever_one_is_required(self):
         for name in ALL:
-            if name == "resolve_release":
-                continue            # every flag defaults to empty and is then refused as a value
+            if name in ("resolve_release", "check_secrets"):
+                continue            # every flag defaults to empty and is then refused as a value; the secrets check takes none
             for run in (h.run_main, h.run_proc):
                 with self.subTest(name, run=run.__name__):
                     self.assertEqual(run(name, []).rc, 2)
 
     def test_a_value_outside_a_choice_is_a_usage_error(self):
         f = self.write("p", "")
-        for name, argv in (("check_release_profile", ["--pom", f, "--target", "maven"]),
-                           ("scan_snapshots", ["--effective-pom", f, "--dependencies", f, "--upload", "maybe"]),
-                           ("check_release_readiness", ["--target-dir", f, "--expect-bundle", "maybe"]),
-                           ("check_secrets", ["--target", "none"])):
+        for name, argv in (("scan_snapshots", ["--effective-pom", f, "--dependencies", f, "--upload", "maybe"]),):
             with self.subTest(name):
+                self.assertEqual(h.run_main(name, argv).rc, 2)
+                self.assertEqual(h.run_proc(name, argv).rc, 2)
+
+    def test_a_flag_of_a_removed_target_is_a_usage_error(self):
+        f = self.write("p", "")
+        cases = (("check_release_profile", ["--pom", f, "--target", "none"]),
+                 ("check_release_profile", ["--pom", f, "--output", f]),
+                 ("check_release_readiness", ["--target-dir", f, "--expect-bundle", "true"]),
+                 ("check_release_readiness", ["--target-dir", f, "--uploaded"]),
+                 ("check_secrets", ["--target", "none"]),
+                 ("check_drift", ["--repo", ".", "--generated", "g", "--uploaded"]))
+        for name, argv in cases:
+            with self.subTest(name, argv=argv):
                 self.assertEqual(h.run_main(name, argv).rc, 2)
                 self.assertEqual(h.run_proc(name, argv).rc, 2)
 

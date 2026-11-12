@@ -1,4 +1,4 @@
-"""The five POM readers bound what they parse: at most 16 MiB and 200 levels of nesting, and a DOCTYPE is still refused."""
+"""The four POM readers bound what they parse: at most 16 MiB and 200 levels of nesting, and a DOCTYPE is still refused."""
 from __future__ import annotations
 
 import os
@@ -7,13 +7,13 @@ import unittest
 import xml.etree.ElementTree as ET
 
 import caps_release_helpers as h
-from readiness_support import Fixture, pom_xml, sig_of
+from readiness_support import Fixture, pom_xml
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_DEPTH = 200
 
 READERS = {
-    "check_pom_version": "read_xml", "check_release_profile": "read_xml", "check_auto_publish": "read_xml",
+    "check_pom_version": "read_xml", "check_release_profile": "read_xml",
     "scan_snapshots": "read_xml", "check_release_readiness": "read_pom",
 }
 
@@ -114,8 +114,7 @@ class Scripts(h.Case):
         deps = self.write("deps.txt", "")
         return {
             "check_pom_version": ["--pom", pom, "--want", "1.0.0"],
-            "check_release_profile": ["--pom", pom, "--target", "none"],
-            "check_auto_publish": ["--effective-pom", pom],
+            "check_release_profile": ["--pom", pom],
             "scan_snapshots": ["--effective-pom", pom, "--dependencies", deps, "--upload", "true"],
         }
 

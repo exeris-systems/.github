@@ -4,13 +4,11 @@ from __future__ import annotations
 import os
 import shutil
 import stat
-import subprocess
-import sys
 import time
 import unittest
 
 import caps_release_helpers as h
-from readiness_support import GROUP, Fixture, SUFFIXES, make_zip, pom_xml, sig_bytes, sig_of, write_zip
+from readiness_support import Fixture, SUFFIXES, make_zip, pom_xml, sig_of
 
 S = "check_release_readiness"
 
@@ -221,23 +219,16 @@ class ReleasedSet(Gate):
 
 
 class UnboundGroup(Gate):
-    """A POM that names no groupId cannot bind the bundle to a group path, and is refused."""
+    """A POM that does not yield a full coordinate cannot bind the release to one, and is refused."""
 
     def setUp(self):
         super().setUp()
         self.coordinate("a-1.0.0", pom_text=pom_xml(group=None))
 
-    def test_a_group_less_pom_is_refused_whatever_the_bundle_holds(self):
-        res = self.check_bundle(group="eu.exeris.caps")
-        self.refused(res, "a-1.0.0.pom does not yield a groupId, an artifactId and a version")
-        self.assertIn("cannot be bound to a group: the built pom yields no coordinate", "\n".join(res.errors()))
-        self.assertNotIn("unexpectedly", res.err)
+    def test_a_group_less_pom_is_refused(self):
         res = self.gate()
-        self.refused(res, "a-1.0.0.pom does not yield a groupId")
-
-    def test_a_bundle_for_a_foreign_group_must_not_pass(self):
-        res = self.check_bundle(group="org.attacker.shadow")
-        self.assertNotEqual(res.rc, 0, f"a bundle under org/attacker/shadow was accepted: {res}")
+        self.refused(res, "a-1.0.0.pom does not yield a groupId, an artifactId and a version")
+        self.assertNotIn("unexpectedly", res.err)
 
     def test_a_pom_naming_neither_artifact_nor_version_must_not_pass(self):
         with open(os.path.join(self.target, "a-1.0.0.pom"), "w") as fh:
@@ -246,12 +237,18 @@ class UnboundGroup(Gate):
             fh.write(sig_of(os.path.join(self.target, "a-1.0.0.pom")))
         self.assertNotEqual(self.gate().rc, 0)
 
-    def test_a_parent_group_binds_the_bundle(self):
+    def test_a_parent_supplies_the_group_and_the_version(self):
         shutil.rmtree(self.target)
         os.makedirs(self.target)
         self.coordinate("a-1.0.0", pom_text=pom_xml(group=None, parent_group="org.parent"))
-        self.accepted(self.check_bundle(group="org.parent"))
-        self.refused(self.check_bundle(group="org.attacker"), "is not under the group org.parent")
+        self.accepted(self.gate())
+
+    def test_a_parent_never_supplies_the_artifact_id(self):
+        shutil.rmtree(self.target)
+        os.makedirs(self.target)
+        self.coordinate("a-1.0.0", pom_text="<project><parent><groupId>g</groupId><artifactId>a</artifactId>"
+                                            "<version>1.0.0</version></parent></project>")
+        self.refused(self.gate(), "a-1.0.0.pom does not yield a groupId, an artifactId and a version")
 
 
 class Staging(Gate):
@@ -305,17 +302,6 @@ class Staging(Gate):
         self.assertEqual(set(got), self.gated_names())
         for name, data in got.items():
             self.assertEqual(data, self.read_target(name), name)
-
-    def test_the_bundle_lands_in_central_publishing_only_when_it_was_expected_and_gated(self):
-        self.write_bundle(self.bundle_entries())
-        self.accepted(self.stage_run())
-        self.assertNotIn("central-publishing/central-bundle.zip", self.staged(), "a bundle nobody expects is not staged")
-        shutil.rmtree(self.stage)
-        self.accepted(self.stage_run("--expect-bundle", "true"))
-        got = self.staged()
-        self.assertEqual(set(got), self.gated_names() | {"central-publishing/central-bundle.zip"})
-        with open(self.bundle_path, "rb") as fh:
-            self.assertEqual(got["central-publishing/central-bundle.zip"], fh.read())
 
     def test_a_stage_directory_that_exists_and_is_empty_is_accepted(self):
         self.accepted(self.stage_run(prepare=lambda: os.makedirs(self.stage)))
@@ -376,27 +362,6 @@ class Staging(Gate):
         res = self.stage_run()
         self.refused(res, "a-1.0.0 is missing a-1.0.0-sources.jar")
         self.assertNotIn("cannot be staged", "\n".join(res.errors()))
-
-    def test_a_bundle_that_exceeds_a_bound_is_refused_and_not_staged(self):
-        import zlib
-        from readiness_support import deflate_zeros, raw_zip
-        base = [dict(name=n, data=d) for n, d in self.bundle_entries().items()]
-        z = deflate_zeros(5 << 20)
-        cases = {"entries": base + [dict(name=f"d{i}/", data=b"") for i in range(2001)],
-                 "ratio": base + [dict(name="big.bin", data=z, method=8, crc=zlib.crc32(b"\0" * (5 << 20)), usize=5 << 20, csize=len(z))],
-                 "total": base + [dict(name="big.bin", data=b"x", usize=(256 << 20) + 1, csize=1, method=8)]}
-        for label, items in cases.items():
-            with self.subTest(label):
-                raw_zip(self.bundle_path, items)
-                res = self.stage_run("--expect-bundle", "true")
-                self.refused(res)
-                self.assertFalse(os.path.exists(os.path.join(self.stage, "central-publishing")))
-                self.assertNotIn("cannot be staged", "\n".join(res.errors()))
-
-    def test_the_central_publishing_directory_of_the_stage_is_private(self):
-        self.write_bundle(self.bundle_entries())
-        self.accepted(self.stage_run("--expect-bundle", "true"))
-        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.stage, "central-publishing")).st_mode), 0o700)
 
     def test_a_failing_run_stages_no_symlinked_file(self):
         outside = self.path("outside")
@@ -465,7 +430,7 @@ exit $rc
         os.symlink(outside, os.path.join(self.target, "link.jar"))
         os.mkdir(os.path.join(self.target, "dir.jar"))
         found = []
-        module.stage(self.stage, self.target, ["a-1.0.0.pom", "link.jar", "dir.jar", "/dev/null"], None, found.append)
+        module.stage(self.stage, self.target, ["a-1.0.0.pom", "link.jar", "dir.jar", "/dev/null"], found.append)
         self.assertEqual(sorted(os.listdir(self.stage)), ["a-1.0.0.pom"])
         self.assertEqual(len(found), 3)
         self.assertTrue(all("cannot be staged" in f for f in found), found)
@@ -474,7 +439,7 @@ exit $rc
     def test_staging_never_overwrites_a_file_it_already_wrote(self):
         module = h.load(S)
         found = []
-        module.stage(self.stage, self.target, ["a-1.0.0.pom", "a-1.0.0.pom"], None, found.append)
+        module.stage(self.stage, self.target, ["a-1.0.0.pom", "a-1.0.0.pom"], found.append)
         self.assertEqual(len(found), 1)
         self.assertIn("cannot be staged", found[0])
 
@@ -484,7 +449,7 @@ exit $rc
         with open(os.path.join(self.stage, "x"), "w") as fh:
             fh.write("x")
         found = []
-        module.stage(self.stage, self.target, ["a-1.0.0.pom"], None, found.append)
+        module.stage(self.stage, self.target, ["a-1.0.0.pom"], found.append)
         self.assertEqual(os.listdir(self.stage), ["x"])
         self.assertEqual(len(found), 1)
 
@@ -498,44 +463,6 @@ exit $rc
         res = h.run_main(S, ["--target-dir", self.target, "--gpg", gpg, "--stage", self.stage])
         staged = self.staged() if os.path.exists(self.stage) else {}
         self.assertTrue(res.rc != 0 or staged.get("a-1.0.0.jar") == gated, f"staged {staged.get('a-1.0.0.jar')!r}, gated {gated!r}")
-
-    def test_the_bundle_swapped_for_a_symlink_after_it_was_judged_is_not_followed(self):
-        self.write_bundle(self.bundle_entries())
-        module = h.load(S)
-        real = module.check_bundle
-        evil = self.path("evil.zip")
-        write_zip(evil, [("x", b"EVIL BYTES")])
-
-        def swap(*args, **kwargs):
-            result = real(*args, **kwargs)
-            os.remove(self.bundle_path)
-            os.symlink(evil, self.bundle_path)
-            return result
-        module.check_bundle = swap
-        try:
-            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true", "--stage", self.stage])
-        finally:
-            module.check_bundle = real
-        self.assertNotIn(b"EVIL BYTES", b"".join(self.staged().values()))
-
-    def test_the_bundle_replaced_by_another_zip_after_it_was_judged_is_not_staged(self):
-        self.write_bundle(self.bundle_entries())
-        with open(self.bundle_path, "rb") as fh:
-            judged = fh.read()
-        module = h.load(S)
-        real = module.check_bundle
-
-        def swap(*args, **kwargs):
-            result = real(*args, **kwargs)
-            write_zip(self.bundle_path, [("x", b"EVIL BYTES")])
-            return result
-        module.check_bundle = swap
-        try:
-            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true", "--stage", self.stage])
-        finally:
-            module.check_bundle = real
-        staged = self.staged().get("central-publishing/central-bundle.zip") if os.path.exists(self.stage) else None
-        self.assertTrue(res.rc != 0 or staged == judged)
 
     def test_an_unreadable_stage_destination_ends_in_one_error_line(self):
         res = self.stage_run(stage=os.path.join("/proc", "no-such", "stage"))

@@ -5,19 +5,13 @@ module where a file has to change at an exact point between two steps.
 """
 from __future__ import annotations
 
-import contextlib
-import hashlib
-import io
 import os
 import shutil
-import tempfile
-import unicodedata
 import zipfile
 
 import caps_release_helpers as h
-from readiness_support import GROUP, Fixture, pom_xml, sig_of, write_zip
-from test_staging_binding import Staged, bounded, patched
-from zip_support import Entry, build, compress
+from readiness_support import GROUP, Fixture, pom_xml
+from test_staging_binding import Staged, patched
 
 S = "check_release_readiness"
 NAMES = ["a-1.0.0.jar", "a-1.0.0-sources.jar", "a-1.0.0-javadoc.jar", "a-1.0.0.pom", "a-1.0.0.jar.asc", "a-1.0.0-sources.jar.asc",
@@ -38,13 +32,6 @@ class Descriptors(Staged):
                 with self.assertRaises(OSError):
                     self.mod.take(self.path(name), self.tmpdir)
         self.assertEqual(self.open_descriptors(), before)
-
-    def test_the_size_limit_is_inclusive(self):
-        size = os.path.getsize(self.live("a-1.0.0.jar"))
-        private, _ = self.mod.take(self.live("a-1.0.0.jar"), self.tmpdir, size)
-        self.assertEqual(os.path.getsize(private), size)
-        with self.assertRaisesRegex(OSError, f"larger than {size - 1} bytes"):
-            self.mod.take(self.live("a-1.0.0.jar"), self.tmpdir, size - 1)
 
     def test_the_private_directory_of_the_gate_is_closed_to_others(self):
         self.use_py_gpg()
@@ -80,14 +67,6 @@ class ChecksOnThePrivateRead(Staged):
             with open(self.live("a-1.0.0.pom"), "w") as fh:
                 fh.write(pom_xml(GROUP, "evil", "9.9.9"))
         self.accepted(self.gate_with_swap("a-1.0.0.pom", swap))
-
-    def test_the_bundle_is_judged_on_the_copy(self):
-        self.write_bundle(self.bundle_entries())
-
-        def swap():
-            with open(self.bundle_path, "wb") as fh:
-                fh.write(b"not a zip")
-        self.accepted(self.gate_with_swap("central-bundle.zip", swap, "--expect-bundle", "true"))
 
     def test_a_signature_is_checked_with_the_copies_of_both_files(self):
         self.use_py_gpg()
@@ -137,7 +116,7 @@ class Staging(Staged):
         with open(victim, "wb") as fh:
             fh.write(b"keep")
         os.makedirs(dest)
-        self.assertTrue(self.mod.stage(dest, self.target, ["a-1.0.0.jar"], None, errors.append, None) in (True, False))
+        self.assertTrue(self.mod.stage(dest, self.target, ["a-1.0.0.jar"], errors.append, None) in (True, False))
         self.assertEqual(errors, [])
         with open(os.path.join(dest, "a-1.0.0.jar"), "rb") as fh:
             self.assertEqual(fh.read(), self.read_target("a-1.0.0.jar"))
@@ -152,7 +131,7 @@ class Staging(Staged):
         os.symlink(victim, self.live("a-1.0.0.jar"))
         errors.clear()
         shutil.rmtree(dest)
-        self.mod.stage(dest, self.target, ["a-1.0.0.jar"], None, errors.append, None)
+        self.mod.stage(dest, self.target, ["a-1.0.0.jar"], errors.append, None)
         self.assertEqual(len(errors), 1)
         self.assertIn("cannot be staged", errors[0])
 
@@ -168,163 +147,10 @@ class Staging(Staged):
             self.mod.copy_gated(self.live("a-1.0.0.jar"), dst, (private, digest))
         self.assertFalse(os.path.lexists(dst), "the copy that failed its digest is unlinked")
 
-    def test_the_bundle_check_alone_leaves_no_directory_behind(self):
-        self.write_bundle(self.bundle_entries())
-        built = {"a-1.0.0": (GROUP, "a", "1.0.0")}
-        held = {n: (None, hashlib.sha256(self.read_target(n)).hexdigest()) for n in NAMES}
-        errors = []
-        with self.private_tmp(), contextlib.redirect_stdout(io.StringIO()):
-            ok = self.mod.check_bundle(self.target, self.bundle_path, built, errors.append, lambda a, b: True, held)
-        self.assertTrue(ok, errors)
-        self.assertEqual(os.listdir(self.tmpdir), [], "the scratch directory made for a call with none is removed")
-
-
-class Oversize(Staged):
-    def test_a_bundle_file_over_the_size_bound_is_refused_without_being_read(self):
-        os.makedirs(os.path.dirname(self.bundle_path), exist_ok=True)
-        with open(self.bundle_path, "wb") as fh:
-            fh.truncate(self.mod.MAX_TOTAL_BYTES + 1)
-        with bounded(60):
-            res = self.run_gate("--expect-bundle", "true")
-        self.assertEqual(res.rc, 1, res)
-        self.assertIn(f"larger than {self.mod.MAX_TOTAL_BYTES} bytes", res.err)
-        self.assertEqual(os.listdir(self.tmpdir), [], "nothing of it was copied")
-
-    def test_the_refusal_of_an_oversize_bundle_is_a_central_bundle_line(self):
-        os.makedirs(os.path.dirname(self.bundle_path), exist_ok=True)
-        with open(self.bundle_path, "wb") as fh:
-            fh.truncate(self.mod.MAX_TOTAL_BYTES + 1)
-        res = self.run_gate("--expect-bundle", "true")
-        self.assertIn("central bundle:", res.err)
-        self.assertNotIn("unexpectedly", res.err)
-
-
-class UnreadableEntries(Fixture):
-    """The layout is sound and the content is not: an entry that cannot be read ends in one line that names why."""
-
-    def setUp(self):
-        super().setUp()
-        self.real_coordinate()
-        self.mod = h.load(S)
-
-    def entries(self, last=False, **overrides):
-        """The correct bundle, with OVERRIDES applied to the main jar's entry (or to the last entry)."""
-        items = list(self.bundle_entries().items())
-        out = []
-        for i, (n, d) in enumerate(items):
-            e = Entry(n, d, method=8)
-            if (last and i == len(items) - 1) or (not last and n.endswith("a-1.0.0.jar")):
-                for k, v in overrides.items():
-                    setattr(e, k, v)
-            out.append(e)
-        return out
-
-    def judge(self, entries, layout_off=False):
-        data, _ = build(entries)
-        os.makedirs(os.path.dirname(self.bundle_path), exist_ok=True)
-        with open(self.bundle_path, "wb") as fh:
-            fh.write(data)
-        argv = ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"]
-        if layout_off:
-            with patched(self.mod, layout_problem=lambda *a: None):
-                return h.run_main(S, argv)
-        return h.run_main(S, argv)
-
-    def one_line(self, res, kind):
-        self.refused(res, f"central bundle: an entry cannot be read ({kind})")
-        self.assertEqual(len([e for e in res.errors() if "central bundle:" in e]), 1)
-        self.assertNotIn("unexpectedly", res.err)
-
-    JAR = "eu/exeris/caps/a/1.0.0/a-1.0.0.jar"
-
-    def test_a_bad_crc_is_a_layout_finding_that_names_the_entry(self):
-        jar = self.read_target("a-1.0.0.jar")
-        entries = self.entries(method=0, raw=bytes([jar[0] ^ 0xFF]) + jar[1:])
-        res = self.judge(entries)
-        self.refused(res, f"central bundle: an entry does not have the CRC it declares ({self.JAR})")
-        self.assertNotIn("unexpectedly", res.err)
-
-    def test_a_damaged_deflate_stream_is_a_layout_finding_that_names_the_entry(self):
-        res = self.judge(self.entries(raw=b"\xff\xff\xff\xff\xff\xff"))
-        self.refused(res, f"central bundle: a deflate stream cannot be inflated ({self.JAR})")
-        self.assertNotIn("unexpectedly", res.err)
-
-    def test_an_entry_that_claims_more_bytes_than_the_file_holds_is_refused_by_zipfile_as_overlapping(self):
-        """`EOFError` cannot be reached through an archive on disk: zipfile refuses an overlapping entry first."""
-        entries = self.entries(last=True, method=0, local={"csize": 10 ** 5, "usize": 10 ** 5}, central={"csize": 10 ** 5, "usize": 10 ** 5})
-        self.one_line(self.judge(entries, layout_off=True), "BadZipFile")
-
-    def test_a_method_nobody_can_read_is_not_implemented_when_the_layout_check_is_out_of_the_way(self):
-        entries = self.entries(local={"method": 1}, central={"method": 1})
-        self.one_line(self.judge(entries, layout_off=True), "NotImplementedError")
-
-    def test_every_error_a_reader_can_raise_while_an_entry_is_read_is_one_line(self):
-        """Each kind of failure the handler names, raised at the point where an entry is read."""
-        import zlib
-        for exc in (zipfile.BadZipFile("bad"), zlib.error("bad"), EOFError("bad"), RuntimeError("bad"), NotImplementedError("bad")):
-            with self.subTest(type(exc).__name__):
-                def digest_of(*_a, _exc=exc):
-                    raise _exc
-                self.write_bundle(self.bundle_entries())
-                with patched(self.mod, digest_of=digest_of):
-                    res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"])
-                self.one_line(res, type(exc).__name__)
-
-    def test_an_error_that_is_not_one_of_those_is_the_generic_failure_line(self):
-        def digest_of(*_a):
-            raise KeyError("bad")
-        self.write_bundle(self.bundle_entries())
-        with patched(self.mod, digest_of=digest_of):
-            res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"])
-        self.refused(res, "failed unexpectedly (KeyError")
-        self.assertEqual(len(res.errors()), 1)
-
-    def test_an_encrypted_entry_needs_a_password_when_the_layout_check_is_out_of_the_way(self):
-        entries = self.entries(flags=0x1)
-        self.one_line(self.judge(entries, layout_off=True), "RuntimeError")
-
-
-class Folds(Fixture):
-    def test_names_that_are_equal_only_after_the_second_normalisation_collide(self):
-        """Case folding can leave a string unnormalised: U+0390 and a capital iota with two marks fold to different
-        spellings of the same text, which a file system that normalises again would merge."""
-        mod = h.load(S)
-        first, second = "x\u0390.txt", "x\u0399\u0308\u0301.txt"
-        once = lambda n: unicodedata.normalize("NFKC", n).casefold()
-        self.assertNotEqual(once(first), once(second), "a single pass tells them apart")
-        self.assertEqual(mod.fold(first), mod.fold(second))
-        self.real_coordinate()
-        entries = self.bundle_entries()
-        d = "eu/exeris/caps/a/1.0.0"
-        entries[f"{d}/{first}"] = b"1"
-        entries[f"{d}/{second}"] = b"2"
-        write_zip(self.bundle_path, list(entries.items()))
-        res = h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"])
-        self.refused(res, "collide under case folding or Unicode normalisation")
-
-
 class Reporting(Fixture):
     def setUp(self):
         super().setUp()
         self.real_coordinate()
-
-    def run_bundle(self, entries):
-        write_zip(self.bundle_path, list(entries.items()))
-        return h.run_main(S, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"])
-
-    def test_a_signature_of_a_signature_is_not_a_gated_file(self):
-        entries = self.bundle_entries()
-        d = "eu/exeris/caps/a/1.0.0/a-1.0.0"
-        entries[f"{d}.jar.asc.asc"] = b"x"
-        self.refused(self.run_bundle(entries), f"{d}.jar.asc.asc is not one of the gated files")
-
-    def test_a_stray_name_is_reported_once_and_only_once(self):
-        entries = self.bundle_entries()
-        entries["eu/exeris/caps/a/1.0.0/orphan.txt"] = b"x"
-        res = self.run_bundle(entries)
-        self.refused(res)
-        lines = [e for e in res.errors() if "orphan.txt" in e]
-        self.assertEqual(len(lines), 1, lines)
 
     def test_a_pom_that_cannot_be_read_is_one_finding_and_not_also_a_missing_coordinate(self):
         for text in ("<project", "not xml", "", "<a></b>"):

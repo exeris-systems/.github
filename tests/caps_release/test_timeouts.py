@@ -118,21 +118,6 @@ class GateGpg(Fixture):
         self.assertFalse(os.path.lexists(stage))
         self.assertEqual(os.listdir(self.tmpdir), [])
 
-    def test_the_same_for_the_signatures_inside_a_bundle(self):
-        self.use_py_gpg()
-        self.write_bundle(self.bundle_entries())
-        saved = tempfile.tempdir
-        tempfile.tempdir = self.tmpdir
-        try:
-            with patched(self.mod, SUBPROCESS_TIMEOUT=0.3), bounded(60):
-                res = h.run_main(READY, ["--target-dir", self.target, "--gpg", self.gpg, "--expect-bundle", "true"],
-                                 env=h.clean_env(PYGPG_SLEEP="30"))
-        finally:
-            tempfile.tempdir = saved
-        self.refused(res, "is not a good signature")
-        self.assertEqual(len([e for e in res.errors() if "of the bundle's own file" in e]), 4)
-        self.assertEqual(os.listdir(self.tmpdir), [])
-
     def test_a_gpg_that_answers_within_the_bound_is_not_cut_short(self):
         self.use_py_gpg()
         with patched(self.mod, SUBPROCESS_TIMEOUT=5):
