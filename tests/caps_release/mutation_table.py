@@ -40,7 +40,7 @@ READY = ["test_release_readiness", "test_readiness_adversarial", "test_readiness
 REMOVE = ["test_remove_signing_key.Removal", "test_key_removal_adversarial.Inspection", "test_key_removal_adversarial.HostilePaths",
           "test_key_removal_adversarial.Real", "test_unexpected.Injected.test_key_removal_ends_an_unexpected_exception_with_one_line_and_cleans_up",
           "test_key_removal_finally.PathCharacters", "test_key_removal_finally.Links", "test_key_removal_finally.Endings",
-          "test_literal_paths", "test_timeouts.KeyRemoval", "test_timeouts.KeyBounds"]
+          "test_literal_paths", "test_verify_home_link", "test_timeouts.KeyRemoval", "test_timeouts.KeyBounds"]
 RUNNER = ["test_runner.Runner"]
 
 # --- resolve_release.py ------------------------------------------------------------------------------------------------
@@ -479,8 +479,8 @@ m(k, "    if os.path.islink(secret_home):\n        fail(", "    if False:\n     
 m(k, "    elif os.path.isdir(secret_home):\n        try:", "    elif False:\n        try:", REMOVE)
 m(k, '[a.gpgconf, "--kill", "gpg-agent"]', '[a.gpgconf, "--reload", "gpg-agent"]', REMOVE)
 m(k, 'env={**os.environ, "GNUPGHOME": secret_home},\n                           stdout=subprocess.DEVNULL', 'env={**os.environ, "GNUPGHOME": a.verify_home},\n                           stdout=subprocess.DEVNULL', REMOVE)
-m(k, "        shutil.rmtree(secret_home, ignore_errors=True)\n    if problems:\n        return", "        pass\n    if problems:\n        return", REMOVE)
-m(k, "        shutil.rmtree(secret_home, ignore_errors=True)\n    if problems:\n        return", "        shutil.rmtree(secret_home, ignore_errors=True)\n    if False:\n        return", REMOVE)
+m(k, "        shutil.rmtree(secret_home, ignore_errors=True)\n    if os.path.islink(verify_home):", "        pass\n    if os.path.islink(verify_home):", REMOVE)
+m(k, '"changed or imported through it.")\n    if problems:\n        return', '"changed or imported through it.")\n    if False:\n        return', REMOVE)
 m(k, "if os.path.isfile(a.public_key) and os.path.getsize(a.public_key) > 0:", "if os.path.isfile(a.public_key) and os.path.getsize(a.public_key) >= 0:", REMOVE)
 m(k, "if os.path.isfile(a.public_key) and os.path.getsize(a.public_key) > 0:", "if False:", REMOVE)
 m(k, 'inspect = tempfile.mkdtemp(prefix="gnupg-inspect-")', 'inspect = a.verify_home', REMOVE)
@@ -515,6 +515,20 @@ m(k, 'with open(a.env_file, "a", encoding="utf-8") as fh:', 'with open(a.env_fil
 m(k, 'fh.write(f"GNUPGHOME={a.verify_home}\\n")', 'fh.write(f"GNUPGHOME={a.verify_home}")', REMOVE)
 m(k, 'fh.write(f"GNUPGHOME={a.verify_home}\\n")', 'fh.write(f"GNUPGHOME={a.secret_home}\\n")', REMOVE)
 m(k, "{' '.join(str(exc).split())}).\")", "{exc}).\")", REMOVE)
+
+# the verify home that is a symbolic link: refused on its literal spelling, before anything is created, changed or imported
+VL = '    if os.path.islink(verify_home):\n        fail("the verify home is a symbolic link, which is reported and not followed: nothing is created, "\n             "changed or imported through it.")\n'
+m(k, VL, VL.replace("if os.path.islink(verify_home):", "if False:"), REMOVE)
+m(k, VL, VL.replace("if os.path.islink(verify_home):", "if not os.path.islink(verify_home):"), REMOVE)
+m(k, VL, VL.replace("os.path.islink(verify_home)", "os.path.islink(a.verify_home)"), REMOVE)
+m(k, VL, VL.replace("os.path.islink(verify_home)", "os.path.islink(a.verify_home.rstrip(os.sep))"), REMOVE)
+m(k, VL, VL.replace("        fail(", "        problems.append("), REMOVE)
+m(k, VL, VL.replace("the verify home is a symbolic link, which", "the home is a link, which"), REMOVE)
+m(k, VL, "    if os.path.islink(verify_home):\n        pass\n", REMOVE)
+VL_CHECK_THEN_RETURN = VL + "    if problems:\n        return\n"
+m(k, VL_CHECK_THEN_RETURN, "    if problems:\n        return\n" + VL, REMOVE)      # judged only when the secret home had no problem
+VL_TO_CHMOD = '    if os.path.islink(verify_home):\n        fail("the verify home is a symbolic link, which is reported and not followed: nothing is created, "\n             "changed or imported through it.")\n    if problems:\n        return\n\n    verify_env = {**os.environ, "GNUPGHOME": a.verify_home}\n    if os.path.isfile(a.public_key) and os.path.getsize(a.public_key) > 0:\n        inspect = tempfile.mkdtemp(prefix="gnupg-inspect-")\n        try:\n            shown = subprocess.run([a.gpg, "--batch", "--show-keys", "--with-colons", a.public_key],\n                                   env={**os.environ, "GNUPGHOME": inspect}, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)\n        finally:\n            shutil.rmtree(inspect, ignore_errors=True)\n        if shown.returncode != 0:\n            fail(f"the public key could not be imported: it could not be inspected: {shown.stderr.strip()}")\n        elif any(ln.split(":", 1)[0] in ("sec", "ssb") for ln in shown.stdout.splitlines()):\n            fail("the file named as the public key holds a secret key and was not imported; "\n                 "a secret key is still on the runner in that file until it is deleted.")\n        else:\n            os.makedirs(verify_home, mode=0o700, exist_ok=True)\n            os.chmod(verify_home, 0o700)\n            done = subprocess.run([a.gpg, "--batch", "--import", a.public_key], env=verify_env,\n                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,\n                                  timeout=SUBPROCESS_TIMEOUT)\n            if done.returncode != 0:\n                fail(f"the public key could not be imported: {done.stderr.strip()}")\n    try:\n        os.remove(a.public_key)\n    except FileNotFoundError:\n        pass\n    if problems:\n        return\n\n    os.makedirs(verify_home, mode=0o700, exist_ok=True)\n    os.chmod(verify_home, 0o700)\n    if os.path.lexists(secret_home):'
+m(k, VL_TO_CHMOD, '    if problems:\n        return\n\n    verify_env = {**os.environ, "GNUPGHOME": a.verify_home}\n    if os.path.isfile(a.public_key) and os.path.getsize(a.public_key) > 0:\n        inspect = tempfile.mkdtemp(prefix="gnupg-inspect-")\n        try:\n            shown = subprocess.run([a.gpg, "--batch", "--show-keys", "--with-colons", a.public_key],\n                                   env={**os.environ, "GNUPGHOME": inspect}, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)\n        finally:\n            shutil.rmtree(inspect, ignore_errors=True)\n        if shown.returncode != 0:\n            fail(f"the public key could not be imported: it could not be inspected: {shown.stderr.strip()}")\n        elif any(ln.split(":", 1)[0] in ("sec", "ssb") for ln in shown.stdout.splitlines()):\n            fail("the file named as the public key holds a secret key and was not imported; "\n                 "a secret key is still on the runner in that file until it is deleted.")\n        else:\n            os.makedirs(verify_home, mode=0o700, exist_ok=True)\n            os.chmod(verify_home, 0o700)\n            done = subprocess.run([a.gpg, "--batch", "--import", a.public_key], env=verify_env,\n                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,\n                                  timeout=SUBPROCESS_TIMEOUT)\n            if done.returncode != 0:\n                fail(f"the public key could not be imported: {done.stderr.strip()}")\n    try:\n        os.remove(a.public_key)\n    except FileNotFoundError:\n        pass\n    if problems:\n        return\n\n    os.makedirs(verify_home, mode=0o700, exist_ok=True)\n    os.chmod(verify_home, 0o700)\n    if os.path.islink(verify_home):\n        fail("the verify home is a symbolic link, which is reported and not followed: nothing is created, "\n             "changed or imported through it.")\n    if os.path.lexists(secret_home):', REMOVE)   # judged after the directory has been created and tightened
 
 # the finally: literal removal on every way out, and the bound on every tool
 m(k, "SUBPROCESS_TIMEOUT = 120", "SUBPROCESS_TIMEOUT = 121", REMOVE)
