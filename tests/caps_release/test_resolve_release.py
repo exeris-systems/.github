@@ -567,6 +567,101 @@ class RealComparison(h.Case):
         self.assertFalse(os.path.exists(self.args_log))
 
 
+class JavaInputs(h.Case):
+    """`--java-distribution` and `--java-version`: validated when given, written to the output exactly as given, absent when not given."""
+
+    DISTRIBUTIONS_OK = ["temurin", "graalvm"]
+    DISTRIBUTIONS_BAD = ["Temurin", "TEMURIN", "GraalVM", "zulu", "jdkfile", "temurin ", " temurin", "$(x)", "temurin;x", "temurin\n", "", "oracle", "temurin,graalvm",
+                         "temurın"]
+    VERSIONS_OK = ["25", "21.x", "25.0.2", "8", "17", "99", "25.0", "11.0.21", "17.999.999", "21.0", "9.x"]
+    VERSIONS_BAD = ["0", "025", "25.x.1", "1000", "25.0.2.1", "25.", " 25", "25 ", "\u0662\u0665", "", "x", "21.X", "25.00", "25.0.02", "25.1000", "25.0.1000",
+                    "25.0.x", "25ax", "25-x", "25_x", "25x", "25 x", "25/x", "25-ea", "25+36", "v25", "-25", "$(x)", "25\n", "100", ".x", "25.x ", "25..2", "08", "25.０"]
+
+    def test_the_two_distributions_are_accepted_and_written(self):
+        for value in self.DISTRIBUTIONS_OK:
+            with self.subTest(value):
+                out = self.path(f"out-{value}")
+                self.accepted(self.both(SCRIPT, argv(BRANCH, output=out) + ["--java-distribution", value]))
+                with open(out) as fh:
+                    self.assertEqual(fh.read(), f"version=1.2.3\npublish=false\njava-distribution={value}\n")
+
+    def test_every_other_distribution_is_one_refusal_that_writes_nothing(self):
+        for value in self.DISTRIBUTIONS_BAD:
+            with self.subTest(repr(value)):
+                out = self.write("out", "keep=1\n")
+                res = self.both(SCRIPT, argv(BRANCH, output=out) + ["--java-distribution", value])
+                self.refused(res)
+                self.assertEqual(len(res.errors()), 1, res)
+                self.assertEqual(res.out, "")
+                with open(out) as fh:
+                    self.assertEqual(fh.read(), "keep=1\n")
+
+    def test_the_refusal_names_the_input_and_the_allowed_values(self):
+        res = self.both(SCRIPT, argv(BRANCH) + ["--java-distribution", "zulu"])
+        self.refused(res, "java-distribution must be one of temurin, graalvm, got 'zulu'")
+
+    def test_the_versions_the_form_allows_are_accepted_and_written(self):
+        for value in self.VERSIONS_OK:
+            with self.subTest(value):
+                out = self.path(f"out-{value}")
+                self.accepted(self.both(SCRIPT, argv(BRANCH, output=out) + ["--java-version", value]))
+                with open(out) as fh:
+                    self.assertEqual(fh.read(), f"version=1.2.3\npublish=false\njava-version={value}\n")
+
+    def test_every_other_version_is_one_refusal_that_writes_nothing(self):
+        for value in self.VERSIONS_BAD:
+            with self.subTest(repr(value)):
+                out = self.write("out", "keep=1\n")
+                res = self.both(SCRIPT, argv(BRANCH, output=out) + ["--java-version", value])
+                self.refused(res)
+                self.assertEqual(len(res.errors()), 1, res)
+                self.assertEqual(res.out, "")
+                with open(out) as fh:
+                    self.assertEqual(fh.read(), "keep=1\n")
+
+    def test_the_refusal_names_the_input_and_the_form(self):
+        self.refused(self.both(SCRIPT, argv(BRANCH) + ["--java-version", "0"]), "java-version must be NN, NN.x or NN.N.N (for example 25, 21.x or 25.0.2), got '0'")
+
+    def test_both_are_written_after_the_version_and_the_publish_line_in_a_fixed_order(self):
+        out = self.path("out")
+        self.accepted(self.both(SCRIPT, argv(BRANCH, output=out) + ["--java-version", "21.x", "--java-distribution", "graalvm"]))
+        with open(out) as fh:
+            self.assertEqual(fh.read(), "version=1.2.3\npublish=false\njava-distribution=graalvm\njava-version=21.x\n")
+
+    def test_a_flag_that_is_not_passed_is_neither_validated_nor_written(self):
+        """The resolver does not make the JDK a required input: the workflow passes both flags (see `test_workflow`), and without them the
+        output holds no `java-*` line, so a step that reads one gets the empty string."""
+        out = self.path("out")
+        self.accepted(self.both(SCRIPT, argv(BRANCH, output=out)))
+        with open(out) as fh:
+            self.assertEqual(fh.read(), "version=1.2.3\npublish=false\n")
+        for only, line in (("--java-distribution", "java-distribution=temurin"), ("--java-version", "java-version=25")):
+            with self.subTest(only):
+                out = self.path(f"out-{only}")
+                self.accepted(self.both(SCRIPT, argv(BRANCH, output=out) + [only, line.split("=")[1]]))
+                with open(out) as fh:
+                    lines = fh.read().splitlines()
+                self.assertEqual([ln for ln in lines if ln.startswith("java-")], [line])
+
+    def test_an_empty_value_is_given_and_therefore_refused_unlike_an_absent_flag(self):
+        self.refused(self.both(SCRIPT, argv(BRANCH) + ["--java-version", ""]))
+        self.refused(self.both(SCRIPT, argv(BRANCH) + ["--java-distribution", ""]))
+
+    def test_a_control_character_in_either_is_refused_as_one(self):
+        for flag in ("--java-distribution", "--java-version"):
+            for c in c0_c1():
+                with self.subTest(flag=flag, char=repr(c)):
+                    res = h.run_main(SCRIPT, argv(BRANCH) + [flag, "temurin" + c if "dist" in flag else "25" + c])
+                    self.refused(res, f"::error::{flag[2:]} holds a control character")
+                    self.assertEqual(len(res.errors()), 1, res)
+
+    def test_a_refusal_elsewhere_still_writes_no_java_line(self):
+        out = self.write("out", "")
+        self.refused(self.both(SCRIPT, argv(BRANCH, version="1.2", output=out) + ["--java-distribution", "temurin", "--java-version", "25"]))
+        with open(out) as fh:
+            self.assertEqual(fh.read(), "")
+
+
 class Usage(h.Case):
     def test_unknown_flag_is_a_usage_error(self):
         self.assertEqual(h.run_proc(SCRIPT, ["--nope", "x"]).rc, 2)

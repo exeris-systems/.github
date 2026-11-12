@@ -45,6 +45,11 @@ What the suite covers, per script, on the accepting path and on every refusing p
 - An unexpected failure in any script is one `::error::` line; usage errors are exit 2.
 - ASCII-only versions in `resolve_release.py`, `scan_snapshots.py` and the gate; the XML size and depth bounds of the four POM readers.
 
+`test_base_rule.py` holds one table of base names (`base_rule_support.py`, with an independent statement of the rule) to the readiness gate,
+`create` and `verify`, runs a seeded sample of 20 000 names over a hostile alphabet through the three, and runs the workflow's own upload step with a
+`mvn` that records its arguments to show that the files it names are exactly the files of each accepted base. `test_manifest_refusals.py` covers the
+literal reading of `--dir`, a file that vanishes, the final line of every refusal of `verify`, the `--name` pattern and the top-level handler.
+
 `test_upload_command.py` runs the `upload` job of the workflow against a `file://` repository: the real gate stages a fixture build, the
 manifest is made of the staged directory, the directory is copied to a fresh download directory, and the job's own comparison, settings and
 upload steps run from it. It needs `mvn`, `/usr/bin/python3` and the deploy plugin in the local Maven repository, and is skipped, never
@@ -72,7 +77,8 @@ test, so an empty suite cannot pass.
   in any spelling; the key in the import step and the passphrase in the signing step of `publish`); that `upload` and `attest` check out
   only this repository's scripts, restore no cache, run no file from the download directory, interpolate nothing into shell text and take
   only the manifest and the artifact name from `publish`; the order of the steps of `upload` and of `publish`; that the manifest travels as
-  a job output and is compared before anything is uploaded or attested; the pins, the defaults and the scripts' digest.
+  a job output and is compared before anything is uploaded or attested; that both JDK inputs reach the resolver through the environment of the resolve step
+  and nowhere else, `build` publishes what it wrote, and every `setup-java` step reads those outputs and never an input; the pins, the defaults and the scripts' digest.
   `test_workflow.py` mutates the workflow text (and moves steps) at least once per identifier the checker can report.
 - A test marked `known_defect` states the correct behaviour of a script that does not have it yet. It
   is reported as an expected failure and becomes an unexpected success, which fails the run, when the
