@@ -156,6 +156,9 @@ def removal(a: argparse.Namespace, fail, problems: list[str]) -> None:
         except (OSError, subprocess.TimeoutExpired):
             pass
         shutil.rmtree(secret_home, ignore_errors=True)
+    if os.path.islink(verify_home):
+        fail("the verify home is a symbolic link, which is reported and not followed: nothing is created, "
+             "changed or imported through it.")
     if problems:
         return
 

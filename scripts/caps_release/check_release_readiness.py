@@ -39,9 +39,10 @@ subprocess call is bounded by a timeout, and an expiry is a refusal.
 Usage: check_release_readiness.py --target-dir DIR [--gpg PATH] [--stage DIR]
 
   --gpg            the gpg executable (default `gpg`)
-  --stage          a directory that does not exist yet; on a run without findings the gated files are
-                   copied into it, so that what a later step uploads or attests is the set that was
-                   gated and nothing else; on a run with a finding it is not created
+  --stage          a directory that does not exist yet or exists and is empty (a symbolic link, a file
+                   and a directory with content are refused); on a run without findings the gated
+                   files are copied into it, so that what a later step uploads or attests is the set
+                   that was gated and nothing else; on a run with a finding it is not created
 
 Exit status: 0 ready; 1 any finding; 2 usage error.
 Output: `coordinate: <name> - main, sources, javadoc, pom, signatures` per coordinate without a finding,
