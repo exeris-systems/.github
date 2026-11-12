@@ -10,6 +10,9 @@ from __future__ import annotations
 import inspect
 import os
 import re
+import shutil
+import subprocess
+import textwrap
 import unittest
 
 import caps_release_helpers as h
@@ -116,10 +119,10 @@ mut("token-holders:publish", [("publish", "        run: mvn -B -ntp compile -Dex
     [("publish", "        run: mvn -B -ntp compile -Dexeris.codegen.skip=true", '        run: curl -H "Authorization: ${{ github.token }}" x')],
     [("publish", "        run: mvn -B -ntp compile -Dexeris.codegen.skip=true", '        run: curl -H "Authorization: $GITHUB_TOKEN" x')],
     [("publish", PUBLISH_SEED, PUBLISH_SEED + "        if: ${{ github.token != '' }}\n")],
-    [("publish", "          distribution: ${{ inputs.java-distribution }}\n", "          distribution: ${{ inputs.java-distribution }}\n          token: ${{ github.token }}\n")])
+    [("publish", "          distribution: ${{ needs.build.outputs.java-distribution }}\n", "          distribution: ${{ needs.build.outputs.java-distribution }}\n          token: ${{ github.token }}\n")])
 mut("token-holders:attest", [("attest", "      - name: Attest build provenance (SLSA)\n", "      - name: Attest build provenance (SLSA)\n        env:\n          GH_TOKEN: x\n")])
 mut("token-holders:upload", [("upload", SETTINGS, SETTINGS.replace("        run: |\n", "        env:\n          GITHUB_TOKEN: x\n        run: |\n"))],
-    [("upload", "          distribution: ${{ inputs.java-distribution }}\n", "          distribution: ${{ inputs.java-distribution }}\n          token: ${{ github.token }}\n")],
+    [("upload", "          distribution: ${{ needs.build.outputs.java-distribution }}\n", "          distribution: ${{ needs.build.outputs.java-distribution }}\n          token: ${{ github.token }}\n")],
     [("upload", "          cat > \"$RUNNER_TEMP/release-settings.xml\" <<'XML'", "          echo \"${{ github.token }}\"\n          cat > \"$RUNNER_TEMP/release-settings.xml\" <<'XML'")],
     [("upload", "                <password>${env.GITHUB_TOKEN}</password>", "                <password>${{ github.token }}</password>")],
     [("upload", UPLOAD + "        env:\n          GITHUB_TOKEN: ${{ github.token }}\n", UPLOAD)])
@@ -216,7 +219,34 @@ mut("upload-goal", [("upload", "maven-deploy-plugin:3.1.4:deploy-file", "maven-d
 mut("settings-placeholders", [("upload", "<<'XML'", "<<XML")], [("upload", "<password>${env.GITHUB_TOKEN}</password>", "<password>abc</password>")],
     [("upload", SETTINGS, SETTINGS.replace("        run: |\n", "        env:\n          X: y\n        run: |\n"))])
 mut("upload-step-not-unique", [("upload", UPLOAD, "      - name: Send the gated files\n")])
-mut("input-reaches-job:upload", [("upload", "          java-version: ${{ inputs.java-version }}\n", "          java-version: ${{ inputs.version }}\n")])
+mut("input-reaches-job:upload", [("upload", "          java-version: ${{ needs.build.outputs.java-version }}\n", "          java-version: ${{ inputs.version }}\n")],
+    [("upload", "          java-version: ${{ needs.build.outputs.java-version }}\n", "          java-version: ${{ inputs.java-version }}\n")])
+
+# --- the JDK a job installs is the one the resolver accepted -------------------------------------------------------------------
+JDK_RESOLVE = '            --java-distribution "$IN_JAVA_DISTRIBUTION" --java-version "$IN_JAVA_VERSION" \\\n'
+mut("jdk-not-resolved", [("build", JDK_RESOLVE, "")], [("build", '--java-distribution "$IN_JAVA_DISTRIBUTION" ', "")],
+    [("build", '--java-version "$IN_JAVA_VERSION" ', "")], [("build", "IN_JAVA_VERSION: ${{ inputs.java-version }}", "IN_JAVA_VERSION: 25")],
+    [("build", "IN_JAVA_DISTRIBUTION: ${{ inputs.java-distribution }}", "IN_JAVA_DISTRIBUTION: temurin")],
+    [("build", "IN_JAVA_VERSION: ${{ inputs.java-version }}", "IN_JAVA_VERSION: ${{ inputs.version }}")],
+    [("build", '--java-version "$IN_JAVA_VERSION"', '--java-version "$IN_VERSION"')])
+mut("jdk-output", [("build", "      java-version: ${{ steps.rel.outputs.java-version }}\n", "")],
+    [("build", "      java-distribution: ${{ steps.rel.outputs.java-distribution }}\n", "")],
+    [("build", "      java-version: ${{ steps.rel.outputs.java-version }}\n", "      java-version: ${{ inputs.java-version }}\n")],
+    [("build", "      java-distribution: ${{ steps.rel.outputs.java-distribution }}\n", "      java-distribution: ${{ inputs.java-distribution }}\n")])
+for job_, source in (("build", "steps.rel.outputs"), ("publish", "needs.build.outputs"), ("upload", "needs.build.outputs")):
+    mut(f"jdk-setup-source:{job_}",
+        [(job_, f"          distribution: ${{{{ {source}.java-distribution }}}}\n", "          distribution: ${{ inputs.java-distribution }}\n")],
+        [(job_, f"          java-version: ${{{{ {source}.java-version }}}}\n", "          java-version: ${{ inputs.java-version }}\n")],
+        [(job_, f"          java-version: ${{{{ {source}.java-version }}}}\n", "          java-version: \"25\"\n")],
+        [(job_, f"          distribution: ${{{{ {source}.java-distribution }}}}\n", "          distribution: temurin\n")],
+        [(job_, f"      - name: Set up JDK ${{{{ {source}.java-version }}}}\n", "      - name: Set up JDK ${{ inputs.java-version }}\n")],
+        [(job_, "uses: actions/setup-java@", "uses: actions/cache@")])
+mut("jdk-setup-source:attest", [("attest", "      - name: Compare the downloaded files with the manifest\n",
+                                 "      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad\n        with:\n          java-version: 25\n"
+                                 "      - name: Compare the downloaded files with the manifest\n")])
+mut("jdk-raw-input", [("publish", "      - name: Remove the signing key\n", "      - name: Echo\n        env:\n          X: ${{ inputs.java-version }}\n      - name: Remove the signing key\n")],
+    [("attest", "      - name: Compare the downloaded files with the manifest\n", "      - name: Echo\n        if: ${{ inputs['java-distribution'] == 'x' }}\n      - name: Compare the downloaded files with the manifest\n")],
+    [("build", "      java-version: ${{ steps.rel.outputs.java-version }}\n", "      java-version: ${{ steps.rel.outputs.java-version }}\n      java-extra: ${{ inputs.java-version }}\n")])
 
 # --- the order of the steps ------------------------------------------------------------------------------------------------
 MOVES: dict[str, list[tuple]] = {}
@@ -361,7 +391,7 @@ class Real(h.Case):
         jobs = self.jobs()
         self.assertEqual(set(jobs), {"build", "publish", "upload", "attest"})
         self.assertEqual([s["name"] or s["uses"][:16] for s in jobs["upload"]["steps"]],
-                         ["actions/checkout", w.INSTALL_STEP, "Set up JDK ${{ inputs.java-version }}", "Download the gated files",
+                         ["actions/checkout", w.INSTALL_STEP, "Set up JDK ${{ needs.build.outputs.java-version }}", "Download the gated files",
                           "Compare the downloaded files with the manifest", "Write the Maven settings", "Upload the gated files"])
         self.assertEqual(len(jobs["attest"]["steps"]), 5)
         names = [s["name"] for s in jobs["publish"]["steps"]]
@@ -595,7 +625,7 @@ class Adversarial(h.Case):
         return w.parse(read())["jobs"]
 
     def test_everything_interpolated_into_upload_and_attest_is_listed_and_none_of_it_is_shell_text(self):
-        """The inventory of `${{ }}` per step and place. Nothing in a `run:` block; the inputs only select the JDK."""
+        """The inventory of `${{ }}` per step and place. Nothing in a `run:` block; the JDK comes from `build`'s outputs."""
         found = {}
         for name in ("upload", "attest"):
             for s in self.jobs()[name]["steps"]:
@@ -604,29 +634,93 @@ class Adversarial(h.Case):
         self.assertEqual({n: {k: v[0] for k, v in d.items()} for n, d in found.items()}, w.INTERPOLATIONS)
         for name, d in found.items():
             self.assertFalse([k for k in d if k[1] == "run"], f"{name}: an expression inside a run block")
-        inputs = {(n, k): v for n, d in found.items() for k, v in d.items() if any(e.startswith("inputs.") for e in v)}
-        self.assertEqual(sorted(inputs), [("upload", ("Set up JDK", "name")), ("upload", ("Set up JDK", "with:distribution")),
-                                          ("upload", ("Set up JDK", "with:java-version"))])
+        from_build = {(n, k): v for n, d in found.items() for k, v in d.items() if any(e.startswith("needs.build.") for e in v)}
+        self.assertEqual(sorted(from_build), [("upload", ("Set up JDK", "name")), ("upload", ("Set up JDK", "with:distribution")),
+                                              ("upload", ("Set up JDK", "with:java-version"))])
+        for key, exprs in from_build.items():
+            self.assertTrue(all(e in ("needs.build.outputs.java-version", "needs.build.outputs.java-distribution") for e in exprs), key)
 
-    def test_the_inputs_that_reach_upload_are_the_jdk_selection_and_nothing_else(self):
-        """`version`, `generated-path`, `upload` and `target` reach no step of upload or attest; the JDK inputs reach `setup-java` as `with:` values.
-
-        The JDK a caller selects is what `setup-java` downloads and puts on the PATH of the job that holds the token. A caller
-        is the capability's own workflow and is trusted to the extent it can choose a JDK; `resolve_release.py` validates neither
-        input (see `test_the_jdk_inputs_are_not_validated_by_the_resolver`).
-        """
+    def test_no_input_reaches_a_step_of_upload_or_attest(self):
+        """The JDK is `build`'s validated output; `version`, `generated-path`, `upload`, `target` and both JDK inputs reach neither job."""
         for name in ("upload", "attest"):
             blob = "\n".join(s["raw"] for s in self.jobs()[name]["steps"])
-            for forbidden in ("inputs.version", "inputs.generated-path", "inputs.upload", "inputs.target"):
-                self.assertNotIn(forbidden, blob, f"{name} reads {forbidden}")
-        self.assertNotIn("inputs.", "\n".join(s["raw"] for s in self.jobs()["attest"]["steps"]))
+            self.assertNotIn("inputs.", blob, name)
+            self.assertNotIn("inputs[", blob, name)
 
-    def test_the_jdk_inputs_are_not_validated_by_the_resolver(self):
-        """A recorded fact: the resolve step is not given the JDK inputs, so nothing constrains them before `setup-java` receives them."""
-        resolve = next(s for s in self.jobs()["build"]["steps"] if "resolve_release.py" in s["run"])
-        self.assertNotIn("java", "\n".join([resolve["run"], *resolve["env"].values()]))
+    def test_the_raw_jdk_inputs_are_read_in_one_place_only_the_environment_of_the_resolve_step(self):
+        reads = [(name, w.short(s), key) for name, j in self.jobs().items() for s in j["steps"] for key, value in
+                 [("name", s["name"]), ("run", s["run"]), ("if", s["if"]), ("uses", s["uses"]), *s["env"].items(), *s["with"].items()]
+                 if w.RAW_JAVA_INPUT.search(value)]
+        self.assertEqual(sorted(reads), [("build", w.RESOLVE_STEP, "IN_JAVA_DISTRIBUTION"), ("build", w.RESOLVE_STEP, "IN_JAVA_VERSION")])
+        text = "\n".join(w.strip_comments(read()))
+        self.assertEqual(len(w.RAW_JAVA_INPUT.findall(text)), 2, "and nowhere else in the file: no job header, no output, no condition")
+
+    def test_the_resolve_step_hands_both_jdk_inputs_to_the_resolver_and_build_publishes_what_it_wrote(self):
+        jobs = self.jobs()
+        resolve = next(s for s in jobs["build"]["steps"] if "resolve_release.py" in s["run"])
+        self.assertEqual(resolve["name"], w.RESOLVE_STEP)
+        self.assertEqual(resolve["id"], "rel")
+        self.assertEqual(resolve["env"]["IN_JAVA_DISTRIBUTION"], "${{ inputs.java-distribution }}")
+        self.assertEqual(resolve["env"]["IN_JAVA_VERSION"], "${{ inputs.java-version }}")
+        self.assertIn('--java-distribution "$IN_JAVA_DISTRIBUTION"', resolve["run"])
+        self.assertIn('--java-version "$IN_JAVA_VERSION"', resolve["run"])
+        outputs = w.job_outputs(jobs["build"])
+        self.assertEqual(outputs["java-distribution"], "${{ steps.rel.outputs.java-distribution }}")
+        self.assertEqual(outputs["java-version"], "${{ steps.rel.outputs.java-version }}")
+
+    def test_every_setup_java_step_of_every_job_reads_the_validated_values(self):
+        jobs = self.jobs()
+        want = {"build": "steps.rel.outputs", "publish": "needs.build.outputs", "upload": "needs.build.outputs"}
+        for name, source in want.items():
+            installs = [s for s in jobs[name]["steps"] if s["uses"].startswith("actions/setup-java@")]
+            self.assertEqual(len(installs), 1, name)
+            self.assertEqual(installs[0]["name"], f"Set up JDK ${{{{ {source}.java-version }}}}")
+            self.assertEqual(installs[0]["with"]["distribution"], f"${{{{ {source}.java-distribution }}}}")
+            self.assertEqual(installs[0]["with"]["java-version"], f"${{{{ {source}.java-version }}}}")
+        self.assertEqual([s for s in jobs["attest"]["steps"] if s["uses"].startswith("actions/setup-java@")], [])
+        for name in ("publish", "upload"):
+            self.assertIn("build", w.job_value(jobs[name], "needs"), "the job that reads build's outputs waits for build")
+
+    def test_the_jdk_inputs_are_validated_by_the_resolver(self):
+        """The opposite of an unvalidated input: the resolver names both and the workflow passes both."""
         with open(h.script_path("resolve_release"), encoding="utf-8") as fh:
-            self.assertNotRegex(fh.read().lower(), r"java[-_](version|distribution)|distribution")
+            source = fh.read()
+        self.assertIn("--java-distribution", source)
+        self.assertIn("--java-version", source)
+        self.assertIn("JAVA_DISTRIBUTIONS", source)
+        self.assertIn("JAVA_VERSION", source)
+
+    def test_an_empty_jdk_value_cannot_reach_setup_java_because_the_job_fails_in_the_resolve_step(self):
+        """With the flags absent the resolver writes no `java-*` line and a step output that is never written is the empty string, which
+        is what `setup-java` would be handed. The workflow always passes both flags, so the resolve step itself refuses an empty or unset
+        value, and the step that follows it never runs."""
+        self.assertEqual(parse_github_output("version=1.2.3\npublish=false\n").get("java-version", ""), "")
+        scripts = os.path.join(self.tmp, "caps-release-scripts")
+        shutil.copytree(h.SCRIPT_DIR_OVERRIDE or h.SCRIPT_DIR, scripts, ignore=shutil.ignore_patterns("__pycache__"))
+        resolve = next(s for s in w.parse(read())["jobs"]["build"]["steps"] if "resolve_release.py" in s["run"])
+        body = textwrap.dedent(resolve["run"]).strip("\n") + "\n"
+        base = {"PATH": "/usr/bin:/bin", "RUNNER_TEMP": self.tmp, "GITHUB_REF_TYPE": "branch", "GITHUB_REF_NAME": "feature",
+                "GITHUB_REF": "refs/heads/feature", "DEFAULT_BRANCH": "main", "GITHUB_REPOSITORY": "o/r", "GITHUB_SHA": "0" * 40,
+                "IN_VERSION": "1.2.3", "IN_UPLOAD": "false", "IN_TARGET": "none", "GENERATED": "src/main/generated/",
+                "IN_JAVA_DISTRIBUTION": "temurin", "IN_JAVA_VERSION": "25", "GH_TOKEN": "x"}
+        for label, over, ok in (("valid", {}, True), ("empty version", {"IN_JAVA_VERSION": ""}, False),
+                                ("empty distribution", {"IN_JAVA_DISTRIBUTION": ""}, False),
+                                ("unset version", {"IN_JAVA_VERSION": None}, False), ("unset distribution", {"IN_JAVA_DISTRIBUTION": None}, False),
+                                ("hostile version", {"IN_JAVA_VERSION": "25; curl x"}, False), ("hostile distribution", {"IN_JAVA_DISTRIBUTION": "zulu"}, False)):
+            with self.subTest(label):
+                out = os.path.join(self.tmp, f"out-{label.replace(' ', '-')}")
+                env = {k: v for k, v in {**base, **over, "GITHUB_OUTPUT": out}.items() if v is not None}
+                done = subprocess.run(["bash", "--noprofile", "--norc", "-c", body], env=env, capture_output=True, text=True, timeout=60)
+                written = {}
+                if os.path.exists(out):
+                    with open(out, encoding="utf-8") as fh:
+                        written = parse_github_output(fh.read())
+                if ok:
+                    self.assertEqual(done.returncode, 0, done.stderr)
+                    self.assertEqual((written["java-distribution"], written["java-version"]), ("temurin", "25"))
+                else:
+                    self.assertNotEqual(done.returncode, 0, done.stdout)
+                    self.assertEqual(written, {}, "a refusal writes nothing for a later step to read")
 
     def test_the_artifact_name_is_made_of_a_validated_version_a_counter_and_twelve_hex_digits(self):
         """Nothing a capability writes reaches the name: the version is the resolver's (MAJOR.MINOR.PATCH), the attempt is a number."""
@@ -639,9 +733,22 @@ class Adversarial(h.Case):
             self.assertEqual(res.rc, 1, f"{hostile!r}: {res}")
 
     def test_the_manifest_id_in_the_name_is_twelve_hex_digits_whatever_the_file_names_are(self):
+        """Names that look like commands, keys or expansions are not releasable bases; what the rule allows is, and the id is twelve hex digits."""
+        hostile = ("a=b-1.0.0", "::error::x-1.0.0", "$(id)-1.0.0", "a%0Ab-1.0.0")
+        for base in hostile:
+            with self.subTest(refused=base):
+                d = self.path(f"refused-{abs(hash(base))}")
+                make_coordinate(d, "a-1.0.0")
+                make_coordinate(d, base)
+                out = self.path(f"refused-output-{abs(hash(base))}")
+                res = h.run_main(SCRIPT, ["create", "--dir", d, "--output", out])
+                self.assertEqual(res.rc, 1, res)
+                self.assertIn("is not a releasable coordinate name", res.err)
+                self.assertFalse(os.path.exists(out), "a refused directory leaves no id behind")
         d = self.path("staged")
-        make_coordinate(d)
-        for name in ("a=b.jar", "::error::x.jar", "$(id).jar", "a%0Ab.jar"):
+        for base in ("a-1.0.0", "a_b.c-0.0.0", "A.b-c_d-10.20.30"):
+            make_coordinate(d, base)
+        for name in ("a=b.pom.asc.txt", "::error::x.txt", "$(id).txt", "a%0Ab.txt"):
             put(d, name)
         out = self.path("github-output")
         self.assertEqual(h.run_main(SCRIPT, ["create", "--dir", d, "--output", out]).rc, 0)
@@ -690,7 +797,8 @@ class Adversarial(h.Case):
             for s in jobs[name]["steps"]:
                 for blob in (*s["env"].values(), *s["with"].values()):
                     refs.update(re.findall(r"needs\.[\w-]+\.outputs\.[\w-]+", blob))
-        self.assertEqual(refs, {"needs.publish.outputs.artifact", "needs.publish.outputs.manifest"})
+        self.assertEqual(refs, {"needs.publish.outputs.artifact", "needs.publish.outputs.manifest", "needs.build.outputs.java-version",
+                                "needs.build.outputs.java-distribution"})
         self.assertIn("github.run_attempt", w.job_outputs(jobs["publish"])["artifact"])
 
     def test_no_step_continues_on_error_and_none_runs_after_a_failure_but_the_key_removal(self):

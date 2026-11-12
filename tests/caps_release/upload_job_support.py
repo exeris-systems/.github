@@ -70,3 +70,76 @@ def compare(job: str, runner_temp: str, digest: str, manifest: str | None) -> su
     if manifest is not None:
         extra["MANIFEST"] = manifest
     return bash(step_run(job, COMPARE), runner_env(runner_temp, **extra))
+
+
+STUB = '#!/usr/bin/python3\nimport json, sys\nwith open({record!r}, "a", encoding="utf-8") as fh:\n    fh.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+KNOWN_PROPERTIES = ("repositoryId", "url", "pomFile", "file", "sources", "javadoc", "files", "classifiers", "types")
+SUFFIXES = (".jar", ".pom", "-sources.jar", "-javadoc.jar")
+
+
+def upload_arguments(case: h.Case, bases) -> list[list[str]]:
+    """The argument vector of every `mvn` call the workflow's own upload step makes for the coordinates BASES.
+
+    The download directory holds the eight files of each base; the job's comparison step accepts it against the manifest `create` made of
+    it, the settings step runs, and the upload step runs with a `mvn` that records its arguments and does nothing else.
+    """
+    import json
+
+    from manifest_support import SCRIPT, make_coordinate, parse_github_output
+    runner = case.path("runner")
+    download = os.path.join(runner, "gated-download")
+    os.makedirs(download)
+    for base in bases:
+        make_coordinate(download, base)
+    output = case.path("github-output")
+    made = h.run_main(SCRIPT, ["create", "--dir", download, "--output", output])
+    case.assertEqual(made.rc, 0, made)
+    with open(output, encoding="utf-8") as fh:
+        manifest = parse_github_output(fh.read())["manifest"]
+    digest = install_scripts(case, "upload", runner)
+    compared = compare("upload", runner, digest, manifest)
+    case.assertEqual(compared.returncode, 0, compared.stdout + compared.stderr)
+    env = runner_env(runner, GITHUB_TOKEN="not-a-token")
+    settings = bash(step_run("upload", SETTINGS), env)
+    case.assertEqual(settings.returncode, 0, settings.stderr)
+    record = case.path("argv-record")
+    stub_dir = case.path("stub")
+    os.makedirs(stub_dir)
+    stub = os.path.join(stub_dir, "mvn")
+    with open(stub, "w", encoding="utf-8") as fh:
+        fh.write(STUB.format(record=record))
+    os.chmod(stub, 0o755)
+    env["PATH"] = stub_dir + ":" + env["PATH"]
+    done = bash(step_run("upload", UPLOAD), env)
+    case.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+    with open(record, encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh]
+
+
+def assert_arguments_of(case: h.Case, argv: list[str], base: str, settings: str) -> None:
+    """The call names exactly the files of BASE, in the four `-Dfiles` entries, and no element of it is an option the step did not write."""
+    options = {"-B", "-ntp", "--settings"}
+    values = {}
+    for arg in argv:
+        if arg.startswith("-D"):
+            key, sep, value = arg[2:].partition("=")
+            case.assertTrue(sep and key in KNOWN_PROPERTIES and key not in values, f"{arg!r} is not an option the step writes, once")
+            values[key] = value
+        elif arg.startswith("-"):
+            case.assertIn(arg, options, f"{arg!r} is an option the step does not write")
+        else:
+            case.assertIn(arg, ("org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file", settings), f"{arg!r} is an argument the step does not write")
+    case.assertEqual(set(values), set(KNOWN_PROPERTIES))
+    case.assertEqual(values["pomFile"], base + ".pom")
+    case.assertEqual(values["file"], base + ".jar")
+    case.assertEqual(values["sources"], base + "-sources.jar")
+    case.assertEqual(values["javadoc"], base + "-javadoc.jar")
+    case.assertEqual(values["files"].split(","), [base + s + ".asc" for s in SUFFIXES])
+    case.assertEqual(len(values["files"].split(",")), 4)
+    case.assertEqual(values["classifiers"].split(","), ["", "", "sources", "javadoc"])
+    case.assertEqual(values["types"].split(","), ["jar.asc", "pom.asc", "jar.asc", "jar.asc"])
+    case.assertEqual(argv.count("--settings"), 1)
+    case.assertEqual(argv[argv.index("--settings") + 1], settings)
+    for key in ("pomFile", "file", "sources", "javadoc"):
+        case.assertFalse(values[key].startswith("-"), values[key])
+    case.assertFalse(any(entry.startswith("-") for entry in values["files"].split(",")))

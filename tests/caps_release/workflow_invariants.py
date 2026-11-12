@@ -72,9 +72,9 @@ INTERPOLATIONS = {
     "upload": {
         ("checkout", "with:ref"): "github.job_workflow_sha",
         ("Install the gate scripts outside the workspace", "env:SCRIPTS_COMMIT"): "github.job_workflow_sha",
-        ("Set up JDK", "name"): "inputs.java-version",
-        ("Set up JDK", "with:distribution"): "inputs.java-distribution",
-        ("Set up JDK", "with:java-version"): "inputs.java-version",
+        ("Set up JDK", "name"): "needs.build.outputs.java-version",
+        ("Set up JDK", "with:distribution"): "needs.build.outputs.java-distribution",
+        ("Set up JDK", "with:java-version"): "needs.build.outputs.java-version",
         ("Download the gated files", "with:name"): "needs.publish.outputs.artifact",
         ("Download the gated files", "with:path"): "runner.temp",
         ("Compare the downloaded files with the manifest", "env:MANIFEST"): "needs.publish.outputs.manifest",
@@ -338,9 +338,47 @@ def violations(text: str) -> set[str]:
     if set(jobs) != {"build", "publish", "upload", "attest"}:
         out.add("jobs-unexpected")
     for check in (_words_and_defaults, _graph, _permissions, _credentials, _upload_isolation, _upload_order,
-                  _publish_order, _manifest_travel, _attest, _checkouts_and_digests, _gate_staging, _conditions, _pins):
+                  _publish_order, _manifest_travel, _attest, _checkouts_and_digests, _gate_staging, _conditions, _pins, _jdk):
         check(text, wf, jobs, out)
     return out
+
+
+# The JDK a job installs is a value the resolver accepted: `build` hands the two inputs to `resolve_release.py` through the environment, publishes
+# what it wrote as job outputs, and every `setup-java` step of every job reads those and never an input.
+JDK_INPUTS = (("java-distribution", "IN_JAVA_DISTRIBUTION", "distribution"), ("java-version", "IN_JAVA_VERSION", "java-version"))
+RAW_JAVA_INPUT = re.compile(r"\binputs\s*(?:\.\s*|\[\s*['\"])java", re.I)
+
+
+def _jdk(text, wf, jobs, out):
+    resolve = [s for s in jobs["build"]["steps"] if "resolve_release.py" in s["run"]]
+    if len(resolve) != 1 or resolve[0]["id"] != "rel":
+        return                              # `publish-not-resolved-from-inputs` already says so
+    r = resolve[0]
+    for name, env, _ in JDK_INPUTS:
+        if r["env"].get(env) != f"${{{{ inputs.{name} }}}}" or f'--{name} "${env}"' not in r["run"]:
+            out.add("jdk-not-resolved")
+    outs = job_outputs(jobs["build"])
+    for name, _, _ in JDK_INPUTS:
+        if outs.get(name) != f"${{{{ steps.rel.outputs.{name} }}}}":
+            out.add("jdk-output")
+    for jname, j in jobs.items():
+        installs = [s for s in j["steps"] if s["uses"].startswith("actions/setup-java@")]
+        if jname == "attest":
+            if installs:
+                out.add(f"jdk-setup-source:{jname}")
+            continue
+        source = "steps.rel.outputs" if jname == "build" else "needs.build.outputs"
+        if len(installs) != 1:
+            out.add(f"jdk-setup-source:{jname}")
+        for s in installs:
+            if s["with"].get("distribution") != f"${{{{ {source}.java-distribution }}}}" or \
+                    s["with"].get("java-version") != f"${{{{ {source}.java-version }}}}" or \
+                    s["name"] != f"Set up JDK ${{{{ {source}.java-version }}}}":
+                out.add(f"jdk-setup-source:{jname}")
+    # the two environment variables of the resolve step are the only places an input of the JDK is read
+    reads = [ln for ln in wf["lines"] if RAW_JAVA_INPUT.search(ln)]
+    if len(reads) != len(JDK_INPUTS) or any(RAW_JAVA_INPUT.search(v) is None for v in (r["env"].get(e, "") for _, e, _ in JDK_INPUTS)):
+        out.add("jdk-raw-input")
 
 
 def _words_and_defaults(text, wf, jobs, out):

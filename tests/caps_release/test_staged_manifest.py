@@ -23,8 +23,12 @@ import caps_release_helpers as h
 from manifest_support import (FINAL, SCRIPT, Timeout, bounded, coordinate_names, make_coordinate, manifest_of,
                               parse_github_output, put, random_sets, sha)
 
-LEGAL_ODD_NAMES = ["a=b.jar", "a<<b.jar", "::set-output name=x::y.jar", "::error::boom.jar", "a%0Ab.jar", "a%0Db.jar", "MANIFEST_0123456789abcdef",
-                   "a b.jar", "x'y.jar", 'x"y.jar', "$(id).jar", "`id`.jar", "a;b.jar", "a|b.jar", "-rf.jar", "é.jar", "a,b.jar"]
+# Names that look like keys, commands, delimiters or expansions. As the stem of a file that is not a main jar they are legal and `create`
+# lists them; as the base of a main jar the rule for a releasable base refuses them (see `test_base_rule`).
+ODD_STEMS = ["a=b", "a<<b", "::set-output name=x::y", "::error::boom", "a%0Ab", "a%0Db", "MANIFEST_0123456789abcdef",
+             "a b", "x'y", 'x"y', "$(id)", "`id`", "a;b", "a|b", "-rf", "é", "a,b"]
+LEGAL_ODD_NAMES = [stem + ".pom" for stem in ODD_STEMS] + ["MANIFEST_0123456789abcdef"]
+REFUSED_ODD_JARS = [stem + ".jar" for stem in ODD_STEMS]
 ILLEGAL_NAMES = [".hidden.jar", ".mvn", "a\nb.jar", "a\rb.jar", "a\tb.jar", "a\x1b[31mb.jar", "a\x7fb.jar", " lead.jar", "trail.jar ",
                  "a\\b.jar", "a‮b.jar", "a​b.jar", "a b.jar", "a b.jar", "a͸b.jar", "a﻿b.jar", "a b.jar",
                  "a\x85b.jar", "x\n::error::forged\n.jar", "a\nMANIFEST_x\n.jar"]
@@ -261,7 +265,7 @@ class Entries(Base):
                 make(d)
                 with bounded(30):
                     res = self.verify(d, self.good_manifest(d))
-                self.refused_findings(res, final=False)
+                self.refused_findings(res)
                 self.assertNotIn("ok", res.out)
 
     def test_a_symlink_to_a_listed_file_with_identical_bytes_is_not_a_file_of_the_release(self):
@@ -269,7 +273,7 @@ class Entries(Base):
         manifest = manifest_of(d)
         sym_to_listed(d)
         res = self.verify(d, manifest)
-        self.refused_findings(res, "a-1.0.0.jar is not a regular file", final=False)
+        self.refused_findings(res, "a-1.0.0.jar is not a regular file")
 
     def test_a_fifo_is_refused_without_being_opened_for_reading(self):
         d = self.directory()
@@ -277,13 +281,13 @@ class Entries(Base):
         fifo(d)
         with bounded(15):
             res = self.verify(d, manifest)
-        self.refused_findings(res, "a-1.0.0-extra.jar is not a regular file", findings=1, final=False)
+        self.refused_findings(res, "a-1.0.0-extra.jar is not a regular file", findings=1)
 
     def test_a_hard_linked_file_is_refused_for_each_name_it_has(self):
         d = self.directory()
         hardlink(d)
         res = self.verify(d, self.good_manifest(d))
-        self.refused_findings(res, "a-1.0.0.jar is a hard link", "a-1.0.0-link.jar is a hard link", final=False)
+        self.refused_findings(res, "a-1.0.0.jar is a hard link", "a-1.0.0-link.jar is a hard link")
 
     def test_a_pom_xml_is_refused_even_when_the_manifest_lists_it_with_its_right_hash(self):
         d = self.directory()
@@ -305,19 +309,19 @@ class Entries(Base):
         d = self.directory()
         mvn_dir(d)
         res = self.verify(d, manifest_of(self_dir_files(d)))
-        self.refused_findings(res, ".mvn is not a regular file", final=False)
+        self.refused_findings(res, ".mvn is not a regular file")
 
     def test_a_dot_mvn_file_is_refused_as_a_name_even_though_it_is_regular(self):
         d = self.directory()
         mvn_file(d)
-        self.refused_findings(self.verify(d, manifest_of(d)), ".mvn is not a plain file name", final=False)
+        self.refused_findings(self.verify(d, manifest_of(d)), ".mvn is not a plain file name")
 
     def test_a_directory_that_is_a_symlink_is_not_read(self):
         d = self.directory()
         link = self.path("link")
         os.symlink(d, link)
         res = self.verify(link, manifest_of(d))
-        self.refused_findings(res, "is not a directory", findings=1, final=False)
+        self.refused_findings(res, "is not a directory", findings=1)
 
     def test_a_directory_that_is_a_file_or_is_absent_is_refused(self):
         d = self.directory()
@@ -325,7 +329,7 @@ class Entries(Base):
         file_ = put(self.tmp, "afile", "x")
         for target in (file_, self.path("absent")):
             with self.subTest(target):
-                self.refused_findings(self.verify(target, manifest), "is not a directory", findings=1, final=False)
+                self.refused_findings(self.verify(target, manifest), "is not a directory", findings=1)
 
     def test_a_symlinked_directory_named_with_a_trailing_slash_is_refused(self):
         d = self.directory()
@@ -406,22 +410,23 @@ class ManifestText(Base):
         self.assertEqual(res.out, "")
         self.assertTrue(res.errors(), res)
         self.assertIn(fragment, "\n".join(res.errors()), res)
+        self.assertEqual(res.errors()[-1], FINAL, "every refusal of verify ends with the same line")
         self.assertNotIn("ok", res.out)
         return res
 
     def test_an_unset_variable_is_a_refusal_not_zero_files_matching(self):
         res = self.assert_refused("", "the manifest is empty", set_var=False)
-        self.assertEqual(res.errors(), ["::error::the manifest is empty"], "the directory is not judged against nothing")
+        self.assertEqual(res.errors(), ["::error::the manifest is empty", FINAL], "the directory is not judged against nothing")
 
     def test_an_empty_variable_is_a_refusal(self):
         res = self.assert_refused("", "the manifest is empty")
-        self.assertEqual(res.errors(), ["::error::the manifest is empty"])
+        self.assertEqual(res.errors(), ["::error::the manifest is empty", FINAL])
 
     def test_a_manifest_of_whitespace_is_a_refusal(self):
         for text in (" ", "\n", "\n\n\n", " \n ", "\t\n"):
             with self.subTest(text):
                 res = self.assert_refused(text, "the manifest is empty")
-                self.assertEqual(res.errors(), ["::error::the manifest is empty"])
+                self.assertEqual(res.errors(), ["::error::the manifest is empty", FINAL])
 
     def test_upper_case_hex_is_malformed(self):
         first = self.good.splitlines()[0]
@@ -450,12 +455,26 @@ class ManifestText(Base):
         self.assert_refused("﻿" + self.good, "malformed")
 
     def test_trailing_blank_lines_are_malformed(self):
-        res = self.verify(self.d, self.good + "\n\n")
-        self.assertEqual(res.rc, 1, res)
+        for text in (self.good + "\n", self.good + "\n\n", self.good.rstrip("\n") + "\n\n"):
+            with self.subTest(repr(text[-3:])):
+                res = self.assert_refused(text, "a blank line")
+                self.assertEqual(res.errors(), ["::error::manifest line is malformed: a blank line", FINAL])
 
     def test_a_blank_line_inside_the_manifest_is_malformed(self):
-        res = self.verify(self.d, self.good.replace("\n", "\n\n", 1))
-        self.assertEqual(res.rc, 1, res)
+        for text in (self.good.replace("\n", "\n\n", 1), "\n" + self.good):
+            with self.subTest(repr(text[:3])):
+                res = self.assert_refused(text, "a blank line")
+                self.assertEqual(res.errors(), ["::error::manifest line is malformed: a blank line", FINAL])
+
+    def test_a_line_of_blanks_is_a_malformed_line_not_a_blank_one(self):
+        for blanks in (" ", "  ", "\t"):
+            with self.subTest(repr(blanks)):
+                res = self.assert_refused(self.good + blanks + "\n", "malformed")
+                self.assertEqual(res.errors(), [f"::error::manifest line is malformed: {blanks.replace(chr(9), chr(92) + 'u0009')}", FINAL])
+
+    def test_a_manifest_may_end_with_one_newline_or_none(self):
+        self.accepted(self.verify(self.d, self.good))
+        self.accepted(self.verify(self.d, self.good[:-1]))
 
     def test_a_name_listed_twice_is_refused(self):
         first = self.good.splitlines()[0]
@@ -499,7 +518,7 @@ class Names(Base):
                 d = self.directory(f"d-{abs(hash(name))}")
                 put(d, name)
                 res = self.verify(d, manifest_of(d))
-                self.refused_findings(res, final=False)
+                self.refused_findings(res)
                 self.assertEqual(len(res.err.splitlines()), len(res.errors()), "no name starts a second line")
                 for c in "\n\r\x1b\x7f‮ ​":
                     self.assertNotIn(c, res.err.replace("\n", "") if c != "\n" else "", f"{c!r} printed raw")
@@ -638,7 +657,7 @@ class Unexpected(Base):
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
         with mock.patch.object(module.os, "listdir", denied):
             res = h.run_main(SCRIPT, ["verify", "--dir", d, "--manifest-env", "MANIFEST"], env=h.clean_env(MANIFEST=manifest))
-        self.refused_findings(res, "cannot be read", findings=1, final=False)
+        self.refused_findings(res, "cannot be read", findings=1)
 
     def test_a_file_that_cannot_be_read_is_one_finding_and_no_manifest_line_for_it(self):
         d = self.directory()
@@ -652,7 +671,7 @@ class Unexpected(Base):
             return real(path)
         with mock.patch.object(module, "digest", unreadable):
             res = h.run_main(SCRIPT, ["verify", "--dir", d, "--manifest-env", "MANIFEST"], env=h.clean_env(MANIFEST=manifest))
-            self.refused_findings(res, "a-1.0.0.pom cannot be read", findings=1, final=False)
+            self.refused_findings(res, "a-1.0.0.pom cannot be read", findings=1)
             out = self.path("out")
             res = h.run_main(SCRIPT, ["create", "--dir", d, "--output", out])
         self.refused_findings(res, "a-1.0.0.pom cannot be read", findings=1, final=False)
@@ -746,18 +765,18 @@ class OpenOnce(Base):
     def test_a_file_swapped_for_a_link_after_the_directory_was_listed_is_refused(self):
         d, manifest, do = self.swap(lambda p: os.symlink("a-1.0.0.pom", p))
         res, *_ = self.spied(d, manifest, before_open=do)
-        self.refused_findings(res, "a-1.0.0.jar cannot be read", final=False)
+        self.refused_findings(res, "a-1.0.0.jar cannot be read")
 
     def test_a_file_swapped_for_a_fifo_after_the_directory_was_listed_is_refused_without_blocking(self):
         d, manifest, do = self.swap(os.mkfifo)
         with bounded(15):
             res, *_ = self.spied(d, manifest, before_open=do)
-        self.refused_findings(res, "a-1.0.0.jar cannot be read", final=False)
+        self.refused_findings(res, "a-1.0.0.jar cannot be read")
 
     def test_a_file_swapped_for_a_directory_after_the_directory_was_listed_is_refused(self):
         d, manifest, do = self.swap(os.mkdir)
         res, *_ = self.spied(d, manifest, before_open=do)
-        self.refused_findings(res, "a-1.0.0.jar cannot be read", final=False)
+        self.refused_findings(res, "a-1.0.0.jar cannot be read")
 
     def test_a_file_swapped_for_other_bytes_after_the_directory_was_listed_is_judged_by_the_bytes_that_were_read(self):
         d, manifest, do = self.swap(lambda p: put(os.path.dirname(p), os.path.basename(p), b"other"))
@@ -817,7 +836,7 @@ class Create(Base):
             self.assertNotIn(delimiter, ln)
 
     def test_names_that_look_like_commands_or_delimiters_stay_inside_the_value(self):
-        d = self.directory()
+        d = self.directory("staged", "a-1.0.0", "a_b.c-0.0.0", "A.b-c_d-10.20.30")
         for name in LEGAL_ODD_NAMES:
             put(d, name)
         res, out = self.create(d)
@@ -826,6 +845,20 @@ class Create(Base):
         self.assertEqual(set(values), {"manifest", "manifest-digest", "manifest-id"}, "no name started a key of its own")
         self.assertEqual(values["manifest"], manifest_of(d))
         self.assertNotIn("\n::", res.out.replace("  ::", ""))
+        delimiter = self.output(out).split("\n", 1)[0].split("<<", 1)[1]
+        for ln in manifest_of(d).splitlines():
+            self.assertNotIn(delimiter, ln, "the delimiter occurs in no line, whatever the names are")
+
+    def test_a_main_jar_with_a_name_that_looks_like_a_command_or_a_delimiter_is_refused_and_nothing_is_written(self):
+        for name in REFUSED_ODD_JARS:
+            with self.subTest(name):
+                d = self.directory(f"d-{abs(hash(name))}")
+                put(d, name)
+                out = self.path(f"out-{abs(hash(name))}")
+                res, _ = self.create(d, out)
+                self.refused_findings(res, f"{name[:-len('.jar')]} is not a releasable coordinate name", findings=1, final=False)
+                self.assertFalse(os.path.exists(out))
+                self.assertEqual(res.out, "")
 
     def test_a_file_named_like_the_delimiter_does_not_end_the_value(self):
         d = self.directory()

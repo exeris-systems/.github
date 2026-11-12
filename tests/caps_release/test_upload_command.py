@@ -271,36 +271,27 @@ class Upload(Fixture):
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("the gate scripts changed after they were installed", done.stderr)
 
-    @h.known_defect("base-comma", "the upload step joins the file base name into the comma separated `-Dfiles`, and neither the gate nor the "
-                                   "manifest check limits the characters of a base: `a,b-1.0.0` turns four signature entries into eight "
-                                   "(caps-release.yml, step `Upload the gated files`)")
-    def test_a_base_with_a_comma_keeps_the_four_signature_files_apart_in_the_deploy_arguments(self):
-        """The `-Dfiles` list is comma separated and is built from the file base name; a comma in a base must not add entries to it."""
-        d = self.download
+    def test_a_base_with_a_comma_never_reaches_the_deploy_arguments_and_every_accepted_base_keeps_four_signatures_for_four_classifiers(self):
+        """The `-Dfiles` list is comma separated and is built from the file base name. The gate and `create` refuse a base holding a comma,
+        so none reaches the step; for every base the rule accepts, the entries of `-Dfiles` are as many as the classifiers."""
+        coordinate = self.coordinate("a,b-1.0.0")
+        gate = h.run_main(GATE, ["--target-dir", self.target, "--gpg", self.gpg])
+        self.refused(gate, f"{coordinate} is not a releasable coordinate name")
+        d = self.path("comma")
         make_coordinate(d, "a,b-1.0.0")
         out = self.path("o")
-        self.accepted(h.run_main(SCRIPT, ["create", "--dir", d, "--output", out]))
-        with open(out, encoding="utf-8") as fh:
-            manifest = parse_github_output(fh.read())["manifest"]
-        self.digest = job.install_scripts(self, "upload", self.runner)
-        self.assertEqual(job.compare("upload", self.runner, self.digest, manifest).returncode, 0, "the check accepts the name")
-        record = self.path("argv")
-        stub_dir = self.path("stub")
-        os.makedirs(stub_dir)
-        stub = os.path.join(stub_dir, "mvn")
-        with open(stub, "w") as fh:
-            fh.write(f'#!/bin/sh\nprintf \'%s\\n\' "$@" >> "{record}"\n')
-        os.chmod(stub, 0o755)
-        self.settings()
-        done = self.deploy(path_prefix=stub_dir)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        with open(record, encoding="utf-8") as fh:
-            argv = fh.read().splitlines()
-        files = [a for a in argv if a.startswith("-Dfiles=")]
-        classifiers = [a for a in argv if a.startswith("-Dclassifiers=")]
-        self.assertEqual(len(files), 1)
-        self.assertEqual(len(files[0].split("=", 1)[1].split(",")), len(classifiers[0].split("=", 1)[1].split(",")),
-                         f"one signature per classifier: {files[0]} / {classifiers[0]}")
+        created = h.run_main(SCRIPT, ["create", "--dir", d, "--output", out])
+        self.refused(created, "a,b-1.0.0 is not a releasable coordinate name")
+        self.assertFalse(os.path.exists(out))
+        bases = ["a-1.0.0", "a_b.c-0.0.0", "A.b-c_d-10.20.30", "x-1.0.0-1.0.0"]
+        calls = job.upload_arguments(self, bases)
+        self.assertEqual(len(calls), len(bases))
+        for argv in calls:
+            files = [a for a in argv if a.startswith("-Dfiles=")]
+            classifiers = [a for a in argv if a.startswith("-Dclassifiers=")]
+            self.assertEqual((len(files), len(classifiers)), (1, 1))
+            self.assertEqual(len(files[0].split("=", 1)[1].split(",")), len(classifiers[0].split("=", 1)[1].split(",")),
+                             f"one signature per classifier: {files[0]} / {classifiers[0]}")
 
 
 if __name__ == "__main__":
