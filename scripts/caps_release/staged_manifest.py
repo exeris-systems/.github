@@ -18,7 +18,8 @@ Usage:
 create  Reads DIR (a real directory, not a link), requires it to hold regular files and nothing else,
         hashes each, prints the manifest, and appends it to FILE in the `GITHUB_OUTPUT` multi-line
         format as `KEY` (default `manifest`) with a delimiter that occurs in no line. Also appends
-        `KEY-digest=<SHA-256 of the manifest text>`.
+        `KEY-digest=<SHA-256 of the manifest text>` and `KEY-id=<its first 12 hex digits>`, which
+        a workflow can use in a name.
 verify  Reads the manifest from the environment variable VAR (never from an argument, never from a
         file in DIR) and compares it with DIR. Refuses when:
           * DIR is not a real directory (a link, a file, absent);
@@ -184,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
         delimiter = "MANIFEST_" + hashlib.sha256(text.encode()).hexdigest()[:16]
         with open(a.output, "a", encoding="utf-8") as out:
             out.write(f"{a.name}<<{delimiter}\n{text}{delimiter}\n")
-            out.write(f"{a.name}-digest={hashlib.sha256(text.encode()).hexdigest()}\n")
+            whole = hashlib.sha256(text.encode()).hexdigest()
+            out.write(f"{a.name}-digest={whole}\n{a.name}-id={whole[:12]}\n")
         sys.stdout.write(text)
         return 0
 
