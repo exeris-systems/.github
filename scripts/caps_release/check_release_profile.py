@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse a ref that cannot build a release, and say whether a Central bundle is built.
+"""Refuse a ref whose release profile cannot build the files a GitHub Packages release uploads.
 
 Maven treats `-P release` for a profile that does not exist as a warning and builds on, which
 produces unsigned artifacts that fail much later with a message naming neither the profile nor the
@@ -8,17 +8,19 @@ one) and refuses up front.
 
 Refused: no profile whose <id> is `release`; a <modules> in the project or in ANY profile (a
 capability release is one module: `-P release` must not build several, and the readiness gate, the
-run artifact and the attestation all read the root `target/`); and, for target `central`, no
-`org.sonatype.central:central-publishing-maven-plugin` <plugin> under the release profile's
-<build><plugins> whose <configuration> sets <publishingServerId> to `central`. A plugin elsewhere
-(the project's own <build>, <pluginManagement>, a dependency, a property) does not count. A document
-that declares a DOCTYPE is refused before any entity is read.
+run artifact and the attestation all read the root `target/`); a release profile whose
+<build><plugins> lacks `org.apache.maven.plugins:maven-gpg-plugin` (the signatures), `maven-source-plugin`
+(the sources jar) or `maven-javadoc-plugin` (the javadoc jar); and a release profile that declares
+`org.sonatype.central:central-publishing-maven-plugin` in <build><plugins> or <build><pluginManagement>,
+because that plugin owns the `deploy` phase and uploads to a repository this workflow does not name.
+A plugin elsewhere (the project's own <build>, a dependency, a property) does not count toward the
+required ones. A document that declares a DOCTYPE is refused before any entity is read.
 
-Usage: check_release_profile.py --pom pom.xml --target {none,central,github-packages} [--output FILE]
+Usage: check_release_profile.py --pom pom.xml
 
-Exit status: 0 ok; 1 refused or unreadable POM (every missing item listed on one `::error::` line
-on stderr); 2 usage error.
-Output: stdout `ok - ...`. With --output, `has_central_plugin=<true|false>` is appended, on success only.
+Exit status: 0 ok; 1 refused or unreadable POM (every missing or forbidden item listed on one
+`::error::` line on stderr); 2 usage error.
+Output: stdout `ok - ...`.
 """
 from __future__ import annotations
 
@@ -63,8 +65,14 @@ def read_xml(path: str) -> ET.Element:
     return ET.fromstring(data)
 
 
-CENTRAL_GROUP = "org.sonatype.central"
-CENTRAL_PLUGIN = "central-publishing-maven-plugin"
+PLUGIN_GROUP = "org.apache.maven.plugins"
+REQUIRED = {
+    "maven-gpg-plugin": "the signatures",
+    "maven-source-plugin": "the sources jar",
+    "maven-javadoc-plugin": "the javadoc jar",
+}
+FORBIDDEN_GROUP = "org.sonatype.central"
+FORBIDDEN = "central-publishing-maven-plugin"
 
 
 def local(tag: str) -> str:
@@ -79,28 +87,30 @@ def text(el: ET.Element, name: str) -> str:
     return " ".join(c.text.strip() for c in children(el, name) if c.text)
 
 
-def check(pom: str, target: str) -> tuple[list[str], bool]:
+def check(pom: str) -> list[str]:
     root = read_xml(pom)
-    missing: list[str] = []
+    problems: list[str] = []
     profiles = [profile for container in children(root, "profiles") for profile in children(container, "profile")]
     release = [profile for profile in profiles if (text(profile, "id")) == "release"]
     if not release:
-        missing.append("the 'release' profile in pom.xml")
+        problems.append("missing: the 'release' profile in pom.xml")
     if children(root, "modules") or any(children(profile, "modules") for profile in profiles):
-        missing.append("a single-module project (pom.xml declares <modules>, in the project or in a profile; "
-                       "a capability release is one module)")
-    # the plugin is the <plugin> of the release profile's <build><plugins> with this groupId and artifactId
-    plugins = [plugin for profile in release for build in children(profile, "build")
-               for container in children(build, "plugins") for plugin in children(container, "plugin")
-               if text(plugin, "groupId") == CENTRAL_GROUP and text(plugin, "artifactId") == CENTRAL_PLUGIN]
-    central = bool(plugins)
-    if target == "central":
-        if not central:
-            missing.append(f"{CENTRAL_GROUP}:{CENTRAL_PLUGIN} in the release profile's <build><plugins>")
-        if not any(text(configuration, "publishingServerId") == "central"
-                   for plugin in plugins for configuration in children(plugin, "configuration")):
-            missing.append("<publishingServerId>central</publishingServerId> in that plugin's <configuration>")
-    return missing, central
+        problems.append("missing: a single-module project (pom.xml declares <modules>, in the project or in a profile; "
+                        "a capability release is one module)")
+    builds = [build for profile in release for build in children(profile, "build")]
+    plugins = [plugin for build in builds for container in children(build, "plugins")
+               for plugin in children(container, "plugin")]
+    managed = [plugin for build in builds for management in children(build, "pluginManagement")
+               for container in children(management, "plugins") for plugin in children(container, "plugin")]
+    if release:
+        for artifact, what in REQUIRED.items():
+            if not any(text(p, "groupId") in ("", PLUGIN_GROUP) and text(p, "artifactId") == artifact for p in plugins):
+                problems.append(f"missing: {PLUGIN_GROUP}:{artifact} in the release profile's <build><plugins> ({what})")
+    if any(text(p, "artifactId") == FORBIDDEN and text(p, "groupId") in ("", FORBIDDEN_GROUP)
+           for p in plugins + managed):
+        problems.append(f"forbidden: {FORBIDDEN_GROUP}:{FORBIDDEN} in the release profile; it uploads to a "
+                        "repository this workflow does not name")
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -117,22 +127,17 @@ def main(argv: list[str] | None = None) -> int:
 def run(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--pom", required=True)
-    p.add_argument("--target", required=True, choices=["none", "central", "github-packages"])
-    p.add_argument("--output", default="")
     a = p.parse_args(argv)
     try:
-        missing, central = check(a.pom, a.target)
+        problems = check(a.pom)
     except (OSError, ET.ParseError) as exc:
         print(f"::error::{a.pom} cannot be read as a POM ({' '.join(str(exc).split())}).", file=sys.stderr)
         return 1
-    if missing:
-        print(f"::error::This ref cannot build a release - missing: {'; '.join(missing)}. "
+    if problems:
+        print(f"::error::This ref cannot build a release - {'; '.join(problems)}. "
               "Release from a ref that carries the release machinery.", file=sys.stderr)
         return 1
-    if a.output:
-        with open(a.output, "a", encoding="utf-8") as fh:
-            fh.write(f"has_central_plugin={'true' if central else 'false'}\n")
-    print(f"ok - this ref carries the release profile (Central plugin: {'true' if central else 'false'})")
+    print("ok - this ref carries a release profile that signs and builds the sources and javadoc jars")
     return 0
 
 
