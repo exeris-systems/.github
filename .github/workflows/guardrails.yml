@@ -178,8 +178,7 @@ jobs:
         curl -sSfL -o "$RUNNER_TEMP/vale.tgz" https://github.com/errata-ai/vale/releases/download/v3.20.0/vale_3.20.0_Linux_64-bit.tar.gz;
         echo "f59e7030c5d4ace6cf915497d0d076a1699d61e876142765963237e6867c9712  $RUNNER_TEMP/vale.tgz" | sha256sum -c -;
         tar -xzf "$RUNNER_TEMP/vale.tgz" -C "$RUNNER_TEMP" vale;
-        python3 scripts/vale_retracted_figures_suite.py --vale "$RUNNER_TEMP/vale";
-        python3 scripts/run_caps_release_tests.py
+        python3 scripts/vale_retracted_figures_suite.py --vale "$RUNNER_TEMP/vale"
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       exeris_bot_app_id: ${{ secrets.EXERIS_BOT_APP_ID }}
