@@ -14,28 +14,48 @@
 # already exists fails, and so does the job. That failure is the behaviour; a version is released
 # once, and a fix is a new version.
 #
-# THREE JOBS, AND THE SPLIT IS THE SECURITY MODEL
+# FOUR JOBS, AND THE SPLIT IS THE SECURITY MODEL
 #
-#   build    No secret, read-only token. Always runs. Builds with `-P release`, signs with a key
-#            generated in the job, runs every gate, uploads what it built as a run artifact. A dry
-#            run is this job and nothing else.
-#   publish  The only job that holds secrets and `packages: write`. Runs only when `upload` is true
-#            AND `target` is not `none`. Rebuilds from the same commit, signs with the real key,
-#            gates the rebuilt files, uploads exactly the files the gate staged.
-#   attest   Provenance for what `publish` uploaded. Holds `id-token: write` and runs no project code.
+#   build    Permissions `contents: read`. Always runs. Builds with `-P release`, signs with a key
+#            generated in the job, runs every gate, keeps what it gated as a run artifact. A dry run
+#            is this job and nothing else.
+#   publish  Permissions `contents: read`. Runs only when `upload` is true AND `target` is not
+#            `none`. Holds the signing secrets. Rebuilds from the same commit, signs with the real
+#            key, removes the key, gates the rebuilt files, stages them, and hands the staged
+#            directory on as a workflow artifact together with a manifest (a SHA-256 per file) that
+#            is a job OUTPUT. It uploads nothing and holds no credential that can write a package.
+#   upload   Permissions `contents: read` and `packages: write`: the only job that has the second.
+#            Runs after `publish` succeeded. On a fresh runner that never checks out and never runs
+#            the capability's code, it downloads the staged artifact into an empty directory,
+#            compares it with the manifest, and uploads it with the deploy plugin.
+#   attest   Provenance for what `upload` uploaded. Holds `id-token: write` and
+#            `attestations: write`. Takes the same artifact through the same manifest check, and
+#            runs no project code.
 #
 # WHAT A DRY RUN CAN NEVER DO. It holds no secret: the `secrets:` below are read by `publish` alone.
-# It cannot upload: nothing in `build` talks to GitHub Packages, and its token is `contents: read`.
-# It cannot attest: attestations are written to the repository and to a public transparency log
-# that has no delete, and only `attest` may write them. It signs with a throwaway key that exists
-# for the length of the job, so the path through the signing plugin is exercised and the signatures
-# it produces mean nothing outside the run.
+# It cannot upload: only `upload` holds `packages: write` and a dry run never reaches it. It cannot
+# attest: attestations are written to the repository and to a public transparency log that has no
+# delete, and only `attest` may write them. It signs with a throwaway key that exists for the
+# length of the job, so the path through the signing plugin is exercised and the signatures it
+# produces mean nothing outside the run.
 #
-# WHERE THE SECRETS ARE
+# CREDENTIALS. `build` has no step that holds a secret: its signing key is generated in the job. The
+# only credential in it is the read-only `github.token` of the step `Resolve the version and refuse
+# an unreleasable ref`, which needs it to ask the API whether the tagged commit is contained in the
+# default branch. Elsewhere:
 #
-#   GPG_PRIVATE_KEY          the "Import the signing key" step, which runs `gpg` and nothing else.
-#   GPG_PASSPHRASE           the "Build and sign" step only.
-#   GITHUB_TOKEN (packages)  the "Upload the gated files" step only.
+#   GPG_PRIVATE_KEY          `publish`, the "Import the signing key" step, which runs `gpg` and
+#                            nothing else.
+#   GPG_PASSPHRASE           `publish`, the "Build and sign" step only.
+#   GITHUB_TOKEN (packages)  `upload`, the "Upload the gated files" step only.
+#   id token                 `attest` only.
+#
+# `publish` is the job that runs the capability's code with the signing secrets, and it holds no
+# credential that writes a package. `upload` is the job that holds the package credential, and it
+# never checks out the capability's repository, never restores a cache, never builds, and never runs
+# a file from the artifact it downloads. Between them the only things that travel are a directory
+# of files and a manifest, and `upload` compares one with the other before its token is in any
+# step's environment.
 #
 # STEPS OF `publish`, IN ORDER, AND WHAT EACH CAN REACH
 #
@@ -43,83 +63,128 @@
 #      scripts
 #   2  check the secrets exist          booleans only; no secret value in the environment
 #   3  JDK, version edit, seed pass     the repository's build logic, no key and no secret
-#   4  write the Maven settings         a file of `${env.*}` placeholders; no secret value
-#   5  import the signing key           PRIVATE KEY IMPORTABLE from here: runs `gpg` and nothing else
-#   6  build and sign                   PRIVATE KEY and PASSPHRASE; the only step that runs the
-#                                       project's POM with a secret. No upload credential is in it
-#   7  remove the signing key           `if: always()`. Stops the agent, deletes the private keyring
+#   4  import the signing key           PRIVATE KEY IMPORTABLE from here: runs `gpg` and nothing else
+#   5  build and sign                   PRIVATE KEY and PASSPHRASE; the only step that runs the
+#                                       project's POM with a secret
+#   6  remove the signing key           `if: always()`. Stops the agent, deletes the private keyring
 #                                       and leaves a keyring holding the PUBLIC key alone
-#   8  drift check, readiness gate      no private key and no secret in the runner: the gate
-#                                       verifies signatures with the public key only, and stages
-#                                       the gated files
-#   9  upload the gated files           the upload credential and nothing else; runs only the
-#                                       deploy plugin, outside the project, on the staged files
-#   10 run artifact                     the staged files
+#   7  drift check, readiness gate,     no private key and no secret in the runner: the gate
+#      manifest                         verifies signatures with the public key only, stages the
+#                                       gated files and the manifest of the staged directory is made
+#   8  staged files as an artifact      the staged directory, and nothing else
 #
-# The private key is therefore importable in steps 5 and 6 and in no other step. The passphrase is
-# in step 6 alone, and the upload credential in step 9 alone: the project's POM never runs with
-# the token. `publish` runs NO tests: step 6 passes `-DskipTests` and the seed pass only compiles.
-# It relies on `build`, which runs the tests on the same commit before `publish` can start
+# The private key is therefore importable in steps 4 and 5 and in no other step. The passphrase is
+# in step 5 alone. `publish` runs NO tests: step 5 passes `-DskipTests` and the seed pass only
+# compiles. It relies on `build`, which runs the tests on the same commit before `publish` can start
 # (`needs: build`), and which a failing test stops. Nothing in `publish` re-checks that the tests
 # passed; the dependency does.
 #
+# STEPS OF `upload`, IN ORDER
+#
+#   1  fetch and fingerprint the gate   the scripts of this repository at the workflow's commit; the
+#      scripts                          caller's repository is not checked out
+#   2  JDK                              installed WITHOUT a cache
+#   3  download the artifact            into a new, empty directory under `$RUNNER_TEMP`
+#   4  compare it with the manifest     `staged_manifest.py verify`: refuses a changed, added or
+#                                       missing file, a file that is not regular, a `pom.xml` and
+#                                       any name outside the closed file set of a coordinate
+#   5  write the Maven settings         a file of `${env.*}` placeholders; no secret value
+#   6  upload the gated files           the upload credential and nothing else; runs only the deploy
+#                                       plugin, from the downloaded directory
+#
 # WHAT IS UPLOADED. `publish` rebuilds and signs with the real key, so the bytes it uploads are
 # those of ITS OWN build, not those `build` kept under the throwaway key. The readiness gate reads
-# each of them once, verifies it, and stages a byte-identical copy; step 9 uploads those staged
+# each of them once, verifies it, and stages a byte-identical copy; `upload` sends those staged
 # copies with `deploy:deploy-file` (a main jar, `-sources` and `-javadoc` jars, the pom and the four
-# detached signatures) and nothing from `target/`. The run artifact of step 10 is the same
-# directory, and the attestation covers the run artifact, so what is uploaded, kept and attested is
-# the set the gate verified.
+# detached signatures) and nothing from `target/`. The artifact `publish` writes is the run artifact
+# kept for people as well: one artifact serves both, so what is kept, uploaded and attested is the
+# one set the gate verified. It is named `gated-<version>-<run attempt>-<12 hex of the manifest's
+# SHA-256>` and `build`'s is named `build-gate-<version>-<run attempt>`, so a re-run of a job and a
+# second call of this workflow in one run write to names of their own.
 #
-# `build` runs no step that holds a secret at all: its key is generated in the job.
+# THE ARTIFACT IS DATA. Nothing in it is executed, imported or sourced by `upload` or `attest`. The
+# deploy plugin (`maven-deploy-plugin` 3.1.4, goal `deploy-file`, which needs no project) takes the
+# POM through `-DpomFile` and reads it with the Maven model reader (`MavenXpp3Reader`), an XML data
+# binder, to obtain the groupId, artifactId, version, packaging and the parent's coordinates; it
+# does not build a project from it, does not resolve its parent, and does not load or run its
+# plugins, extensions or profiles. It then sends the file as the `pom` of the coordinate, byte for
+# byte. This was checked against the plugin itself: `plugin.xml` declares `requiresProject=false`
+# for `deploy-file`, and the bytecode of `DeployFileMojo` reaches the POM only through `readModel`
+# and `processModel`, neither of which touches a project builder or a plugin manager, while its
+# fields hold no `MavenProject`. The Maven process does read `.mvn/` upward from its working
+# directory and `~/.m2`; `upload` runs it from a directory the manifest check has just shown to
+# hold the closed file set and nothing else, on a runner that has run nothing of the capability's.
 #
-# WHAT CANNOT BE AVOIDED. Step 6 runs the project's own POM: Maven loads every plugin, extension
-# and annotation processor the effective build names — the repository's POM, its parents, the
-# codegen plugin and the processor, and whatever those resolve — into one JVM with the step's
-# environment and with the imported key in the runner's keyring. Any of them can read the
-# passphrase and use the key. The signing step cannot be moved out of that JVM: the signature is
-# made by the plugin during the build. What bounds it: the secrets live in `publish` alone;
-# `publish` restores no build cache, so nothing a pull request could have written is on its
-# classpath; the repository token is not in that step and is repository-scoped and expires with the
-# job. The release POM is therefore code that runs with the signing key and has to be reviewed as
-# such.
+# WHAT PROJECT CODE CAN AND CANNOT REACH. The code of the capability runs in `build` and in
+# `publish`, and only there.
+#
+#   It CAN reach the signing passphrase and the imported private key during its own build in
+#   `publish`: Maven loads every plugin, extension and annotation processor the effective build
+#   names — the repository's POM, its parents, the codegen plugin and the processor, and whatever
+#   those resolve — into one JVM with the step's environment and with the imported key in the
+#   runner's keyring. Any of them can read the passphrase and use the key. The signing step cannot
+#   be moved out of that JVM: the signature is made by the plugin during the build. What bounds it:
+#   the secrets live in `publish` alone; `publish` restores no build cache, so nothing a pull
+#   request could have written is on its classpath; the job holds no write permission on packages;
+#   the read-only token is repository-scoped and expires with the job. The release POM is therefore
+#   code that runs with the signing key and has to be reviewed as such.
+#
+#   It CAN influence the bytes it produces: the jars, the pom and their signatures. Those are what
+#   the readiness gate judges (the closed file set, one coordinate, a good signature, no SNAPSHOT)
+#   and what the manifest then binds, so that what `upload` and `attest` receive is what the gate
+#   staged. The manifest protects the transfer between jobs; it says nothing about the build that
+#   made the bytes, and a build that holds the signing key can sign what it likes.
+#
+#   It CANNOT reach the upload token. No step of `build` or `publish` holds it. `upload`, the only
+#   job that does, runs on a runner of its own that never checked out or executed the capability's
+#   code, so what project code left behind on the runners of `build` and `publish` is discarded with
+#   them: a `$GITHUB_ENV` or `$GITHUB_PATH` write, a `MAVEN_OPTS`, `MAVEN_ARGS`, `JAVA_TOOL_OPTIONS`
+#   or `LD_PRELOAD`, a shadowed `mvn` or `java`, a file under `~/.m2`, an extension under `.mvn/`, a
+#   modified JDK or Maven in the tool cache, a process left running. What it can put in front of
+#   `upload` is a directory of files, which is compared with the manifest and then handed to the
+#   deploy plugin as data.
+#
+#   It CANNOT write an attestation. `attest` is the only job with `id-token` and `attestations`.
 #
 # THE GATE SCRIPTS. What is signed and uploaded is decided by code in this repository, not by
 # inline shell: `scripts/caps_release/` holds one script per decision (the version and the ref, the
 # release profile and single-module check, the version of a tagged POM, the SNAPSHOT scan, the
-# drift check, the readiness gate, the secrets check, the key removal), each taking its inputs as
-# arguments or named environment variables and reporting through its exit status, so
-# `tests/caps_release/` runs them on plain files. A `run:` block calls them and decides nothing.
+# drift check, the readiness gate, the secrets check, the key removal, the manifest of the staged
+# files), each taking its inputs as arguments or named environment variables and reporting through
+# its exit status, so `tests/caps_release/` runs them on plain files. A `run:` block calls them and
+# decides nothing.
 #
 #   Which commit. Each job checks this repository out at `github.job_workflow_sha`, the commit the
 #   running workflow file came from, so a caller that pins this workflow by commit runs the scripts
 #   of that commit and a caller on `@main` runs the scripts of `main` as it stood when the run
 #   started. Neither can get the workflow of one commit and the scripts of another.
 #
-#   Where they run from. The checkout lands in the workspace, which is where the project's build
+#   Where they run from. The checkout lands in the workspace, which is where a project's build
 #   has write access, so the first thing done with it is to copy the scripts to
 #   `$RUNNER_TEMP/caps-release-scripts`, delete the checkout, make them read-only and compute a
 #   digest over their names, modes and contents. The digest is a step OUTPUT: the runner keeps
 #   it and substitutes it into a later step's own `env:` when that step starts, so it is not read
 #   from a file in the workspace or in the temp directory, where the build could have rewritten it
-#   beside the scripts. Every step that runs a script after project code has run
-#   recomputes the digest, with `PATH=/usr/bin:/bin`, and refuses on a difference. The scripts
-#   run as `/usr/bin/python3 -I -B`: isolated mode ignores `PYTHON*` variables and the working
-#   directory, and no bytecode is written into the verified directory.
+#   beside the scripts. Every step that runs a script after project code has run, and every step
+#   of `upload` and `attest` that runs one, recomputes the digest, with `PATH=/usr/bin:/bin`, and
+#   refuses on a difference. The scripts run as `/usr/bin/python3 -I -B`: isolated mode ignores
+#   `PYTHON*` variables and the working directory, and no bytecode is written into the verified
+#   directory.
 #
-#   What remains possible. Code that runs as the runner user on the runner can change anything the
-#   runner user can: it can `sudo`, replace `/usr/bin/python3` or `sha256sum`, edit `target/`, or
-#   rewrite a later step's behaviour through `$GITHUB_PATH`. The digest closes the narrow, likely
-#   case, a build that overwrites a gate script before the gates run, and makes any change to the
-#   scripts a failure instead of a silent pass. It is not a defence against a hostile build, which
-#   already holds the key during step 6; what bounds that is the list above.
+#   What remains possible in `build` and `publish`. Code that runs as the runner user on the runner
+#   can change anything the runner user can: it can `sudo`, replace `/usr/bin/python3` or
+#   `sha256sum`, edit `target/`, or rewrite a later step's behaviour through `$GITHUB_PATH` and
+#   `$GITHUB_ENV`. The digest closes the narrow, likely case, a build that overwrites a gate script
+#   before the gates run, and makes any change to the scripts a failure instead of a silent pass.
+#   It is not a defence against a hostile build, which already holds the key during its build; what
+#   bounds that is the list above, and what the upload token needs is a job that never ran it.
 #
 # PRECONDITIONS THE WORKFLOW CHECKS. A capability is a single-module project: a POM that declares
-# `<modules>` is refused, because the readiness gate, the run artifact and the attestation all read
+# `<modules>` is refused, because the readiness gate, the staged files and the attestation all read
 # the root `target/` and would otherwise disagree about what was released. Its `release` profile
 # configures the signing, sources and javadoc plugins and does not configure the one publishing
 # plugin `check_release_profile.py` names. No other plugin of the POM is inspected: the project's
-# build runs with the signing key present, as step 6 says. The version a dry run is given is one
+# build runs with the signing key present, as above. The version a dry run is given is one
 # MAJOR.MINOR.PATCH line, matched as a
 # whole string. A snapshot project version (Maven's own definition: a `SNAPSHOT` suffix in any case,
 # or the timestamped form) is an error on every run. A snapshot among the DEPENDENCIES, or a
@@ -131,7 +196,10 @@
 # files (a main jar, its `-sources` and `-javadoc` jars, the pom and their `.asc` signatures) and
 # refuses everything else that `target/` holds under those extensions: a `-tests` jar, any other
 # classifier, a symbolic link. It binds the release to one coordinate read from the built pom, and
-# copies exactly the files it gated into `$RUNNER_TEMP/gated-files` (`--stage`).
+# copies exactly the files it gated into `$RUNNER_TEMP/gated-files` (`--stage`). The manifest is
+# made of that directory in the same step, and `upload` and `attest` compare what they download
+# with it. The attestation covers every `.jar`, `.pom` and `.asc` of the artifact, which is the
+# uploaded set, signatures included.
 #
 # Each gated file is read once, into a private directory of the gate, and every check (signature,
 # POM, javadoc) is made on that read; staging re-hashes the live file, refuses on a difference,
@@ -139,12 +207,12 @@
 # file swapped in afterwards is a refusal, not a different release.
 #
 # A refused run stages NOTHING: the gate creates `gated-files` only when every check passed, and
-# removes it if staging itself fails. In `publish` the gate runs before the upload, so a refusal
-# uploads nothing. The artifact steps run on success only, so a failed gate leaves no artifact that
-# could be mistaken for a release, and `attest` and any later reader only ever see a directory a
-# passing gate wrote. A passing gate has staged files, so both artifact steps fail on an empty path
-# (`if-no-files-found: error`). Diagnosis of a refusal is the gate's log, whose `::error::` lines
-# name every finding.
+# removes it if staging itself fails. In `publish` the gate runs before any artifact is written, so
+# a refusal uploads nothing. The artifact steps run on success only, so a failed gate leaves no
+# artifact that could be mistaken for a release, and `upload`, `attest` and any later reader only
+# ever see a directory a passing gate wrote. A passing gate has staged files, so the artifact steps
+# fail on an empty path (`if-no-files-found: error`). Diagnosis of a refusal is the gate's log,
+# whose `::error::` lines name every finding.
 #
 # Actions are pinned by commit, the way the release workflows of the SDK, the kernel and the
 # tooling are, because this workflow handles signing keys; the gates in this directory pin by tag.
@@ -298,7 +366,7 @@ jobs:
         run: mvn -B -ntp compile -Dexeris.codegen.skip=true
 
       # `verify` builds, signs and attaches everything a release would send, and sends nothing: the
-      # upload is a step of `publish` alone.
+      # upload is a step of `upload` alone.
       - name: Build with the release profile (second pass)
         run: mvn -B -ntp -P release verify
 
@@ -325,21 +393,24 @@ jobs:
       - name: Keep what was built as a run artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-gate-${{ steps.rel.outputs.version }}
+          name: build-gate-${{ steps.rel.outputs.version }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gated-files
           if-no-files-found: error
           retention-days: 90
 
   publish:
-    name: sign and upload
+    name: sign and gate
     needs: build
     if: ${{ needs.build.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
-    # The job runs only when an upload to GitHub Packages was asked for, so `packages: write` is
-    # held only by a run that uploads. The token reaches the environment of one step, the upload.
+    # The job runs the capability's code with the signing secrets, so it holds no permission that
+    # writes a package: the upload is the job `upload`. What it hands on is the staged directory, as
+    # an artifact, and the manifest of that directory, as a job output.
     permissions:
       contents: read
-      packages: write
+    outputs:
+      manifest: ${{ steps.gate.outputs.manifest }}
+      artifact: gated-${{ needs.build.outputs.version }}-${{ github.run_attempt }}-${{ steps.gate.outputs.manifest-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -404,24 +475,6 @@ jobs:
       - name: Seed capability metadata (first pass, codegen skipped)
         run: mvn -B -ntp compile -Dexeris.codegen.skip=true
 
-      # Written by the workflow, not read from the repository: a settings file the repository
-      # controls could name a mirror, and the credentials are then sent wherever it says. The id is
-      # the one the upload step names. Values are resolved by Maven from the environment of the
-      # upload step alone.
-      - name: Write the Maven settings
-        run: |
-          cat > "$RUNNER_TEMP/release-settings.xml" <<'XML'
-          <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
-            <servers>
-              <server>
-                <id>github</id>
-                <username>${env.GITHUB_ACTOR}</username>
-                <password>${env.GITHUB_TOKEN}</password>
-              </server>
-            </servers>
-          </settings>
-          XML
-
       # The step that runs `gpg` and nothing else. After it the private key is in a keyring of its
       # own until "Remove the signing key" deletes that keyring, directly after the build; the
       # passphrase is never in it and reaches the build step alone. The public half is exported to
@@ -440,7 +493,7 @@ jobs:
 
       # The build runs the project's POM with the signing passphrase in its environment; see the
       # header for what that exposes. It skips the tests: `build` ran them on this commit. It
-      # uploads nothing and holds no upload credential.
+      # uploads nothing and the job holds no credential that could.
       - name: Build and sign
         env:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -470,9 +523,14 @@ jobs:
             --verify-home "$RUNNER_TEMP/verify-gnupg" --public-key "$RUNNER_TEMP/signing-public.asc" \
             --env-file "$GITHUB_ENV" --gpg /usr/bin/gpg --gpgconf /usr/bin/gpgconf
 
-      # The same gates as in `build`, against the real signatures, and BEFORE anything is sent: a
-      # refusal uploads nothing. A passing gate stages the files that were verified.
-      - name: Gate what was built
+      # The same gates as in `build`, against the real signatures, and BEFORE anything is handed on: a
+      # refusal leaves no artifact. A passing gate stages the files that were verified.
+      #
+      # The manifest is made of the staged directory in the same step, directly after the gate staged
+      # it. It is a job output, which the runner holds, and not only a file inside the artifact that
+      # this job wrote.
+      - name: Gate what was built and make the manifest
+        id: gate
         env:
           GENERATED: ${{ inputs.generated-path }}
           SCRIPTS_DIGEST: ${{ steps.scripts.outputs.digest }}
@@ -485,18 +543,118 @@ jobs:
           /usr/bin/python3 -I -B "$S/check_drift.py" --repo . --generated "$GENERATED"
           /usr/bin/python3 -I -B "$S/check_release_readiness.py" --target-dir target \
             --gpg /usr/bin/gpg --stage "$RUNNER_TEMP/gated-files"
+          /usr/bin/python3 -I -B "$S/staged_manifest.py" create --dir "$RUNNER_TEMP/gated-files" \
+            --output "$GITHUB_OUTPUT"
 
-      # Uploads the staged files, which are the files the gate verified, and nothing from `target/`.
-      # Only the deploy plugin runs, from the staging directory, which holds no `pom.xml`: the
-      # project's POM, its plugins and its extensions are not loaded, so the token never meets
-      # project code. The signatures are attached to their artifacts as `jar.asc` and `pom.asc`.
-      # GitHub Packages refuses a version that already exists, which fails this step and the job.
+      # The staged directory, and nothing else, is the artifact `upload` and `attest` download. It is
+      # also the run artifact kept for people: one artifact for both, so that what is kept is what is
+      # uploaded. The name is the job's `artifact` output.
+      - name: Keep the gated files as the run artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gated-${{ needs.build.outputs.version }}-${{ github.run_attempt }}-${{ steps.gate.outputs.manifest-id }}
+          path: ${{ runner.temp }}/gated-files
+          if-no-files-found: error
+          retention-days: 90
+
+  # The only job with `packages: write`. It runs on a runner that has run nothing of the capability's:
+  # it does not check out the caller's repository, restores no cache, builds nothing, and runs no file
+  # from the artifact it downloads. The artifact is data; before the token is in any step's
+  # environment the directory is compared with the manifest `publish` produced as a job output.
+  # GitHub Packages refuses a version that already exists, which fails the upload step and the job.
+  upload:
+    name: upload the gated files
+    needs: [build, publish]
+    if: ${{ needs.build.outputs.publish == 'true' && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # The scripts of this repository at the workflow's commit, exactly as in the other jobs. This
+      # is the repository of the workflow, not the caller's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: exeris-systems/.github
+          ref: ${{ github.job_workflow_sha }}
+          path: .caps-release-src
+          persist-credentials: false
+      - name: Install the gate scripts outside the workspace
+        id: scripts
+        env:
+          SCRIPTS_COMMIT: ${{ github.job_workflow_sha }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/caps-release-scripts"
+          mkdir -m 700 "$dest"
+          cp .caps-release-src/scripts/caps_release/*.py "$dest/"
+          rm -rf .caps-release-src
+          chmod 500 "$dest"/*.py
+          chmod 500 "$dest"
+          digest="$(cd "$dest" && export PATH=/usr/bin:/bin &&
+            { find . -mindepth 1 -printf '%y %m %p\n' | LC_ALL=C sort; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; } | sha256sum | cut -d' ' -f1)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "gate scripts: commit $SCRIPTS_COMMIT, digest $digest" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # No build cache: nothing a pull request could have written is restored on this runner.
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+
+      - name: Download the gated files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.publish.outputs.artifact }}
+          path: ${{ runner.temp }}/gated-download
+
+      # What was downloaded is what the gate staged: the same names, the same bytes, nothing else,
+      # and a `pom.xml` nowhere. The manifest is read from the environment of this step, which the
+      # runner filled from the output of `publish`, not from the directory.
+      - name: Compare the downloaded files with the manifest
+        env:
+          MANIFEST: ${{ needs.publish.outputs.manifest }}
+          SCRIPTS_DIGEST: ${{ steps.scripts.outputs.digest }}
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/caps-release-scripts"
+          [ "$(cd "$S" && export PATH=/usr/bin:/bin &&
+            { find . -mindepth 1 -printf '%y %m %p\n' | LC_ALL=C sort; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; } | sha256sum | cut -d' ' -f1)" = "$SCRIPTS_DIGEST" ] \
+            || { echo "::error::the gate scripts changed after they were installed." >&2; exit 1; }
+          /usr/bin/python3 -I -B "$S/staged_manifest.py" verify --dir "$RUNNER_TEMP/gated-download" --manifest-env MANIFEST
+
+      # Written by the workflow, not read from the repository: a settings file the repository
+      # controls could name a mirror, and the credentials are then sent wherever it says. The id is
+      # the one the upload step names. Values are resolved by Maven from the environment of the
+      # upload step alone.
+      - name: Write the Maven settings
+        run: |
+          cat > "$RUNNER_TEMP/release-settings.xml" <<'XML'
+          <settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${env.GITHUB_ACTOR}</username>
+                <password>${env.GITHUB_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          XML
+
+      # Uploads the downloaded files, which are the files the gate verified, and nothing else. Only
+      # the deploy plugin runs, from the download directory, which holds no `pom.xml` (the previous
+      # step refused it): the capability's POM, its plugins and its extensions are never loaded. The
+      # `-DpomFile` POM is read by the plugin as a descriptor and sent as the pom of the coordinate;
+      # the header says what that does and does not do. The signatures are attached to their
+      # artifacts as `jar.asc` and `pom.asc`. GitHub Packages refuses a version that already exists,
+      # which fails this step and the job.
       - name: Upload the gated files
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cd "$RUNNER_TEMP/gated-files"
+          cd "$RUNNER_TEMP/gated-download"
           for pom in *.pom; do
             base="${pom%.pom}"
             mvn -B -ntp org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
@@ -509,38 +667,69 @@ jobs:
               -Dtypes="jar.asc,pom.asc,jar.asc,jar.asc"
           done
 
-      - name: Keep what was uploaded as a run artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-${{ needs.build.outputs.version }}
-          path: ${{ runner.temp }}/gated-files
-          if-no-files-found: error
-          retention-days: 90
-
   # Provenance says which workflow, at which commit, on which runner produced a file; a signature
   # says only who held the key. It is written to the repository and, through `id-token`, to a public
-  # transparency log with no delete path, so it exists only for what was uploaded. Its own job, and
-  # no project code runs in it: `id-token: write` puts the means to mint an OIDC token in the
-  # environment of every step of the job that has it, and a step that runs the repository's POM
-  # could use them to attest anything. It attests the files `publish` kept, which are the files it
-  # uploaded.
+  # transparency log with no delete path, so it exists only for what was uploaded: the job runs after
+  # a successful upload. Its own job, and no project code runs in it: `id-token: write` puts the
+  # means to mint an OIDC token in the environment of every step of the job that has it, and a step
+  # that runs the repository's POM could use them to attest anything. It attests the files `publish`
+  # staged, after the same manifest check as `upload`, signatures included, so the attested set is
+  # the uploaded set.
   attest:
     name: attest build provenance
-    needs: [build, publish]
-    if: ${{ needs.publish.result == 'success' }}
+    needs: [publish, upload]
+    if: ${{ needs.upload.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write       # SLSA provenance signing (Sigstore, keyless)
       attestations: write   # writing the attestation back to the repository
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: release-${{ needs.build.outputs.version }}
-          path: uploaded
+          repository: exeris-systems/.github
+          ref: ${{ github.job_workflow_sha }}
+          path: .caps-release-src
+          persist-credentials: false
+      - name: Install the gate scripts outside the workspace
+        id: scripts
+        env:
+          SCRIPTS_COMMIT: ${{ github.job_workflow_sha }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/caps-release-scripts"
+          mkdir -m 700 "$dest"
+          cp .caps-release-src/scripts/caps_release/*.py "$dest/"
+          rm -rf .caps-release-src
+          chmod 500 "$dest"/*.py
+          chmod 500 "$dest"
+          digest="$(cd "$dest" && export PATH=/usr/bin:/bin &&
+            { find . -mindepth 1 -printf '%y %m %p\n' | LC_ALL=C sort; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; } | sha256sum | cut -d' ' -f1)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "gate scripts: commit $SCRIPTS_COMMIT, digest $digest" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Download the gated files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.publish.outputs.artifact }}
+          path: ${{ runner.temp }}/gated-download
+
+      - name: Compare the downloaded files with the manifest
+        env:
+          MANIFEST: ${{ needs.publish.outputs.manifest }}
+          SCRIPTS_DIGEST: ${{ steps.scripts.outputs.digest }}
+        run: |
+          set -euo pipefail
+          S="$RUNNER_TEMP/caps-release-scripts"
+          [ "$(cd "$S" && export PATH=/usr/bin:/bin &&
+            { find . -mindepth 1 -printf '%y %m %p\n' | LC_ALL=C sort; find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; } | sha256sum | cut -d' ' -f1)" = "$SCRIPTS_DIGEST" ] \
+            || { echo "::error::the gate scripts changed after they were installed." >&2; exit 1; }
+          /usr/bin/python3 -I -B "$S/staged_manifest.py" verify --dir "$RUNNER_TEMP/gated-download" --manifest-env MANIFEST
+
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            uploaded/**/*.jar
-            uploaded/**/*.pom
+            ${{ runner.temp }}/gated-download/*.jar
+            ${{ runner.temp }}/gated-download/*.pom
+            ${{ runner.temp }}/gated-download/*.asc
